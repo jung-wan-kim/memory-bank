@@ -2,11 +2,11 @@ import { AbsoluteFill, useCurrentFrame, interpolate, spring, useVideoConfig } fr
 import { colors, sansFont, monoFont } from "../styles";
 
 const factCategories = [
-  { label: "decision", color: colors.accent, text: "User prefers Zustand over Redux" },
-  { label: "preference", color: colors.purple, text: "Always use TypeScript strict mode" },
-  { label: "pattern", color: colors.green, text: "Feature-first folder structure" },
-  { label: "knowledge", color: colors.orange, text: "API uses v2 with OAuth2" },
-  { label: "constraint", color: colors.red, text: "No localStorage usage allowed" },
+  { label: "decision", color: colors.accent, text: "Use Riverpod for state", scope: "project" },
+  { label: "preference", color: colors.purple, text: "Named exports only", scope: "global" },
+  { label: "pattern", color: colors.green, text: "Feature-first folder structure", scope: "project" },
+  { label: "knowledge", color: colors.orange, text: "API uses /api/v2/ endpoints", scope: "project" },
+  { label: "constraint", color: colors.red, text: "No localStorage usage", scope: "global" },
 ];
 
 export const ExtractScene = () => {
@@ -198,6 +198,19 @@ export const ExtractScene = () => {
                     {fact.label}
                   </span>
                   <span style={{ fontSize: 14, color: colors.text }}>{fact.text}</span>
+                  <span style={{
+                    marginLeft: "auto",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    color: fact.scope === "global" ? colors.purple : colors.green,
+                    background: fact.scope === "global" ? `${colors.purple}20` : `${colors.green}20`,
+                    padding: "2px 6px",
+                    borderRadius: 3,
+                    fontFamily: monoFont,
+                    whiteSpace: "nowrap",
+                  }}>
+                    {fact.scope}
+                  </span>
                 </div>
               );
             })}

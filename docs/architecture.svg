@@ -1,134 +1,172 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400" width="800" height="400">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 520" width="800" height="520">
   <defs>
-    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
-      <feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000" flood-opacity="0.3"/>
-    </filter>
-    <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#1f6feb;stop-opacity:1"/>
-      <stop offset="100%" style="stop-color:#58a6ff;stop-opacity:1"/>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#0d1117"/>
+      <stop offset="100%" style="stop-color:#161b22"/>
     </linearGradient>
-    <linearGradient id="greenGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#238636;stop-opacity:1"/>
-      <stop offset="100%" style="stop-color:#3fb950;stop-opacity:1"/>
+    <linearGradient id="blueG" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1f6feb"/><stop offset="100%" style="stop-color:#58a6ff"/>
     </linearGradient>
-    <linearGradient id="purpleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#8b5cf6;stop-opacity:1"/>
-      <stop offset="100%" style="stop-color:#d2a8ff;stop-opacity:1"/>
+    <linearGradient id="greenG" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#238636"/><stop offset="100%" style="stop-color:#3fb950"/>
     </linearGradient>
-    <linearGradient id="orangeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#d18616;stop-opacity:1"/>
-      <stop offset="100%" style="stop-color:#f0883e;stop-opacity:1"/>
+    <linearGradient id="purpleG" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#8b5cf6"/><stop offset="100%" style="stop-color:#a78bfa"/>
     </linearGradient>
+    <linearGradient id="orangeG" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#d18616"/><stop offset="100%" style="stop-color:#f0883e"/>
+    </linearGradient>
+    <linearGradient id="redG" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#da3633"/><stop offset="100%" style="stop-color:#f85149"/>
+    </linearGradient>
+    <filter id="sh"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.4"/></filter>
+    <marker id="a1" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto"><path d="M0 0L10 3L0 6z" fill="#58a6ff"/></marker>
+    <marker id="a2" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto"><path d="M0 0L10 3L0 6z" fill="#d2a8ff"/></marker>
+    <marker id="a3" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto"><path d="M0 0L10 3L0 6z" fill="#3fb950"/></marker>
+    <marker id="a4" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto"><path d="M0 0L10 3L0 6z" fill="#f0883e"/></marker>
+    <marker id="a5" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto"><path d="M0 0L10 3L0 6z" fill="#f85149"/></marker>
   </defs>
 
-  <!-- Background -->
-  <rect width="800" height="400" rx="12" fill="#0d1117"/>
+  <rect width="800" height="520" rx="12" fill="url(#bgGrad)"/>
 
-  <!-- Title -->
-  <text x="400" y="32" text-anchor="middle" fill="#e6edf3" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="bold">Episodic Memory Architecture</text>
+  <!-- ===== Title ===== -->
+  <text x="400" y="30" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="18" font-weight="bold">Episodic Memory: How Long-Term Facts Are Built</text>
+  <text x="400" y="50" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="12">Conversations become persistent knowledge through extraction, scoping, and consolidation</text>
 
-  <!-- Left: Session End -->
-  <rect x="20" y="50" width="370" height="165" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1"/>
-  <text x="205" y="72" text-anchor="middle" fill="#58a6ff" font-family="system-ui, sans-serif" font-size="13" font-weight="bold">SESSION END</text>
+  <!-- ===== ROW 1: SESSION END (left) ===== -->
+  <rect x="15" y="65" width="375" height="145" rx="8" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+  <rect x="15" y="65" width="375" height="24" rx="8" fill="#1f6feb" opacity="0.15"/>
+  <text x="202" y="82" text-anchor="middle" fill="#58a6ff" font-family="system-ui, sans-serif" font-size="12" font-weight="bold">SESSION END - Extract Knowledge</text>
 
-  <!-- Conversations box -->
-  <rect x="40" y="88" width="100" height="40" rx="6" fill="url(#blueGrad)" filter="url(#shadow)"/>
-  <text x="90" y="112" text-anchor="middle" fill="#fff" font-family="system-ui, sans-serif" font-size="11" font-weight="600">Conversations</text>
+  <!-- Conversation bubbles -->
+  <rect x="30" y="98" width="90" height="22" rx="11" fill="#161b22" stroke="#58a6ff" stroke-width="1"/>
+  <text x="75" y="113" text-anchor="middle" fill="#58a6ff" font-family="system-ui, sans-serif" font-size="9">"Use Riverpod"</text>
+  <rect x="30" y="124" width="90" height="22" rx="11" fill="#161b22" stroke="#58a6ff" stroke-width="1"/>
+  <text x="75" y="139" text-anchor="middle" fill="#58a6ff" font-family="system-ui, sans-serif" font-size="9">"No localStorage"</text>
+  <rect x="30" y="150" width="90" height="22" rx="11" fill="#161b22" stroke="#58a6ff" stroke-width="1"/>
+  <text x="75" y="165" text-anchor="middle" fill="#58a6ff" font-family="system-ui, sans-serif" font-size="9">"Named exports"</text>
+  <text x="75" y="188" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="9">Conversations</text>
 
-  <!-- Arrow 1: Conv -> Parser -->
-  <line x1="140" y1="108" x2="163" y2="108" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#arrowBlue)"/>
+  <!-- Arrow -->
+  <line x1="125" y1="140" x2="150" y2="140" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a1)"/>
 
-  <!-- Parser box -->
-  <rect x="165" y="88" width="80" height="40" rx="6" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
-  <text x="205" y="105" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="10">Parse</text>
-  <text x="205" y="118" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="9">JSONL</text>
+  <!-- Haiku LLM -->
+  <rect x="155" y="110" width="85" height="60" rx="6" fill="url(#purpleG)" filter="url(#sh)"/>
+  <text x="197" y="133" text-anchor="middle" fill="#fff" font-family="system-ui, sans-serif" font-size="11" font-weight="600">Haiku LLM</text>
+  <text x="197" y="148" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-family="system-ui, sans-serif" font-size="9">Extract Facts</text>
+  <text x="197" y="161" text-anchor="middle" fill="rgba(255,255,255,0.6)" font-family="system-ui, sans-serif" font-size="8">confidence &gt; 0.7</text>
 
-  <!-- Arrow 2: Parser -> Embeddings -->
-  <line x1="245" y1="108" x2="268" y2="108" stroke="#58a6ff" stroke-width="1.5"/>
+  <!-- Arrow -->
+  <line x1="240" y1="140" x2="265" y2="140" stroke="#d2a8ff" stroke-width="1.5" marker-end="url(#a2)"/>
 
-  <!-- Embeddings box -->
-  <rect x="270" y="88" width="100" height="40" rx="6" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
-  <text x="320" y="105" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="10">Embeddings</text>
-  <text x="320" y="118" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="9">384-dim vectors</text>
+  <!-- Extracted facts -->
+  <rect x="270" y="96" width="110" height="26" rx="4" fill="#161b22" stroke="#3fb950" stroke-width="1"/>
+  <circle cx="282" cy="109" r="4" fill="#3fb950"/><text x="290" y="113" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="9">decision</text>
+  <text x="354" y="113" text-anchor="end" fill="#8b949e" font-family="system-ui, sans-serif" font-size="8">project</text>
 
-  <!-- Arrow down from Conversations to Haiku -->
-  <line x1="90" y1="128" x2="90" y2="148" stroke="#d2a8ff" stroke-width="1.5"/>
+  <rect x="270" y="126" width="110" height="26" rx="4" fill="#161b22" stroke="#f0883e" stroke-width="1"/>
+  <circle cx="282" cy="139" r="4" fill="#f0883e"/><text x="290" y="143" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="9">constraint</text>
+  <text x="354" y="143" text-anchor="end" fill="#8b949e" font-family="system-ui, sans-serif" font-size="8">project</text>
 
-  <!-- Haiku LLM box -->
-  <rect x="40" y="150" width="100" height="40" rx="6" fill="url(#purpleGrad)" filter="url(#shadow)"/>
-  <text x="90" y="167" text-anchor="middle" fill="#fff" font-family="system-ui, sans-serif" font-size="10" font-weight="600">Haiku LLM</text>
-  <text x="90" y="180" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-family="system-ui, sans-serif" font-size="9">Extract Facts</text>
+  <rect x="270" y="156" width="110" height="26" rx="4" fill="#161b22" stroke="#58a6ff" stroke-width="1"/>
+  <circle cx="282" cy="169" r="4" fill="#58a6ff"/><text x="290" y="173" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="9">preference</text>
+  <text x="354" y="173" text-anchor="end" fill="#8b949e" font-family="system-ui, sans-serif" font-size="8">global</text>
 
-  <!-- Arrow: Haiku -> Facts DB -->
-  <line x1="140" y1="170" x2="268" y2="170" stroke="#d2a8ff" stroke-width="1.5"/>
+  <text x="325" y="196" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="9">Extracted Facts + Scope</text>
 
-  <!-- Facts DB box -->
-  <rect x="270" y="150" width="100" height="40" rx="6" fill="#161b22" stroke="#d2a8ff" stroke-width="1.5"/>
-  <text x="320" y="167" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="10">Facts Table</text>
-  <text x="320" y="180" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="9">+ embeddings</text>
+  <!-- ===== ROW 1: SESSION START (right) ===== -->
+  <rect x="410" y="65" width="375" height="145" rx="8" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+  <rect x="410" y="65" width="375" height="24" rx="8" fill="#238636" opacity="0.15"/>
+  <text x="597" y="82" text-anchor="middle" fill="#3fb950" font-family="system-ui, sans-serif" font-size="12" font-weight="bold">SESSION START - Inject Context</text>
 
-  <!-- Center: SQLite -->
-  <rect x="310" y="235" width="180" height="55" rx="8" fill="url(#greenGrad)" filter="url(#shadow)"/>
-  <text x="400" y="256" text-anchor="middle" fill="#fff" font-family="system-ui, sans-serif" font-size="12" font-weight="bold">SQLite + sqlite-vec</text>
-  <text x="400" y="272" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-family="system-ui, sans-serif" font-size="10">exchanges | facts | vectors</text>
+  <!-- Vector Search -->
+  <rect x="425" y="98" width="95" height="50" rx="6" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="472" y="117" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="10">Vector Search</text>
+  <text x="472" y="131" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="9">Find similar</text>
+  <text x="472" y="142" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="8">threshold: 0.85</text>
 
-  <!-- Arrow: Embeddings -> SQLite -->
-  <path d="M 320 128 L 320 215 Q 320 225 330 230 L 370 235" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+  <!-- Arrow -->
+  <line x1="520" y1="123" x2="540" y2="123" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a3)"/>
 
-  <!-- Arrow: Facts -> SQLite -->
-  <path d="M 320 190 L 320 215 Q 320 225 330 230 L 370 235" fill="none" stroke="#d2a8ff" stroke-width="1.5"/>
+  <!-- Consolidate -->
+  <rect x="545" y="98" width="85" height="50" rx="6" fill="url(#purpleG)" filter="url(#sh)"/>
+  <text x="587" y="117" text-anchor="middle" fill="#fff" font-family="system-ui, sans-serif" font-size="10" font-weight="600">Haiku LLM</text>
+  <text x="587" y="131" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-family="system-ui, sans-serif" font-size="9">Consolidate</text>
+  <text x="587" y="142" text-anchor="middle" fill="rgba(255,255,255,0.6)" font-family="system-ui, sans-serif" font-size="8">max 10 calls</text>
 
-  <!-- Right: Session Start -->
-  <rect x="410" y="50" width="370" height="165" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1"/>
-  <text x="595" y="72" text-anchor="middle" fill="#3fb950" font-family="system-ui, sans-serif" font-size="13" font-weight="bold">SESSION START</text>
+  <!-- Arrow -->
+  <line x1="630" y1="123" x2="650" y2="123" stroke="#d2a8ff" stroke-width="1.5" marker-end="url(#a2)"/>
 
-  <!-- Vector Search box -->
-  <rect x="430" y="88" width="100" height="40" rx="6" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
-  <text x="480" y="105" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="10">Vector Search</text>
-  <text x="480" y="118" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="9">similarity 0.85</text>
+  <!-- 4 Outcomes mini -->
+  <rect x="655" y="95" width="120" height="58" rx="6" fill="#161b22" stroke="#f0883e" stroke-width="1"/>
+  <text x="715" y="110" text-anchor="middle" fill="#58a6ff" font-family="system-ui, sans-serif" font-size="8">DUPLICATE → merge</text>
+  <text x="715" y="122" text-anchor="middle" fill="#f85149" font-family="system-ui, sans-serif" font-size="8">CONTRADICT → replace</text>
+  <text x="715" y="134" text-anchor="middle" fill="#f0883e" font-family="system-ui, sans-serif" font-size="8">EVOLVE → update</text>
+  <text x="715" y="146" text-anchor="middle" fill="#3fb950" font-family="system-ui, sans-serif" font-size="8">INDEPENDENT → keep</text>
 
-  <!-- Arrow: Search -> Haiku -->
-  <line x1="530" y1="108" x2="553" y2="108" stroke="#3fb950" stroke-width="1.5"/>
+  <!-- Context Injection -->
+  <rect x="425" y="160" width="350" height="36" rx="6" fill="url(#orangeG)" filter="url(#sh)"/>
+  <text x="600" y="178" text-anchor="middle" fill="#fff" font-family="system-ui, sans-serif" font-size="11" font-weight="600">Top 10 Facts Injected as Context</text>
+  <text x="600" y="191" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-family="system-ui, sans-serif" font-size="9">Claude starts every session with your accumulated knowledge</text>
 
-  <!-- Haiku Consolidation box -->
-  <rect x="555" y="88" width="100" height="40" rx="6" fill="url(#purpleGrad)" filter="url(#shadow)"/>
-  <text x="605" y="105" text-anchor="middle" fill="#fff" font-family="system-ui, sans-serif" font-size="10" font-weight="600">Haiku LLM</text>
-  <text x="605" y="118" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-family="system-ui, sans-serif" font-size="9">Consolidate</text>
+  <!-- ===== ROW 2: SCOPE ISOLATION (Main Feature) ===== -->
+  <rect x="15" y="220" width="770" height="195" rx="8" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+  <text x="400" y="242" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="14" font-weight="bold">Scope Isolation: Memory Never Leaks Between Projects</text>
 
-  <!-- Arrow: Haiku -> Actions -->
-  <line x1="655" y1="108" x2="668" y2="108" stroke="#d2a8ff" stroke-width="1.5"/>
+  <!-- Global (User) Scope - top center -->
+  <rect x="250" y="255" width="300" height="65" rx="8" fill="#161b22" stroke="#d2a8ff" stroke-width="2"/>
+  <text x="400" y="273" text-anchor="middle" fill="#d2a8ff" font-family="system-ui, sans-serif" font-size="11" font-weight="bold">GLOBAL SCOPE (User-wide)</text>
+  <text x="400" y="289" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="9">"Named exports only"  |  "Korean responses"  |  "Prefer Tailwind"</text>
+  <text x="400" y="305" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="8">Shared across ALL projects</text>
 
-  <!-- Actions box -->
-  <rect x="670" y="85" width="90" height="46" rx="6" fill="#161b22" stroke="#f0883e" stroke-width="1.5"/>
-  <text x="715" y="101" text-anchor="middle" fill="#f0883e" font-family="system-ui, sans-serif" font-size="9">DUPLICATE merge</text>
-  <text x="715" y="113" text-anchor="middle" fill="#f0883e" font-family="system-ui, sans-serif" font-size="9">CONTRADICT replace</text>
-  <text x="715" y="125" text-anchor="middle" fill="#f0883e" font-family="system-ui, sans-serif" font-size="9">EVOLVE update</text>
+  <!-- Arrow: Global -> Project A -->
+  <line x1="320" y1="320" x2="160" y2="340" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a3)"/>
+  <text x="225" y="328" text-anchor="middle" fill="#3fb950" font-family="system-ui, sans-serif" font-size="9" font-weight="bold">shared</text>
 
-  <!-- Arrow: SQLite -> Vector Search -->
-  <path d="M 430 255 Q 420 255 420 240 L 420 128 Q 420 108 430 108 L 428 108" fill="none" stroke="#3fb950" stroke-width="1.5"/>
+  <!-- Arrow: Global -> Project B -->
+  <line x1="480" y1="320" x2="640" y2="340" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a3)"/>
+  <text x="575" y="328" text-anchor="middle" fill="#3fb950" font-family="system-ui, sans-serif" font-size="9" font-weight="bold">shared</text>
 
-  <!-- Context Injection box -->
-  <rect x="430" y="150" width="230" height="40" rx="6" fill="url(#orangeGrad)" filter="url(#shadow)"/>
-  <text x="545" y="167" text-anchor="middle" fill="#fff" font-family="system-ui, sans-serif" font-size="11" font-weight="600">Context Injection</text>
-  <text x="545" y="180" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-family="system-ui, sans-serif" font-size="10">Top 10 facts by confirmation count</text>
+  <!-- Project A Scope -->
+  <rect x="30" y="345" width="330" height="60" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="2"/>
+  <text x="195" y="363" text-anchor="middle" fill="#58a6ff" font-family="system-ui, sans-serif" font-size="11" font-weight="bold">PROJECT SCOPE: Flutter App</text>
+  <text x="195" y="379" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="9">"Use Riverpod"  |  "GoRouter navigation"  |  "Feature-first arch"</text>
+  <text x="195" y="393" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="8">Only visible in this project + Global</text>
 
-  <!-- Arrow: Actions -> merged facts (back to SQLite) -->
-  <path d="M 715 131 L 715 200 Q 715 210 705 215 L 500 235" fill="none" stroke="#f0883e" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <!-- Project B Scope -->
+  <rect x="440" y="345" width="330" height="60" rx="8" fill="#161b22" stroke="#f0883e" stroke-width="2"/>
+  <text x="605" y="363" text-anchor="middle" fill="#f0883e" font-family="system-ui, sans-serif" font-size="11" font-weight="bold">PROJECT SCOPE: React Dashboard</text>
+  <text x="605" y="379" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="9">"Use Redux Toolkit"  |  "React Router v6"  |  "Zustand for UI"</text>
+  <text x="605" y="393" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="8">Only visible in this project + Global</text>
 
-  <!-- MCP Tools section -->
-  <rect x="20" y="310" width="760" height="70" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1"/>
-  <text x="400" y="332" text-anchor="middle" fill="#58a6ff" font-family="system-ui, sans-serif" font-size="13" font-weight="bold">MCP Tools</text>
+  <!-- X mark between projects -->
+  <line x1="370" y1="365" x2="430" y2="385" stroke="#f85149" stroke-width="3"/>
+  <line x1="430" y1="365" x2="370" y2="385" stroke="#f85149" stroke-width="3"/>
+  <text x="400" y="400" text-anchor="middle" fill="#f85149" font-family="system-ui, sans-serif" font-size="8" font-weight="bold">NEVER shared</text>
 
-  <!-- Tool badges -->
-  <rect x="120" y="345" width="120" height="26" rx="13" fill="#0d1117" stroke="#58a6ff" stroke-width="1"/>
-  <text x="180" y="362" text-anchor="middle" fill="#58a6ff" font-family="system-ui, sans-serif" font-size="11">search</text>
+  <!-- ===== ROW 3: SQLite Storage + MCP ===== -->
+  <rect x="15" y="425" width="375" height="80" rx="8" fill="url(#greenG)" filter="url(#sh)"/>
+  <text x="202" y="450" text-anchor="middle" fill="#fff" font-family="system-ui, sans-serif" font-size="13" font-weight="bold">SQLite + sqlite-vec</text>
+  <text x="202" y="468" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-family="system-ui, sans-serif" font-size="10">exchanges | facts | fact_revisions | vec_384dim</text>
+  <text x="202" y="484" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-family="system-ui, sans-serif" font-size="9">Local storage - no cloud, no API calls for search</text>
 
-  <rect x="280" y="345" width="120" height="26" rx="13" fill="#0d1117" stroke="#3fb950" stroke-width="1"/>
-  <text x="340" y="362" text-anchor="middle" fill="#3fb950" font-family="system-ui, sans-serif" font-size="11">read</text>
+  <!-- Arrows: Row1 -> SQLite -->
+  <path d="M 325 196 L 325 210 Q 325 220 315 220 L 210 220 Q 200 220 200 230 L 200 423" fill="none" stroke="#d2a8ff" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#a2)"/>
+  <path d="M 600 196 Q 600 210 590 210 L 210 210 Q 200 210 200 220" fill="none" stroke="#f0883e" stroke-width="1.5" stroke-dasharray="4,3"/>
 
-  <rect x="440" y="345" width="120" height="26" rx="13" fill="#0d1117" stroke="#d2a8ff" stroke-width="1"/>
-  <text x="500" y="362" text-anchor="middle" fill="#d2a8ff" font-family="system-ui, sans-serif" font-size="11">search_facts</text>
+  <!-- MCP Tools -->
+  <rect x="410" y="425" width="375" height="80" rx="8" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
+  <text x="597" y="448" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="12" font-weight="bold">MCP Tools for Claude</text>
+
+  <rect x="430" y="460" width="90" height="26" rx="13" fill="#0d1117" stroke="#58a6ff" stroke-width="1.5"/>
+  <text x="475" y="477" text-anchor="middle" fill="#58a6ff" font-family="system-ui, sans-serif" font-size="10">search</text>
+
+  <rect x="540" y="460" width="90" height="26" rx="13" fill="#0d1117" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="585" y="477" text-anchor="middle" fill="#3fb950" font-family="system-ui, sans-serif" font-size="10">read</text>
+
+  <rect x="650" y="460" width="110" height="26" rx="13" fill="#0d1117" stroke="#d2a8ff" stroke-width="1.5"/>
+  <text x="705" y="477" text-anchor="middle" fill="#d2a8ff" font-family="system-ui, sans-serif" font-size="10">search_facts</text>
 
   <!-- Arrow: SQLite -> MCP -->
-  <line x1="400" y1="290" x2="400" y2="308" stroke="#8b949e" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <line x1="390" y1="465" x2="408" y2="465" stroke="#8b949e" stroke-width="1.5" stroke-dasharray="4,3"/>
 </svg>

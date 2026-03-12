@@ -7,56 +7,57 @@ export const ScopeScene = () => {
 
   const titleOpacity = interpolate(frame, [0, 15], [0, 1], { extrapolateRight: "clamp" });
 
-  // Global box appears first
-  const globalOpacity = interpolate(frame, [15, 30], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const globalScale = spring({ frame: Math.max(0, frame - 15), fps, config: { damping: 14 } });
+  // Phase 1: Show the problem - what happens WITHOUT scope isolation
+  const problemOpacity = interpolate(frame, [10, 20], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const problemFade = interpolate(frame, [40, 50], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
-  // Project boxes
-  const projAOpacity = interpolate(frame, [35, 50], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const projBOpacity = interpolate(frame, [45, 60], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const projAScale = spring({ frame: Math.max(0, frame - 35), fps, config: { damping: 14 } });
-  const projBScale = spring({ frame: Math.max(0, frame - 45), fps, config: { damping: 14 } });
+  // Phase 2: Show the solution - scope isolation
+  const solutionOpacity = interpolate(frame, [45, 55], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
-  // Connection lines (global to projects)
-  const lineOpacity = interpolate(frame, [55, 70], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  // Global scope
+  const globalOpacity = interpolate(frame, [50, 60], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const globalScale = spring({ frame: Math.max(0, frame - 50), fps, config: { damping: 14 } });
 
-  // Red X between projects
-  const xOpacity = interpolate(frame, [75, 85], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const xScale = spring({ frame: Math.max(0, frame - 75), fps, config: { damping: 10, stiffness: 150 } });
+  // Project scopes
+  const projAOpacity = interpolate(frame, [62, 72], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const projBOpacity = interpolate(frame, [68, 78], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const projAScale = spring({ frame: Math.max(0, frame - 62), fps, config: { damping: 14 } });
+  const projBScale = spring({ frame: Math.max(0, frame - 68), fps, config: { damping: 14 } });
 
-  // Green checks
-  const checkOpacity = interpolate(frame, [90, 100], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
-  const checkScale = spring({ frame: Math.max(0, frame - 90), fps, config: { damping: 12, stiffness: 120 } });
+  // Arrows and X
+  const arrowOpacity = interpolate(frame, [78, 88], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const xOpacity = interpolate(frame, [90, 100], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const xScale = spring({ frame: Math.max(0, frame - 90), fps, config: { damping: 10, stiffness: 150 } });
 
-  // Bottom explanation
-  const explainOpacity = interpolate(frame, [105, 120], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  // "What each project sees" section
+  const seesOpacity = interpolate(frame, [105, 115], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
 
-  const globalFacts = [
-    { text: "User prefers TypeScript", color: colors.accent },
-    { text: "Always run tests", color: colors.green },
-  ];
-  const projAFacts = [
-    { text: "Use Next.js 15", color: colors.purple },
-    { text: "Deploy to Vercel", color: colors.accent },
-  ];
-  const projBFacts = [
-    { text: "Flutter + Riverpod", color: colors.orange },
-    { text: "Firebase backend", color: colors.red },
-  ];
-
-  const FactCard = ({ text, color, delay }: { text: string; color: string; delay: number }) => {
-    const cardOpacity = interpolate(frame, [delay, delay + 10], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const FactTag = ({ text, color, scope, delay }: { text: string; color: string; scope: string; delay: number }) => {
+    const o = interpolate(frame, [delay, delay + 8], [0, 1], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
     return (
       <div style={{
-        opacity: cardOpacity,
-        fontSize: 13,
-        fontFamily: monoFont,
-        color: colors.text,
+        opacity: o,
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
         padding: "6px 12px",
         background: `${color}10`,
         borderLeft: `3px solid ${color}`,
         borderRadius: 4,
+        fontSize: 14,
+        fontFamily: monoFont,
+        color: colors.text,
       }}>
+        <span style={{
+          fontSize: 10,
+          fontWeight: 700,
+          color: scope === "global" ? colors.purple : colors.accent,
+          background: scope === "global" ? `${colors.purple}20` : `${colors.accent}20`,
+          padding: "1px 6px",
+          borderRadius: 3,
+        }}>
+          {scope}
+        </span>
         {text}
       </div>
     );
@@ -64,224 +65,191 @@ export const ScopeScene = () => {
 
   return (
     <AbsoluteFill style={{ background: colors.bg, fontFamily: sansFont }}>
-      <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", padding: "0 100px" }}>
+      <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", padding: "0 80px" }}>
         <div style={{
           fontSize: 14,
-          color: colors.accent,
+          color: colors.orange,
           fontWeight: 600,
           textTransform: "uppercase",
           letterSpacing: 3,
           opacity: titleOpacity,
           marginBottom: 6,
         }}>
-          Architecture
+          Memory Architecture
         </div>
         <div style={{
           fontSize: 44,
           fontWeight: 700,
           color: colors.text,
           opacity: titleOpacity,
-          marginBottom: 50,
+          marginBottom: 30,
         }}>
-          Scope <span style={{ color: colors.accent }}>Isolation</span>
+          Scope <span style={{ color: colors.orange }}>Isolation</span>
         </div>
 
-        <div style={{ position: "relative", height: 500 }}>
-          {/* Global scope box - top center */}
+        {/* Phase 1: Problem - shown briefly */}
+        {frame < 55 && (
           <div style={{
-            position: "absolute",
-            left: "50%",
-            top: 0,
-            transform: `translateX(-50%) scale(${globalScale})`,
-            opacity: globalOpacity,
-            width: 500,
+            opacity: problemOpacity * problemFade,
+            background: `${colors.red}08`,
+            border: `1px solid ${colors.red}30`,
+            borderRadius: 12,
+            padding: "24px 32px",
+            marginBottom: 20,
           }}>
-            <div style={{
-              background: colors.surface,
-              border: `2px solid ${colors.accent}`,
-              borderRadius: 16,
-              padding: "20px 28px",
-              textAlign: "center",
-            }}>
-              <div style={{ fontSize: 18, fontWeight: 700, color: colors.accent, marginBottom: 12 }}>
-                GLOBAL SCOPE
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {globalFacts.map((f, i) => (
-                  <FactCard key={i} text={f.text} color={f.color} delay={25 + i * 8} />
-                ))}
-              </div>
-              <div style={{ fontSize: 12, color: colors.textMuted, marginTop: 8, fontFamily: monoFont }}>
-                Shared across all projects
-              </div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: colors.red, marginBottom: 12 }}>
+              Without scope isolation:
+            </div>
+            <div style={{ fontSize: 16, color: colors.text, lineHeight: 1.6 }}>
+              Flutter project sees <span style={{ color: colors.red }}>"Use Redux Toolkit"</span> from React project
+            </div>
+            <div style={{ fontSize: 16, color: colors.text, lineHeight: 1.6 }}>
+              React project sees <span style={{ color: colors.red }}>"Use Riverpod"</span> from Flutter project
+            </div>
+            <div style={{ fontSize: 14, color: colors.textMuted, marginTop: 8 }}>
+              Claude gets confused by contradicting technology decisions from different projects
             </div>
           </div>
+        )}
 
-          {/* Connection lines */}
-          <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
-            {/* Global to Project A */}
-            <line
-              x1="45%" y1="155" x2="28%" y2="240"
-              stroke={colors.green}
-              strokeWidth={2}
-              strokeDasharray="6,4"
-              opacity={lineOpacity}
-            />
-            {/* Global to Project B */}
-            <line
-              x1="55%" y1="155" x2="72%" y2="240"
-              stroke={colors.green}
-              strokeWidth={2}
-              strokeDasharray="6,4"
-              opacity={lineOpacity}
-            />
-          </svg>
-
-          {/* Green checks on lines */}
+        {/* Phase 2: Solution */}
+        <div style={{ opacity: solutionOpacity, position: "relative" }}>
+          {/* Global scope - centered at top */}
           <div style={{
-            position: "absolute",
-            left: "33%",
-            top: 185,
-            opacity: checkOpacity,
-            transform: `scale(${checkScale})`,
-            fontSize: 24,
-            color: colors.green,
-            fontWeight: 700,
-            background: colors.bg,
-            padding: "2px 6px",
-            borderRadius: 6,
-          }}>
-            OK
-          </div>
-          <div style={{
-            position: "absolute",
-            left: "63%",
-            top: 185,
-            opacity: checkOpacity,
-            transform: `scale(${checkScale})`,
-            fontSize: 24,
-            color: colors.green,
-            fontWeight: 700,
-            background: colors.bg,
-            padding: "2px 6px",
-            borderRadius: 6,
-          }}>
-            OK
-          </div>
-
-          {/* Project A box - bottom left */}
-          <div style={{
-            position: "absolute",
-            left: 60,
-            top: 240,
-            opacity: projAOpacity,
-            transform: `scale(${projAScale})`,
-            width: 420,
+            opacity: globalOpacity,
+            transform: `scale(${globalScale})`,
+            display: "flex",
+            justifyContent: "center",
+            marginBottom: 20,
           }}>
             <div style={{
+              width: 700,
               background: colors.surface,
               border: `2px solid ${colors.purple}`,
               borderRadius: 16,
-              padding: "20px 28px",
+              padding: "16px 24px",
             }}>
-              <div style={{ fontSize: 18, fontWeight: 700, color: colors.purple, marginBottom: 12 }}>
-                PROJECT A: web-app
+              <div style={{ fontSize: 18, fontWeight: 700, color: colors.purple, marginBottom: 10, textAlign: "center" }}>
+                GLOBAL SCOPE (User-wide preferences)
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {projAFacts.map((f, i) => (
-                  <FactCard key={i} text={f.text} color={f.color} delay={45 + i * 8} />
-                ))}
+              <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+                <FactTag text='"Named exports only"' color={colors.purple} scope="global" delay={55} />
+                <FactTag text='"Korean responses"' color={colors.purple} scope="global" delay={58} />
+                <FactTag text='"Prefer Tailwind"' color={colors.purple} scope="global" delay={61} />
+              </div>
+              <div style={{ fontSize: 12, color: colors.textMuted, textAlign: "center", marginTop: 8, fontFamily: monoFont }}>
+                Shared to ALL projects automatically
               </div>
             </div>
           </div>
 
-          {/* Project B box - bottom right */}
-          <div style={{
-            position: "absolute",
-            right: 60,
-            top: 240,
-            opacity: projBOpacity,
-            transform: `scale(${projBScale})`,
-            width: 420,
-          }}>
+          {/* Arrows: Global to projects */}
+          <svg style={{ position: "absolute", width: "100%", height: 40, top: 130, left: 0, pointerEvents: "none" }}>
+            <line x1="35%" y1="0" x2="25%" y2="35" stroke={colors.green} strokeWidth={2} strokeDasharray="6,4" opacity={arrowOpacity} />
+            <text x="28%" y="20" fill={colors.green} fontSize="12" fontFamily="system-ui, sans-serif" fontWeight="bold" opacity={arrowOpacity}>shared</text>
+            <line x1="65%" y1="0" x2="75%" y2="35" stroke={colors.green} strokeWidth={2} strokeDasharray="6,4" opacity={arrowOpacity} />
+            <text x="68%" y="20" fill={colors.green} fontSize="12" fontFamily="system-ui, sans-serif" fontWeight="bold" opacity={arrowOpacity}>shared</text>
+          </svg>
+
+          {/* Two project scopes side by side */}
+          <div style={{ display: "flex", gap: 40, marginTop: 40, justifyContent: "center" }}>
+            {/* Project A: Flutter */}
             <div style={{
-              background: colors.surface,
-              border: `2px solid ${colors.orange}`,
-              borderRadius: 16,
-              padding: "20px 28px",
+              opacity: projAOpacity,
+              transform: `scale(${projAScale})`,
+              flex: 1,
+              maxWidth: 420,
             }}>
-              <div style={{ fontSize: 18, fontWeight: 700, color: colors.orange, marginBottom: 12 }}>
-                PROJECT B: mobile-app
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {projBFacts.map((f, i) => (
-                  <FactCard key={i} text={f.text} color={f.color} delay={55 + i * 8} />
-                ))}
+              <div style={{
+                background: colors.surface,
+                border: `2px solid ${colors.accent}`,
+                borderRadius: 16,
+                padding: "16px 24px",
+              }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: colors.accent, marginBottom: 10 }}>
+                  PROJECT: Flutter App
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <FactTag text='"Use Riverpod"' color={colors.accent} scope="project" delay={65} />
+                  <FactTag text='"GoRouter navigation"' color={colors.accent} scope="project" delay={68} />
+                  <FactTag text='"Feature-first arch"' color={colors.accent} scope="project" delay={71} />
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Red X between projects */}
-          <div style={{
-            position: "absolute",
-            left: "50%",
-            top: 310,
-            transform: `translateX(-50%) scale(${xScale})`,
-            opacity: xOpacity,
-          }}>
+            {/* X mark */}
             <div style={{
-              background: `${colors.red}20`,
-              border: `2px solid ${colors.red}`,
-              borderRadius: 12,
-              padding: "8px 16px",
               display: "flex",
               alignItems: "center",
-              gap: 8,
+              opacity: xOpacity,
+              transform: `scale(${xScale})`,
             }}>
-              <span style={{ fontSize: 24, color: colors.red, fontWeight: 700 }}>X</span>
-              <span style={{ fontSize: 14, color: colors.red, fontFamily: monoFont }}>no cross-leak</span>
+              <div style={{
+                background: `${colors.red}15`,
+                border: `2px solid ${colors.red}`,
+                borderRadius: 12,
+                padding: "12px 16px",
+                textAlign: "center",
+              }}>
+                <div style={{ fontSize: 32, color: colors.red, fontWeight: 700, lineHeight: 1 }}>X</div>
+                <div style={{ fontSize: 11, color: colors.red, fontFamily: monoFont, marginTop: 4 }}>NEVER</div>
+                <div style={{ fontSize: 11, color: colors.red, fontFamily: monoFont }}>shared</div>
+              </div>
+            </div>
+
+            {/* Project B: React */}
+            <div style={{
+              opacity: projBOpacity,
+              transform: `scale(${projBScale})`,
+              flex: 1,
+              maxWidth: 420,
+            }}>
+              <div style={{
+                background: colors.surface,
+                border: `2px solid ${colors.orange}`,
+                borderRadius: 16,
+                padding: "16px 24px",
+              }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: colors.orange, marginBottom: 10 }}>
+                  PROJECT: React Dashboard
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  <FactTag text='"Use Redux Toolkit"' color={colors.orange} scope="project" delay={72} />
+                  <FactTag text='"React Router v6"' color={colors.orange} scope="project" delay={75} />
+                  <FactTag text='"Zustand for UI state"' color={colors.orange} scope="project" delay={78} />
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Dashed line between projects showing blocked */}
-          <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
-            <line
-              x1="32%" y1="340" x2="68%" y2="340"
-              stroke={colors.red}
-              strokeWidth={2}
-              strokeDasharray="4,8"
-              opacity={xOpacity * 0.5}
-            />
-          </svg>
-        </div>
-
-        {/* Bottom explanation */}
-        <div style={{
-          display: "flex",
-          gap: 40,
-          opacity: explainOpacity,
-          justifyContent: "center",
-          marginTop: -40,
-        }}>
+          {/* What each project sees */}
           <div style={{
-            fontSize: 15,
-            color: colors.textMuted,
-            fontFamily: monoFont,
-            padding: "8px 16px",
-            background: colors.surface2,
-            borderRadius: 8,
+            opacity: seesOpacity,
+            display: "flex",
+            gap: 24,
+            marginTop: 30,
+            justifyContent: "center",
           }}>
-            scope: <span style={{ color: colors.accent }}>project</span> | <span style={{ color: colors.green }}>global</span>
-          </div>
-          <div style={{
-            fontSize: 15,
-            color: colors.textMuted,
-            fontFamily: monoFont,
-            padding: "8px 16px",
-            background: colors.surface2,
-            borderRadius: 8,
-          }}>
-            project facts <span style={{ color: colors.red }}>never</span> leak to other projects
+            <div style={{
+              background: colors.surface2,
+              borderRadius: 8,
+              padding: "10px 20px",
+              fontFamily: monoFont,
+              fontSize: 13,
+              color: colors.textMuted,
+            }}>
+              Flutter sees: <span style={{ color: colors.accent }}>Flutter facts</span> + <span style={{ color: colors.purple }}>Global facts</span>
+            </div>
+            <div style={{
+              background: colors.surface2,
+              borderRadius: 8,
+              padding: "10px 20px",
+              fontFamily: monoFont,
+              fontSize: 13,
+              color: colors.textMuted,
+            }}>
+              React sees: <span style={{ color: colors.orange }}>React facts</span> + <span style={{ color: colors.purple }}>Global facts</span>
+            </div>
           </div>
         </div>
       </div>
