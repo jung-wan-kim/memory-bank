@@ -4,7 +4,7 @@
 
 ![아키텍처](docs/architecture.svg)
 
-![데모](docs/fact-consolidation-demo.gif)
+![데모](docs/fact-consolidation-demo.gif?v=2)
 
 ## 주요 기능
 

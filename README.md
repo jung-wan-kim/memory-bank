@@ -4,7 +4,7 @@
 
 ![Architecture](docs/architecture.svg)
 
-![Demo](docs/fact-consolidation-demo.gif)
+![Demo](docs/fact-consolidation-demo.gif?v=2)
 
 ## Features
 
