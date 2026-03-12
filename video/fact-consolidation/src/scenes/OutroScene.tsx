@@ -86,7 +86,7 @@ export const OutroScene = () => {
           border: `1px solid ${colors.accent}40`,
           borderRadius: 12,
         }}>
-          github.com/jung-wan-kim/episodic-memory
+          github.com/jung-wan-kim/memory-bank
         </div>
         <div style={{
           fontSize: 14,

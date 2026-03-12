@@ -75,7 +75,7 @@ export const SearchScene = () => {
             <div style={{ width: 12, height: 12, borderRadius: "50%", background: colors.yellow }} />
             <div style={{ width: 12, height: 12, borderRadius: "50%", background: colors.green }} />
             <span style={{ fontSize: 13, color: colors.textMuted, marginLeft: 12, fontFamily: monoFont }}>
-              episodic-memory MCP
+              memory-bank MCP
             </span>
           </div>
 

@@ -1,5 +1,5 @@
 {
-  "name": "episodic-memory-video",
+  "name": "memory-bank-video",
   "version": "1.0.0",
   "scripts": {
     "start": "npx remotion studio",
