@@ -50,7 +50,7 @@ export const IntroScene = () => {
         transform: `scale(${titleScale})`,
         letterSpacing: -2,
       }}>
-        <span style={{ color: colors.purple }}>Episodic</span> Memory
+        <span style={{ color: colors.purple }}>Memory</span> Bank
       </div>
 
       <div style={{
