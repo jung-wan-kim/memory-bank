@@ -31,10 +31,10 @@ function runScript(scriptPath, args) {
 }
 
 function showHelp() {
-  console.log(`episodic-memory - Manage and search Claude Code conversations
+  console.log(`memory-bank - Manage and search Claude Code conversations
 
 USAGE:
-  episodic-memory <command> [options]
+  memory-bank <command> [options]
 
 COMMANDS:
   sync        Sync conversations from ~/.claude/projects and index them
@@ -43,20 +43,20 @@ COMMANDS:
   show        Display a conversation in readable format
   stats       Show index statistics
 
-Run 'episodic-memory <command> --help' for command-specific help.
+Run 'memory-bank <command> --help' for command-specific help.
 
 EXAMPLES:
   # Index all conversations
-  episodic-memory index --cleanup
+  memory-bank index --cleanup
 
   # Search for something
-  episodic-memory search "React Router auth"
+  memory-bank search "React Router auth"
 
   # Display a conversation
-  episodic-memory show path/to/conversation.jsonl
+  memory-bank show path/to/conversation.jsonl
 
   # Generate HTML output
-  episodic-memory show --format html conversation.jsonl > output.html`);
+  memory-bank show --format html conversation.jsonl > output.html`);
 }
 
 async function main() {
@@ -92,7 +92,7 @@ async function main() {
 
       default:
         console.error(`Unknown command: ${command}`);
-        console.error('Try: episodic-memory --help');
+        console.error('Try: memory-bank --help');
         process.exit(1);
     }
   } catch (error) {

@@ -1,18 +1,17 @@
 {
-  "name": "episodic-memory",
+  "name": "memory-bank",
   "version": "1.0.15",
   "description": "Semantic search for Claude Code conversations. Remember past discussions, decisions, and patterns.",
   "author": {
-    "name": "Jesse Vincent",
-    "email": "jesse@fsck.com"
+    "name": "Jung-Wan Kim"
   },
-  "homepage": "https://github.com/obra/episodic-memory",
-  "repository": "https://github.com/obra/episodic-memory",
+  "homepage": "https://github.com/jung-wan-kim/memory-bank",
+  "repository": "https://github.com/jung-wan-kim/memory-bank",
   "license": "MIT",
-  "keywords": ["memory", "search", "conversations", "semantic-search", "episodic"],
+  "keywords": ["memory", "search", "conversations", "semantic-search", "memory-bank"],
   "agents": ["./agents/search-conversations.md"],
   "mcpServers": {
-    "episodic-memory": {
+    "memory-bank": {
       "command": "node",
       "args": ["${CLAUDE_PLUGIN_ROOT}/cli/mcp-server-wrapper.js"],
       "env": {}

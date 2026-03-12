@@ -17926,8 +17926,8 @@ function ensureDir(dir) {
 }
 function getSuperpowersDir() {
   let dir;
-  if (process.env.EPISODIC_MEMORY_CONFIG_DIR) {
-    dir = process.env.EPISODIC_MEMORY_CONFIG_DIR;
+  if (process.env.MEMORY_BANK_CONFIG_DIR) {
+    dir = process.env.MEMORY_BANK_CONFIG_DIR;
   } else if (process.env.PERSONAL_SUPERPOWERS_DIR) {
     dir = process.env.PERSONAL_SUPERPOWERS_DIR;
   } else {
@@ -17944,8 +17944,8 @@ function getIndexDir() {
   return ensureDir(path.join(getSuperpowersDir(), "conversation-index"));
 }
 function getDbPath() {
-  if (process.env.EPISODIC_MEMORY_DB_PATH || process.env.TEST_DB_PATH) {
-    return process.env.EPISODIC_MEMORY_DB_PATH || process.env.TEST_DB_PATH;
+  if (process.env.MEMORY_BANK_DB_PATH || process.env.TEST_DB_PATH) {
+    return process.env.MEMORY_BANK_DB_PATH || process.env.TEST_DB_PATH;
   }
   return path.join(getIndexDir(), "db.sqlite");
 }
@@ -19813,7 +19813,7 @@ function handleError(error2) {
 }
 var server = new Server(
   {
-    name: "episodic-memory",
+    name: "memory-bank",
     version: "1.0.0"
   },
   {

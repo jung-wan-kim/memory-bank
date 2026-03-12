@@ -15,7 +15,7 @@ describe('Integration Tests', () => {
 
   beforeEach(() => {
     // Create temp directory for test database
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'episodic-memory-test-'));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-bank-test-'));
     testDbPath = path.join(tmpDir, 'test.db');
 
     cleanup = () => {
@@ -27,11 +27,11 @@ describe('Integration Tests', () => {
     };
 
     // Override DB path for tests
-    process.env.EPISODIC_MEMORY_DB_PATH = testDbPath;
+    process.env.MEMORY_BANK_DB_PATH = testDbPath;
   });
 
   afterEach(() => {
-    delete process.env.EPISODIC_MEMORY_DB_PATH;
+    delete process.env.MEMORY_BANK_DB_PATH;
     if (cleanup) cleanup();
   });
 

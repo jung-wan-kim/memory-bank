@@ -2,14 +2,14 @@ import Anthropic from '@anthropic-ai/sdk';
 let client = null;
 function getClient() {
     if (!client) {
-        const apiKey = process.env.ANTHROPIC_API_KEY || process.env.EPISODIC_MEMORY_API_TOKEN;
-        const baseURL = process.env.EPISODIC_MEMORY_API_BASE_URL;
+        const apiKey = process.env.ANTHROPIC_API_KEY || process.env.MEMORY_BANK_API_TOKEN;
+        const baseURL = process.env.MEMORY_BANK_API_BASE_URL;
         client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
     }
     return client;
 }
 export async function callHaiku(systemPrompt, userMessage, maxTokens = 2048) {
-    const model = process.env.EPISODIC_MEMORY_FACT_MODEL || 'claude-haiku-4-5-20251001';
+    const model = process.env.MEMORY_BANK_FACT_MODEL || 'claude-haiku-4-5-20251001';
     const anthropic = getClient();
     const response = await anthropic.messages.create({
         model,

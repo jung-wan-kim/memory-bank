@@ -1,12 +1,12 @@
-# Episodic Memory MCP Tools Reference
+# Memory Bank MCP Tools Reference
 
-The episodic-memory plugin exposes two MCP tools for searching and displaying past conversations.
+The memory-bank plugin exposes two MCP tools for searching and displaying past conversations.
 
 ## search
 
-Search your episodic memory of past Claude Code conversations using semantic or text search.
+Search your memory bank of past Claude Code conversations using semantic or text search.
 
-**Tool name:** `mcp__plugin_episodic-memory_episodic-memory__search`
+**Tool name:** `mcp__plugin_memory-bank_memory-bank__search`
 
 ### Parameters
 
@@ -82,9 +82,9 @@ Machine-readable format:
 
 ## read
 
-Display a full conversation from episodic memory as markdown.
+Display a full conversation from memory bank as markdown.
 
-**Tool name:** `mcp__plugin_episodic-memory_episodic-memory__read`
+**Tool name:** `mcp__plugin_memory-bank_memory-bank__read`
 
 ### Parameters
 

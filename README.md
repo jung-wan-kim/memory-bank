@@ -1,4 +1,4 @@
-# Episodic Memory
+# Memory Bank
 
 > Semantic search + fact extraction for Claude Code conversations.
 
@@ -35,18 +35,18 @@ graph LR
 
 ```bash
 # Claude Code plugin (recommended)
-/plugin install episodic-memory@superpowers-marketplace
+claude plugin add -- https://github.com/jung-wan-kim/memory-bank
 
 # npm
-npm install episodic-memory
+npm install memory-bank
 ```
 
 ## Quick Start
 
 ```bash
-episodic-memory sync      # Sync & index conversations
-episodic-memory search "React auth"  # Semantic search
-episodic-memory stats     # Index statistics
+memory-bank sync      # Sync & index conversations
+memory-bank search "React auth"  # Semantic search
+memory-bank stats     # Index statistics
 ```
 
 ## Fact System
@@ -119,11 +119,11 @@ Project A sees: Project A facts + Global facts (never Project B).
 
 ```bash
 # Fact extraction model (default: claude-haiku-4-5-20251001)
-export EPISODIC_MEMORY_FACT_MODEL=claude-haiku-4-5-20251001
+export MEMORY_BANK_FACT_MODEL=claude-haiku-4-5-20251001
 export ANTHROPIC_API_KEY=your-key
 
 # Summarization model
-export EPISODIC_MEMORY_API_MODEL=opus
+export MEMORY_BANK_API_MODEL=opus
 ```
 
 ## Architecture

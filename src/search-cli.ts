@@ -14,7 +14,7 @@ for (let i = 0; i < args.length; i++) {
 
   if (arg === '--help' || arg === '-h') {
     console.log(`
-Usage: episodic-memory search [OPTIONS] <query>
+Usage: memory-bank search [OPTIONS] <query>
 
 Search indexed conversations using semantic similarity or exact text matching.
 
@@ -31,19 +31,19 @@ OPTIONS:
 
 EXAMPLES:
   # Semantic search
-  episodic-memory search "React Router authentication errors"
+  memory-bank search "React Router authentication errors"
 
   # Find exact string
-  episodic-memory search --text "a1b2c3d4e5f6"
+  memory-bank search --text "a1b2c3d4e5f6"
 
   # Time filtering
-  episodic-memory search --after 2025-09-01 "refactoring"
+  memory-bank search --after 2025-09-01 "refactoring"
 
   # Combine modes
-  episodic-memory search --both "React Router data loading"
+  memory-bank search --both "React Router data loading"
 
   # Multi-concept search (AND - all concepts must match)
-  episodic-memory search "React Router" "authentication" "JWT"
+  memory-bank search "React Router" "authentication" "JWT"
 `);
     process.exit(0);
   } else if (arg === '--vector') {
@@ -63,8 +63,8 @@ EXAMPLES:
 }
 
 if (queries.length === 0) {
-  console.error('Usage: episodic-memory search [OPTIONS] <query> [query2] [query3]...');
-  console.error('Try: episodic-memory search --help');
+  console.error('Usage: memory-bank search [OPTIONS] <query> [query2] [query3]...');
+  console.error('Try: memory-bank search --help');
   process.exit(1);
 }
 

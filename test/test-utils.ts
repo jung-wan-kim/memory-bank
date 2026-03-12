@@ -26,7 +26,7 @@ export function suppressConsole(): () => void {
  * Create a temporary test database that will be cleaned up automatically
  */
 export function createTestDb(): { db: Database.Database; cleanup: () => void } {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'episodic-memory-test-'));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-bank-test-'));
   const dbPath = path.join(tmpDir, 'test.db');
 
   const db = new Database(dbPath);

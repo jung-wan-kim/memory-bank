@@ -13,7 +13,7 @@ describe('sync command', () => {
   let dbPath: string;
 
   beforeEach(() => {
-    testDir = mkdtempSync(join(tmpdir(), 'episodic-memory-sync-test-'));
+    testDir = mkdtempSync(join(tmpdir(), 'memory-bank-sync-test-'));
     sourceDir = join(testDir, 'source');
     destDir = join(testDir, 'dest');
     dbPath = join(testDir, 'test.db');

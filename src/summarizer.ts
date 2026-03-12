@@ -7,16 +7,16 @@ import { SUMMARIZER_CONTEXT_MARKER } from './constants.js';
  * Returns full env merged with process.env so subprocess inherits PATH, HOME, etc.
  *
  * Env vars (all optional):
- * - EPISODIC_MEMORY_API_MODEL: Model to use (default: haiku)
- * - EPISODIC_MEMORY_API_MODEL_FALLBACK: Fallback model on error (default: sonnet)
- * - EPISODIC_MEMORY_API_BASE_URL: Custom API endpoint
- * - EPISODIC_MEMORY_API_TOKEN: Auth token for custom endpoint
- * - EPISODIC_MEMORY_API_TIMEOUT_MS: Timeout for API calls (default: SDK default)
+ * - MEMORY_BANK_API_MODEL: Model to use (default: haiku)
+ * - MEMORY_BANK_API_MODEL_FALLBACK: Fallback model on error (default: sonnet)
+ * - MEMORY_BANK_API_BASE_URL: Custom API endpoint
+ * - MEMORY_BANK_API_TOKEN: Auth token for custom endpoint
+ * - MEMORY_BANK_API_TIMEOUT_MS: Timeout for API calls (default: SDK default)
  */
 function getApiEnv(): Record<string, string | undefined> | undefined {
-  const baseUrl = process.env.EPISODIC_MEMORY_API_BASE_URL;
-  const token = process.env.EPISODIC_MEMORY_API_TOKEN;
-  const timeoutMs = process.env.EPISODIC_MEMORY_API_TIMEOUT_MS;
+  const baseUrl = process.env.MEMORY_BANK_API_BASE_URL;
+  const token = process.env.MEMORY_BANK_API_TOKEN;
+  const timeoutMs = process.env.MEMORY_BANK_API_TIMEOUT_MS;
 
   if (!baseUrl && !token && !timeoutMs) {
     return undefined;
@@ -47,8 +47,8 @@ function extractSummary(text: string): string {
 }
 
 async function callClaude(prompt: string, sessionId?: string, useFallback = false): Promise<string> {
-  const primaryModel = process.env.EPISODIC_MEMORY_API_MODEL || 'haiku';
-  const fallbackModel = process.env.EPISODIC_MEMORY_API_MODEL_FALLBACK || 'sonnet';
+  const primaryModel = process.env.MEMORY_BANK_API_MODEL || 'haiku';
+  const fallbackModel = process.env.MEMORY_BANK_API_MODEL_FALLBACK || 'sonnet';
   const model = useFallback ? fallbackModel : primaryModel;
 
   for await (const message of query({

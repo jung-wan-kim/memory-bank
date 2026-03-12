@@ -1,14 +1,14 @@
 {
-  "name": "episodic-memory",
+  "name": "memory-bank",
   "version": "1.0.15",
   "description": "Semantic search for Claude Code conversations",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "episodic-memory": "./cli/episodic-memory.js",
-    "episodic-memory-index": "./cli/index-conversations.js",
-    "episodic-memory-search": "./cli/search-conversations",
-    "episodic-memory-mcp-server": "./cli/mcp-server"
+    "memory-bank": "./cli/memory-bank.js",
+    "memory-bank-index": "./cli/index-conversations.js",
+    "memory-bank-search": "./cli/search-conversations",
+    "memory-bank-mcp-server": "./cli/mcp-server"
   },
   "scripts": {
     "build": "tsc && npm run bundle",
@@ -51,7 +51,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/obra/episodic-memory"
+    "url": "https://github.com/jung-wan-kim/memory-bank"
   },
-  "homepage": "https://github.com/obra/episodic-memory"
+  "homepage": "https://github.com/jung-wan-kim/memory-bank"
 }

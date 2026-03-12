@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **Windows spawn ENOENT error**: Add `shell` option for npx commands on Windows (#36, thanks @andrewcchoi!)
   - On Windows, npx is a .cmd file requiring `shell: true` for spawn() to work
-  - Applied fix to `cli/episodic-memory.js` and `cli/index-conversations.js`
+  - Applied fix to `cli/memory-bank.js` and `cli/index-conversations.js`
   - Resolves plugin initialization failures and silent SessionStart hook failures on Windows
 - **Agent conversations polluting search index**: Add exclusion marker to summarizer prompts (#15, thanks @one1zero1one!)
   - Summarizer agent conversations are now properly excluded from indexing
@@ -35,9 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - tsx is now dev-only (for tests and development)
   - Obsoletes PR #25 (background sync fix) by fixing root cause
 - **CLI architecture cleanup**: Replace bash scripts with Node.js wrappers
-  - All CLI entry points (`episodic-memory`, `index-conversations`, `search-conversations`, `mcp-server`) are now Node.js scripts
+  - All CLI entry points (`memory-bank`, `index-conversations`, `search-conversations`, `mcp-server`) are now Node.js scripts
   - Eliminates bash dependency entirely for full cross-platform support (Windows, NixOS, etc.)
-  - SessionStart hook now calls `node cli/episodic-memory.js` directly
+  - SessionStart hook now calls `node cli/memory-bank.js` directly
   - Added `search-conversations.js` to complete Node.js CLI coverage
   - Obsoletes PRs #29 (pnpm workspace), #11 (env bash), and #17 (shebang fix)
 
@@ -52,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.12] - 2025-11-22
 
 ### Changed
-- **Skill triggering behavior**: Improved episodic memory skill to trigger at appropriate times
+- **Skill triggering behavior**: Improved memory bank skill to trigger at appropriate times
   - Changed from "ALWAYS USE THIS SKILL WHEN STARTING ANY KIND OF WORK" to contextual triggers
   - Now triggers when user asks for approach/decision after exploring code
   - Now triggers when stuck on complex problems after investigating
@@ -78,7 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Search results now include file metadata (size in KB, total line count)
   - Changed from verbose 3-line format to clean 1-line: "Lines 10-25 in /path/file.jsonl (295.7KB, 1247 lines)"
   - Removes prescriptive MCP tool instructions, trusting Claude to choose correct tool based on file size
-  - Eliminates issue where episodic memory search triggered built-in Read tool instead of specialized MCP read tool
+  - Eliminates issue where memory bank search triggered built-in Read tool instead of specialized MCP read tool
 
 ### Changed
 - Enhanced `formatResults()` and `formatMultiConceptResults()` with async file metadata collection
@@ -137,7 +137,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enhanced CLI help documentation with background mode usage examples
 
 ### Changed
-- SessionStart hook now uses `episodic-memory sync --background` for instant startup
+- SessionStart hook now uses `memory-bank sync --background` for instant startup
 - Sync command forks to background process when `--background` flag is used
 - Improved hook configuration follows Claude Code hook specification exactly
 - Updated marketplace.json versions in both embedded and superpowers-marketplace locations
@@ -229,7 +229,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0] - 2025-10-14
 
 ### Added
-- Initial release of episodic-memory
+- Initial release of memory-bank
 - Semantic search for Claude Code conversations
 - MCP server integration for Claude Code
 - Automatic session-end indexing via plugin hooks

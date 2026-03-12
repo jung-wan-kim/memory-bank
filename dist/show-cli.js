@@ -11,7 +11,7 @@ for (let i = 0; i < args.length; i++) {
     }
     else if (arg === '--help' || arg === '-h') {
         console.log(`
-Usage: episodic-memory show [OPTIONS] <file>
+Usage: memory-bank show [OPTIONS] <file>
 
 Display a conversation from a JSONL file in a human-readable format.
 
@@ -21,13 +21,13 @@ OPTIONS:
 
 EXAMPLES:
   # Show conversation as markdown
-  episodic-memory show conversation.jsonl
+  memory-bank show conversation.jsonl
 
   # Generate HTML for browser viewing
-  episodic-memory show --format html conversation.jsonl > output.html
+  memory-bank show --format html conversation.jsonl > output.html
 
   # View with pipe
-  episodic-memory show conversation.jsonl | less
+  memory-bank show conversation.jsonl | less
 `);
         process.exit(0);
     }
@@ -37,8 +37,8 @@ EXAMPLES:
 }
 if (!filePath) {
     console.error('Error: No file specified');
-    console.error('Usage: episodic-memory show [OPTIONS] <file>');
-    console.error('Try: episodic-memory show --help');
+    console.error('Usage: memory-bank show [OPTIONS] <file>');
+    console.error('Try: memory-bank show --help');
     process.exit(1);
 }
 try {

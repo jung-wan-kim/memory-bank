@@ -58,7 +58,7 @@ describe('search-agent template', () => {
     const content = fs.readFileSync(templatePath, 'utf-8');
 
     // Should include the MCP tool for searching
-    expect(content).toContain('mcp__plugin_episodic-memory_episodic-memory__search');
+    expect(content).toContain('mcp__plugin_memory-bank_memory-bank__search');
   });
 
   it('includes critical rules', () => {

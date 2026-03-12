@@ -28,7 +28,7 @@ Example focus areas:
 
 Use the MCP tool `search`:
 ```
-mcp__plugin_episodic-memory_episodic-memory__search
+mcp__plugin_memory-bank_memory-bank__search
   query: "{SEARCH_QUERY}"
   mode: "both"  # or "vector" (default) or "text"
   limit: 10

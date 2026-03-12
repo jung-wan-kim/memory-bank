@@ -1,19 +1,17 @@
 {
-  "name": "episodic-memory-dev",
-  "description": "Development marketplace for episodic memory plugin",
+  "name": "memory-bank-dev",
+  "description": "Development marketplace for memory-bank plugin",
   "owner": {
-    "name": "Jesse Vincent",
-    "email": "jesse@fsck.com"
+    "name": "Jung-Wan Kim"
   },
   "plugins": [
     {
-      "name": "episodic-memory",
+      "name": "memory-bank",
       "description": "Semantic search for Claude Code conversations. Remember past discussions, decisions, and patterns.",
       "version": "1.0.15",
       "source": "./",
       "author": {
-        "name": "Jesse Vincent",
-        "email": "jesse@fsck.com"
+        "name": "Jung-Wan Kim"
       }
     }
   ]

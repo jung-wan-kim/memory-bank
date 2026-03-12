@@ -1,4 +1,4 @@
-// Public API for episodic-memory package
+// Public API for memory-bank package
 export * from './types.js';
 export * from './db.js';
 export * from './embeddings.js';

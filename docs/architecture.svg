@@ -27,7 +27,7 @@
 
   <!-- Title -->
   <text x="400" y="32" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="20" font-weight="bold">How Claude Code Remembers Across Sessions</text>
-  <text x="400" y="54" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="12">prompt → context → episodic-memory → context → prompt</text>
+  <text x="400" y="54" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="12">prompt → context → memory-bank → context → prompt</text>
 
   <!-- ============================================= -->
   <!-- SESSION 1: Normal conversation (no memory yet) -->

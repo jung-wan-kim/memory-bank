@@ -1,4 +1,4 @@
-# Episodic Memory
+# Memory Bank
 
 > Claude Code 대화를 위한 시맨틱 검색 + 팩트 자동 추출
 
@@ -35,18 +35,18 @@ graph LR
 
 ```bash
 # Claude Code 플러그인 (권장)
-/plugin install episodic-memory@superpowers-marketplace
+claude plugin add -- https://github.com/jung-wan-kim/memory-bank
 
 # npm
-npm install episodic-memory
+npm install memory-bank
 ```
 
 ## 빠른 시작
 
 ```bash
-episodic-memory sync      # 대화 동기화 및 인덱싱
-episodic-memory search "React 인증"  # 시맨틱 검색
-episodic-memory stats     # 인덱스 통계
+memory-bank sync      # 대화 동기화 및 인덱싱
+memory-bank search "React 인증"  # 시맨틱 검색
+memory-bank stats     # 인덱스 통계
 ```
 
 ## 팩트 시스템
@@ -119,11 +119,11 @@ graph TB
 
 ```bash
 # 팩트 추출 모델 (기본값: claude-haiku-4-5-20251001)
-export EPISODIC_MEMORY_FACT_MODEL=claude-haiku-4-5-20251001
+export MEMORY_BANK_FACT_MODEL=claude-haiku-4-5-20251001
 export ANTHROPIC_API_KEY=your-key
 
 # 요약 모델
-export EPISODIC_MEMORY_API_MODEL=opus
+export MEMORY_BANK_API_MODEL=opus
 ```
 
 ## 아키텍처

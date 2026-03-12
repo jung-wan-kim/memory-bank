@@ -2,7 +2,7 @@ import { getIndexStats, formatStats } from './stats.js';
 const args = process.argv.slice(2);
 if (args.includes('--help') || args.includes('-h')) {
     console.log(`
-Usage: episodic-memory stats
+Usage: memory-bank stats
 
 Display statistics about the indexed conversation archive.
 
@@ -15,7 +15,7 @@ Shows:
 
 EXAMPLES:
   # Show index statistics
-  episodic-memory stats
+  memory-bank stats
 `);
     process.exit(0);
 }

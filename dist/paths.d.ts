@@ -2,7 +2,7 @@
  * Get the personal superpowers directory
  *
  * Precedence:
- * 1. EPISODIC_MEMORY_CONFIG_DIR env var (if set, for testing)
+ * 1. MEMORY_BANK_CONFIG_DIR env var (if set, for testing)
  * 2. PERSONAL_SUPERPOWERS_DIR env var (if set)
  * 3. XDG_CONFIG_HOME/superpowers (if XDG_CONFIG_HOME is set)
  * 4. ~/.config/superpowers (default)

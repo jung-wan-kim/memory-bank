@@ -32,7 +32,7 @@ The agent will:
 
 ## When to Use
 
-You often get value out of consulting your episodic memory once you understand what you're being asked. Search memory in these situations:
+You often get value out of consulting your memory bank once you understand what you're being asked. Search memory in these situations:
 
 **After understanding the task:**
 - User asks "how should I..." or "what's the best approach..."
@@ -57,8 +57,8 @@ You often get value out of consulting your episodic memory once you understand w
 ## Direct Tool Access (Discouraged)
 
 You CAN use MCP tools directly, but DON'T:
-- `mcp__plugin_episodic-memory_episodic-memory__search`
-- `mcp__plugin_episodic-memory_episodic-memory__show`
+- `mcp__plugin_memory-bank_memory-bank__search`
+- `mcp__plugin_memory-bank_memory-bank__show`
 
 Using these directly wastes your context window. Always dispatch the agent instead.
 

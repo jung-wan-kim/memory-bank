@@ -14,15 +14,15 @@ function ensureDir(dir) {
  * Get the personal superpowers directory
  *
  * Precedence:
- * 1. EPISODIC_MEMORY_CONFIG_DIR env var (if set, for testing)
+ * 1. MEMORY_BANK_CONFIG_DIR env var (if set, for testing)
  * 2. PERSONAL_SUPERPOWERS_DIR env var (if set)
  * 3. XDG_CONFIG_HOME/superpowers (if XDG_CONFIG_HOME is set)
  * 4. ~/.config/superpowers (default)
  */
 export function getSuperpowersDir() {
     let dir;
-    if (process.env.EPISODIC_MEMORY_CONFIG_DIR) {
-        dir = process.env.EPISODIC_MEMORY_CONFIG_DIR;
+    if (process.env.MEMORY_BANK_CONFIG_DIR) {
+        dir = process.env.MEMORY_BANK_CONFIG_DIR;
     }
     else if (process.env.PERSONAL_SUPERPOWERS_DIR) {
         dir = process.env.PERSONAL_SUPERPOWERS_DIR;
@@ -59,8 +59,8 @@ export function getIndexDir() {
  */
 export function getDbPath() {
     // Allow test override with direct DB path
-    if (process.env.EPISODIC_MEMORY_DB_PATH || process.env.TEST_DB_PATH) {
-        return process.env.EPISODIC_MEMORY_DB_PATH || process.env.TEST_DB_PATH;
+    if (process.env.MEMORY_BANK_DB_PATH || process.env.TEST_DB_PATH) {
+        return process.env.MEMORY_BANK_DB_PATH || process.env.TEST_DB_PATH;
     }
     return path.join(getIndexDir(), 'db.sqlite');
 }

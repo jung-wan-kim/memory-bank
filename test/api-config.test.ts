@@ -5,16 +5,16 @@ import type { ConversationExchange } from '../src/types.js';
 describe('API Configuration', () => {
   afterEach(() => {
     // Restore only the env vars we changed
-    delete process.env.EPISODIC_MEMORY_API_BASE_URL;
-    delete process.env.EPISODIC_MEMORY_API_TOKEN;
-    delete process.env.EPISODIC_MEMORY_API_MODEL;
-    delete process.env.EPISODIC_MEMORY_API_TIMEOUT_MS;
+    delete process.env.MEMORY_BANK_API_BASE_URL;
+    delete process.env.MEMORY_BANK_API_TOKEN;
+    delete process.env.MEMORY_BANK_API_MODEL;
+    delete process.env.MEMORY_BANK_API_TIMEOUT_MS;
   });
 
-  it('should use custom API endpoint when EPISODIC_MEMORY_API_BASE_URL is set', async () => {
+  it('should use custom API endpoint when MEMORY_BANK_API_BASE_URL is set', async () => {
     // Set env vars to point to an invalid endpoint
-    process.env.EPISODIC_MEMORY_API_BASE_URL = 'https://httpbin.org/status/418';
-    process.env.EPISODIC_MEMORY_API_TOKEN = 'test-token';
+    process.env.MEMORY_BANK_API_BASE_URL = 'https://httpbin.org/status/418';
+    process.env.MEMORY_BANK_API_TOKEN = 'test-token';
 
     const exchanges: ConversationExchange[] = [
       {

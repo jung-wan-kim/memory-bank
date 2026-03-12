@@ -21,7 +21,7 @@ function runNpmInstall() {
     const isWindows = process.platform === 'win32';
     const npmCommand = isWindows ? 'npm.cmd' : 'npm';
 
-    console.error('Installing episodic-memory dependencies (first run only)...');
+    console.error('Installing memory-bank dependencies (first run only)...');
     console.error('This may take 30-60 seconds...');
 
     // Install dependencies - npm will auto-install optionalDependencies for current platform

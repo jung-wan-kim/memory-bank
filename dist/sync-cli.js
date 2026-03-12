@@ -6,7 +6,7 @@ import { spawn } from 'child_process';
 const args = process.argv.slice(2);
 if (args.includes('--help') || args.includes('-h')) {
     console.log(`
-Usage: episodic-memory sync [--background]
+Usage: memory-bank sync [--background]
 
 Sync conversations from ~/.claude/projects to archive and index them.
 
@@ -23,14 +23,14 @@ OPTIONS:
 
 EXAMPLES:
   # Sync all new conversations
-  episodic-memory sync
+  memory-bank sync
 
   # Sync in background (for hooks)
-  episodic-memory sync --background
+  memory-bank sync --background
 
   # Use in Claude Code hook
   # In .claude/hooks/session-end:
-  episodic-memory sync --background
+  memory-bank sync --background
 `);
     process.exit(0);
 }

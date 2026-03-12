@@ -2,7 +2,7 @@
 description: Gives you memory across sessions. You don't automatically remember past conversations - THIS AGENT RESTORES IT. Search your history before starting any task to recover decisions, solutions, and lessons learned.
 capabilities: ["semantic-search", "conversation-synthesis", "historical-context", "pattern-recognition", "decision-archaeology"]
 model: haiku
-tools: Read, mcp__plugin_episodic-memory_episodic-memory__search, mcp__plugin_episodic-memory_episodic-memory__show
+tools: Read, mcp__plugin_memory-bank_memory-bank__search, mcp__plugin_memory-bank_memory-bank__show
 ---
 
 # Conversation Search Agent
@@ -19,7 +19,7 @@ You are searching historical Claude Code conversations for relevant context.
 
 Use the MCP tool `search`:
 ```
-mcp__plugin_episodic-memory_episodic-memory__search
+mcp__plugin_memory-bank_memory-bank__search
   query: "your search query"
   mode: "both"  # or "vector" or "text"
   limit: 10
