@@ -1,172 +1,174 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 520" width="800" height="520">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 700" width="800" height="700">
   <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" style="stop-color:#0d1117"/>
-      <stop offset="100%" style="stop-color:#161b22"/>
+    <linearGradient id="bgG" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#0d1117"/><stop offset="100%" style="stop-color:#161b22"/>
     </linearGradient>
-    <linearGradient id="blueG" x1="0%" y1="0%" x2="100%" y2="100%">
+    <linearGradient id="blG" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" style="stop-color:#1f6feb"/><stop offset="100%" style="stop-color:#58a6ff"/>
     </linearGradient>
-    <linearGradient id="greenG" x1="0%" y1="0%" x2="100%" y2="100%">
+    <linearGradient id="grG" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" style="stop-color:#238636"/><stop offset="100%" style="stop-color:#3fb950"/>
     </linearGradient>
-    <linearGradient id="purpleG" x1="0%" y1="0%" x2="100%" y2="100%">
+    <linearGradient id="puG" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" style="stop-color:#8b5cf6"/><stop offset="100%" style="stop-color:#a78bfa"/>
     </linearGradient>
-    <linearGradient id="orangeG" x1="0%" y1="0%" x2="100%" y2="100%">
+    <linearGradient id="orG" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" style="stop-color:#d18616"/><stop offset="100%" style="stop-color:#f0883e"/>
     </linearGradient>
-    <linearGradient id="redG" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#da3633"/><stop offset="100%" style="stop-color:#f85149"/>
-    </linearGradient>
-    <filter id="sh"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.4"/></filter>
-    <marker id="a1" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto"><path d="M0 0L10 3L0 6z" fill="#58a6ff"/></marker>
-    <marker id="a2" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto"><path d="M0 0L10 3L0 6z" fill="#d2a8ff"/></marker>
-    <marker id="a3" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto"><path d="M0 0L10 3L0 6z" fill="#3fb950"/></marker>
-    <marker id="a4" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto"><path d="M0 0L10 3L0 6z" fill="#f0883e"/></marker>
-    <marker id="a5" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="8" markerHeight="6" orient="auto"><path d="M0 0L10 3L0 6z" fill="#f85149"/></marker>
+    <filter id="s1"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.5"/></filter>
+    <marker id="m1" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="10" markerHeight="8" orient="auto"><path d="M0 0L10 3L0 6z" fill="#58a6ff"/></marker>
+    <marker id="m2" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="10" markerHeight="8" orient="auto"><path d="M0 0L10 3L0 6z" fill="#d2a8ff"/></marker>
+    <marker id="m3" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="10" markerHeight="8" orient="auto"><path d="M0 0L10 3L0 6z" fill="#3fb950"/></marker>
+    <marker id="m4" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="10" markerHeight="8" orient="auto"><path d="M0 0L10 3L0 6z" fill="#f0883e"/></marker>
+    <marker id="m5" viewBox="0 0 10 6" refX="10" refY="3" markerWidth="10" markerHeight="8" orient="auto"><path d="M0 0L10 3L0 6z" fill="#8b949e"/></marker>
   </defs>
 
-  <rect width="800" height="520" rx="12" fill="url(#bgGrad)"/>
+  <rect width="800" height="700" rx="12" fill="url(#bgG)"/>
 
-  <!-- ===== Title ===== -->
-  <text x="400" y="30" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="18" font-weight="bold">Episodic Memory: How Long-Term Facts Are Built</text>
-  <text x="400" y="50" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="12">Conversations become persistent knowledge through extraction, scoping, and consolidation</text>
+  <!-- Title -->
+  <text x="400" y="32" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="20" font-weight="bold">How Claude Code Remembers Across Sessions</text>
+  <text x="400" y="54" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="12">prompt → context → episodic-memory → context → prompt</text>
 
-  <!-- ===== ROW 1: SESSION END (left) ===== -->
-  <rect x="15" y="65" width="375" height="145" rx="8" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
-  <rect x="15" y="65" width="375" height="24" rx="8" fill="#1f6feb" opacity="0.15"/>
-  <text x="202" y="82" text-anchor="middle" fill="#58a6ff" font-family="system-ui, sans-serif" font-size="12" font-weight="bold">SESSION END - Extract Knowledge</text>
+  <!-- ============================================= -->
+  <!-- SESSION 1: Normal conversation (no memory yet) -->
+  <!-- ============================================= -->
+  <rect x="20" y="70" width="760" height="230" rx="10" fill="#0d1117" stroke="#58a6ff" stroke-width="1.5"/>
+  <rect x="20" y="70" width="760" height="28" rx="10" fill="#1f6feb" opacity="0.12"/>
+  <circle cx="38" cy="84" r="5" fill="#58a6ff"/>
+  <text x="50" y="89" fill="#58a6ff" font-family="system-ui, sans-serif" font-size="13" font-weight="bold">SESSION 1 — Flutter Project</text>
+  <text x="710" y="89" text-anchor="end" fill="#8b949e" font-family="system-ui, sans-serif" font-size="11">No memory yet</text>
 
-  <!-- Conversation bubbles -->
-  <rect x="30" y="98" width="90" height="22" rx="11" fill="#161b22" stroke="#58a6ff" stroke-width="1"/>
-  <text x="75" y="113" text-anchor="middle" fill="#58a6ff" font-family="system-ui, sans-serif" font-size="9">"Use Riverpod"</text>
-  <rect x="30" y="124" width="90" height="22" rx="11" fill="#161b22" stroke="#58a6ff" stroke-width="1"/>
-  <text x="75" y="139" text-anchor="middle" fill="#58a6ff" font-family="system-ui, sans-serif" font-size="9">"No localStorage"</text>
-  <rect x="30" y="150" width="90" height="22" rx="11" fill="#161b22" stroke="#58a6ff" stroke-width="1"/>
-  <text x="75" y="165" text-anchor="middle" fill="#58a6ff" font-family="system-ui, sans-serif" font-size="9">"Named exports"</text>
-  <text x="75" y="188" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="9">Conversations</text>
+  <!-- User prompt -->
+  <rect x="40" y="108" width="200" height="44" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="1"/>
+  <text x="50" y="126" fill="#8b949e" font-family="system-ui, sans-serif" font-size="9">User prompt</text>
+  <text x="50" y="143" fill="#e6edf3" font-family="'SF Mono', monospace" font-size="11">"Use Riverpod for state"</text>
 
-  <!-- Arrow -->
-  <line x1="125" y1="140" x2="150" y2="140" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#a1)"/>
+  <!-- Arrow: prompt → context -->
+  <line x1="240" y1="130" x2="278" y2="130" stroke="#58a6ff" stroke-width="2" marker-end="url(#m1)"/>
 
-  <!-- Haiku LLM -->
-  <rect x="155" y="110" width="85" height="60" rx="6" fill="url(#purpleG)" filter="url(#sh)"/>
-  <text x="197" y="133" text-anchor="middle" fill="#fff" font-family="system-ui, sans-serif" font-size="11" font-weight="600">Haiku LLM</text>
-  <text x="197" y="148" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-family="system-ui, sans-serif" font-size="9">Extract Facts</text>
-  <text x="197" y="161" text-anchor="middle" fill="rgba(255,255,255,0.6)" font-family="system-ui, sans-serif" font-size="8">confidence &gt; 0.7</text>
+  <!-- Context Window -->
+  <rect x="282" y="105" width="220" height="70" rx="8" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <text x="392" y="122" text-anchor="middle" fill="#58a6ff" font-family="system-ui, sans-serif" font-size="10" font-weight="bold">Claude Code Context Window</text>
+  <text x="292" y="139" fill="#8b949e" font-family="'SF Mono', monospace" font-size="9">system prompt</text>
+  <text x="292" y="153" fill="#e6edf3" font-family="'SF Mono', monospace" font-size="9">user: "Use Riverpod for state"</text>
+  <text x="292" y="167" fill="#8b949e" font-family="'SF Mono', monospace" font-size="9">(no memory available)</text>
 
-  <!-- Arrow -->
-  <line x1="240" y1="140" x2="265" y2="140" stroke="#d2a8ff" stroke-width="1.5" marker-end="url(#a2)"/>
+  <!-- Arrow: context → response -->
+  <line x1="502" y1="130" x2="538" y2="130" stroke="#58a6ff" stroke-width="2" marker-end="url(#m1)"/>
 
-  <!-- Extracted facts -->
-  <rect x="270" y="96" width="110" height="26" rx="4" fill="#161b22" stroke="#3fb950" stroke-width="1"/>
-  <circle cx="282" cy="109" r="4" fill="#3fb950"/><text x="290" y="113" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="9">decision</text>
-  <text x="354" y="113" text-anchor="end" fill="#8b949e" font-family="system-ui, sans-serif" font-size="8">project</text>
+  <!-- Claude response -->
+  <rect x="542" y="108" width="220" height="44" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="1"/>
+  <text x="552" y="126" fill="#8b949e" font-family="system-ui, sans-serif" font-size="9">Claude response</text>
+  <text x="552" y="143" fill="#3fb950" font-family="'SF Mono', monospace" font-size="11">"Setting up Riverpod..."</text>
 
-  <rect x="270" y="126" width="110" height="26" rx="4" fill="#161b22" stroke="#f0883e" stroke-width="1"/>
-  <circle cx="282" cy="139" r="4" fill="#f0883e"/><text x="290" y="143" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="9">constraint</text>
-  <text x="354" y="143" text-anchor="end" fill="#8b949e" font-family="system-ui, sans-serif" font-size="8">project</text>
+  <!-- Session End Hook -->
+  <rect x="40" y="188" width="722" height="28" rx="6" fill="#d2a8ff" opacity="0.08"/>
+  <rect x="40" y="188" width="722" height="28" rx="6" fill="none" stroke="#d2a8ff" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="400" y="207" text-anchor="middle" fill="#d2a8ff" font-family="system-ui, sans-serif" font-size="12" font-weight="bold">SESSION END HOOK fires automatically</text>
 
-  <rect x="270" y="156" width="110" height="26" rx="4" fill="#161b22" stroke="#58a6ff" stroke-width="1"/>
-  <circle cx="282" cy="169" r="4" fill="#58a6ff"/><text x="290" y="173" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="9">preference</text>
-  <text x="354" y="173" text-anchor="end" fill="#8b949e" font-family="system-ui, sans-serif" font-size="8">global</text>
+  <!-- Arrow: hook → extract -->
+  <line x1="400" y1="216" x2="400" y2="234" stroke="#d2a8ff" stroke-width="2" marker-end="url(#m2)"/>
 
-  <text x="325" y="196" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="9">Extracted Facts + Scope</text>
+  <!-- Extraction row -->
+  <rect x="80" y="237" width="140" height="50" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <text x="150" y="256" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="10">Conversation</text>
+  <text x="150" y="270" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="9">full JSONL</text>
 
-  <!-- ===== ROW 1: SESSION START (right) ===== -->
-  <rect x="410" y="65" width="375" height="145" rx="8" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
-  <rect x="410" y="65" width="375" height="24" rx="8" fill="#238636" opacity="0.15"/>
-  <text x="597" y="82" text-anchor="middle" fill="#3fb950" font-family="system-ui, sans-serif" font-size="12" font-weight="bold">SESSION START - Inject Context</text>
+  <line x1="220" y1="262" x2="258" y2="262" stroke="#d2a8ff" stroke-width="1.5" marker-end="url(#m2)"/>
 
-  <!-- Vector Search -->
-  <rect x="425" y="98" width="95" height="50" rx="6" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
-  <text x="472" y="117" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="10">Vector Search</text>
-  <text x="472" y="131" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="9">Find similar</text>
-  <text x="472" y="142" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="8">threshold: 0.85</text>
+  <rect x="262" y="237" width="120" height="50" rx="6" fill="url(#puG)" filter="url(#s1)"/>
+  <text x="322" y="258" text-anchor="middle" fill="#fff" font-family="system-ui, sans-serif" font-size="11" font-weight="600">Haiku LLM</text>
+  <text x="322" y="273" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-family="system-ui, sans-serif" font-size="9">extract facts</text>
 
-  <!-- Arrow -->
-  <line x1="520" y1="123" x2="540" y2="123" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a3)"/>
+  <line x1="382" y1="262" x2="418" y2="262" stroke="#d2a8ff" stroke-width="1.5" marker-end="url(#m2)"/>
 
-  <!-- Consolidate -->
-  <rect x="545" y="98" width="85" height="50" rx="6" fill="url(#purpleG)" filter="url(#sh)"/>
-  <text x="587" y="117" text-anchor="middle" fill="#fff" font-family="system-ui, sans-serif" font-size="10" font-weight="600">Haiku LLM</text>
-  <text x="587" y="131" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-family="system-ui, sans-serif" font-size="9">Consolidate</text>
-  <text x="587" y="142" text-anchor="middle" fill="rgba(255,255,255,0.6)" font-family="system-ui, sans-serif" font-size="8">max 10 calls</text>
+  <rect x="422" y="237" width="300" height="50" rx="6" fill="#161b22" stroke="#3fb950" stroke-width="1"/>
+  <text x="432" y="254" fill="#3fb950" font-family="'SF Mono', monospace" font-size="9" font-weight="bold">decision:</text>
+  <text x="498" y="254" fill="#e6edf3" font-family="'SF Mono', monospace" font-size="9">"Use Riverpod"</text>
+  <rect x="627" y="244" width="48" height="16" rx="4" fill="#238636" opacity="0.3"/>
+  <text x="651" y="255" text-anchor="middle" fill="#3fb950" font-family="'SF Mono', monospace" font-size="8">project</text>
+  <text x="432" y="274" fill="#d2a8ff" font-family="'SF Mono', monospace" font-size="9" font-weight="bold">preference:</text>
+  <text x="512" y="274" fill="#e6edf3" font-family="'SF Mono', monospace" font-size="9">"Korean responses"</text>
+  <rect x="627" y="264" width="48" height="16" rx="4" fill="#8b5cf6" opacity="0.3"/>
+  <text x="651" y="275" text-anchor="middle" fill="#d2a8ff" font-family="'SF Mono', monospace" font-size="8">global</text>
 
-  <!-- Arrow -->
-  <line x1="630" y1="123" x2="650" y2="123" stroke="#d2a8ff" stroke-width="1.5" marker-end="url(#a2)"/>
+  <!-- ============================================= -->
+  <!-- SQLite - The persistent bridge -->
+  <!-- ============================================= -->
 
-  <!-- 4 Outcomes mini -->
-  <rect x="655" y="95" width="120" height="58" rx="6" fill="#161b22" stroke="#f0883e" stroke-width="1"/>
-  <text x="715" y="110" text-anchor="middle" fill="#58a6ff" font-family="system-ui, sans-serif" font-size="8">DUPLICATE → merge</text>
-  <text x="715" y="122" text-anchor="middle" fill="#f85149" font-family="system-ui, sans-serif" font-size="8">CONTRADICT → replace</text>
-  <text x="715" y="134" text-anchor="middle" fill="#f0883e" font-family="system-ui, sans-serif" font-size="8">EVOLVE → update</text>
-  <text x="715" y="146" text-anchor="middle" fill="#3fb950" font-family="system-ui, sans-serif" font-size="8">INDEPENDENT → keep</text>
+  <!-- Big down arrow -->
+  <line x1="400" y1="300" x2="400" y2="340" stroke="#f0883e" stroke-width="3" marker-end="url(#m4)"/>
+  <text x="430" y="318" fill="#f0883e" font-family="system-ui, sans-serif" font-size="11" font-weight="bold">STORE</text>
 
-  <!-- Context Injection -->
-  <rect x="425" y="160" width="350" height="36" rx="6" fill="url(#orangeG)" filter="url(#sh)"/>
-  <text x="600" y="178" text-anchor="middle" fill="#fff" font-family="system-ui, sans-serif" font-size="11" font-weight="600">Top 10 Facts Injected as Context</text>
-  <text x="600" y="191" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-family="system-ui, sans-serif" font-size="9">Claude starts every session with your accumulated knowledge</text>
+  <!-- SQLite box -->
+  <rect x="220" y="345" width="360" height="55" rx="10" fill="url(#grG)" filter="url(#s1)"/>
+  <text x="400" y="368" text-anchor="middle" fill="#fff" font-family="system-ui, sans-serif" font-size="14" font-weight="bold">SQLite + sqlite-vec (Local DB)</text>
+  <text x="400" y="386" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-family="system-ui, sans-serif" font-size="10">facts + 384-dim embeddings | Persists between sessions</text>
 
-  <!-- ===== ROW 2: SCOPE ISOLATION (Main Feature) ===== -->
-  <rect x="15" y="220" width="770" height="195" rx="8" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
-  <text x="400" y="242" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="14" font-weight="bold">Scope Isolation: Memory Never Leaks Between Projects</text>
+  <!-- Big down arrow -->
+  <line x1="400" y1="400" x2="400" y2="440" stroke="#3fb950" stroke-width="3" marker-end="url(#m3)"/>
+  <text x="430" y="418" fill="#3fb950" font-family="system-ui, sans-serif" font-size="11" font-weight="bold">LOAD</text>
 
-  <!-- Global (User) Scope - top center -->
-  <rect x="250" y="255" width="300" height="65" rx="8" fill="#161b22" stroke="#d2a8ff" stroke-width="2"/>
-  <text x="400" y="273" text-anchor="middle" fill="#d2a8ff" font-family="system-ui, sans-serif" font-size="11" font-weight="bold">GLOBAL SCOPE (User-wide)</text>
-  <text x="400" y="289" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="9">"Named exports only"  |  "Korean responses"  |  "Prefer Tailwind"</text>
-  <text x="400" y="305" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="8">Shared across ALL projects</text>
+  <!-- ============================================= -->
+  <!-- SESSION 2: With memory! -->
+  <!-- ============================================= -->
+  <rect x="20" y="445" width="760" height="240" rx="10" fill="#0d1117" stroke="#3fb950" stroke-width="1.5"/>
+  <rect x="20" y="445" width="760" height="28" rx="10" fill="#238636" opacity="0.12"/>
+  <circle cx="38" cy="459" r="5" fill="#3fb950"/>
+  <text x="50" y="464" fill="#3fb950" font-family="system-ui, sans-serif" font-size="13" font-weight="bold">SESSION 2 — Same Flutter Project (next day)</text>
+  <text x="710" y="464" text-anchor="end" fill="#3fb950" font-family="system-ui, sans-serif" font-size="11" font-weight="bold">With memory!</text>
 
-  <!-- Arrow: Global -> Project A -->
-  <line x1="320" y1="320" x2="160" y2="340" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a3)"/>
-  <text x="225" y="328" text-anchor="middle" fill="#3fb950" font-family="system-ui, sans-serif" font-size="9" font-weight="bold">shared</text>
+  <!-- Session Start Hook -->
+  <rect x="40" y="480" width="722" height="28" rx="6" fill="#3fb950" opacity="0.08"/>
+  <rect x="40" y="480" width="722" height="28" rx="6" fill="none" stroke="#3fb950" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="400" y="499" text-anchor="middle" fill="#3fb950" font-family="system-ui, sans-serif" font-size="12" font-weight="bold">SESSION START HOOK fires → Load top 10 facts into context</text>
 
-  <!-- Arrow: Global -> Project B -->
-  <line x1="480" y1="320" x2="640" y2="340" stroke="#3fb950" stroke-width="1.5" marker-end="url(#a3)"/>
-  <text x="575" y="328" text-anchor="middle" fill="#3fb950" font-family="system-ui, sans-serif" font-size="9" font-weight="bold">shared</text>
+  <!-- User prompt -->
+  <rect x="40" y="520" width="200" height="44" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="1"/>
+  <text x="50" y="538" fill="#8b949e" font-family="system-ui, sans-serif" font-size="9">User prompt</text>
+  <text x="50" y="555" fill="#e6edf3" font-family="'SF Mono', monospace" font-size="11">"Add authentication"</text>
 
-  <!-- Project A Scope -->
-  <rect x="30" y="345" width="330" height="60" rx="8" fill="#161b22" stroke="#58a6ff" stroke-width="2"/>
-  <text x="195" y="363" text-anchor="middle" fill="#58a6ff" font-family="system-ui, sans-serif" font-size="11" font-weight="bold">PROJECT SCOPE: Flutter App</text>
-  <text x="195" y="379" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="9">"Use Riverpod"  |  "GoRouter navigation"  |  "Feature-first arch"</text>
-  <text x="195" y="393" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="8">Only visible in this project + Global</text>
+  <!-- Arrow: prompt → context -->
+  <line x1="240" y1="542" x2="278" y2="542" stroke="#58a6ff" stroke-width="2" marker-end="url(#m1)"/>
 
-  <!-- Project B Scope -->
-  <rect x="440" y="345" width="330" height="60" rx="8" fill="#161b22" stroke="#f0883e" stroke-width="2"/>
-  <text x="605" y="363" text-anchor="middle" fill="#f0883e" font-family="system-ui, sans-serif" font-size="11" font-weight="bold">PROJECT SCOPE: React Dashboard</text>
-  <text x="605" y="379" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="9">"Use Redux Toolkit"  |  "React Router v6"  |  "Zustand for UI"</text>
-  <text x="605" y="393" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="8">Only visible in this project + Global</text>
+  <!-- Context Window WITH MEMORY (highlighted) -->
+  <rect x="282" y="515" width="220" height="90" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="2"/>
+  <rect x="282" y="515" width="220" height="90" rx="8" fill="#3fb950" opacity="0.04"/>
+  <text x="392" y="532" text-anchor="middle" fill="#3fb950" font-family="system-ui, sans-serif" font-size="10" font-weight="bold">Context Window + MEMORY</text>
+  <text x="292" y="548" fill="#8b949e" font-family="'SF Mono', monospace" font-size="9">system prompt</text>
 
-  <!-- X mark between projects -->
-  <line x1="370" y1="365" x2="430" y2="385" stroke="#f85149" stroke-width="3"/>
-  <line x1="430" y1="365" x2="370" y2="385" stroke="#f85149" stroke-width="3"/>
-  <text x="400" y="400" text-anchor="middle" fill="#f85149" font-family="system-ui, sans-serif" font-size="8" font-weight="bold">NEVER shared</text>
+  <!-- Memory facts highlighted -->
+  <rect x="289" y="554" width="206" height="30" rx="4" fill="#3fb950" opacity="0.1"/>
+  <text x="295" y="567" fill="#3fb950" font-family="'SF Mono', monospace" font-size="9" font-weight="bold">MEMORY: "Use Riverpod"</text>
+  <text x="295" y="579" fill="#d2a8ff" font-family="'SF Mono', monospace" font-size="9" font-weight="bold">MEMORY: "Korean responses"</text>
 
-  <!-- ===== ROW 3: SQLite Storage + MCP ===== -->
-  <rect x="15" y="425" width="375" height="80" rx="8" fill="url(#greenG)" filter="url(#sh)"/>
-  <text x="202" y="450" text-anchor="middle" fill="#fff" font-family="system-ui, sans-serif" font-size="13" font-weight="bold">SQLite + sqlite-vec</text>
-  <text x="202" y="468" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-family="system-ui, sans-serif" font-size="10">exchanges | facts | fact_revisions | vec_384dim</text>
-  <text x="202" y="484" text-anchor="middle" fill="rgba(255,255,255,0.7)" font-family="system-ui, sans-serif" font-size="9">Local storage - no cloud, no API calls for search</text>
+  <text x="292" y="597" fill="#e6edf3" font-family="'SF Mono', monospace" font-size="9">user: "Add authentication"</text>
 
-  <!-- Arrows: Row1 -> SQLite -->
-  <path d="M 325 196 L 325 210 Q 325 220 315 220 L 210 220 Q 200 220 200 230 L 200 423" fill="none" stroke="#d2a8ff" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#a2)"/>
-  <path d="M 600 196 Q 600 210 590 210 L 210 210 Q 200 210 200 220" fill="none" stroke="#f0883e" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <!-- Arrow: context → response -->
+  <line x1="502" y1="555" x2="538" y2="555" stroke="#3fb950" stroke-width="2" marker-end="url(#m3)"/>
 
-  <!-- MCP Tools -->
-  <rect x="410" y="425" width="375" height="80" rx="8" fill="#0d1117" stroke="#30363d" stroke-width="1"/>
-  <text x="597" y="448" text-anchor="middle" fill="#e6edf3" font-family="system-ui, sans-serif" font-size="12" font-weight="bold">MCP Tools for Claude</text>
+  <!-- Claude response WITH memory -->
+  <rect x="542" y="520" width="220" height="65" rx="8" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="552" y="538" fill="#8b949e" font-family="system-ui, sans-serif" font-size="9">Claude response (with memory!)</text>
+  <text x="552" y="556" fill="#3fb950" font-family="'SF Mono', monospace" font-size="11">"Riverpod 기반으로"</text>
+  <text x="552" y="572" fill="#3fb950" font-family="'SF Mono', monospace" font-size="11">"인증 설정합니다..."</text>
 
-  <rect x="430" y="460" width="90" height="26" rx="13" fill="#0d1117" stroke="#58a6ff" stroke-width="1.5"/>
-  <text x="475" y="477" text-anchor="middle" fill="#58a6ff" font-family="system-ui, sans-serif" font-size="10">search</text>
+  <!-- Callout: knows Riverpod + Korean -->
+  <rect x="555" y="588" width="195" height="22" rx="4" fill="#f0883e" opacity="0.15"/>
+  <text x="652" y="603" text-anchor="middle" fill="#f0883e" font-family="system-ui, sans-serif" font-size="9" font-weight="bold">Remembers Riverpod! Responds in Korean!</text>
 
-  <rect x="540" y="460" width="90" height="26" rx="13" fill="#0d1117" stroke="#3fb950" stroke-width="1.5"/>
-  <text x="585" y="477" text-anchor="middle" fill="#3fb950" font-family="system-ui, sans-serif" font-size="10">read</text>
+  <!-- Arrow: session 2 also saves -->
+  <text x="400" y="660" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="10">Session 2 ends → new facts extracted → consolidated with existing → memory grows stronger</text>
 
-  <rect x="650" y="460" width="110" height="26" rx="13" fill="#0d1117" stroke="#d2a8ff" stroke-width="1.5"/>
-  <text x="705" y="477" text-anchor="middle" fill="#d2a8ff" font-family="system-ui, sans-serif" font-size="10">search_facts</text>
+  <!-- Cycle arrow on right side -->
+  <path d="M 765 300 Q 790 300 790 345 L 790 395 Q 790 440 765 440" fill="none" stroke="#f0883e" stroke-width="2" stroke-dasharray="6,3"/>
+  <text x="795" y="370" fill="#f0883e" font-family="system-ui, sans-serif" font-size="9" font-weight="bold" transform="rotate(90, 795, 370)">persist</text>
 
-  <!-- Arrow: SQLite -> MCP -->
-  <line x1="390" y1="465" x2="408" y2="465" stroke="#8b949e" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <!-- Loop indicator on left -->
+  <path d="M 35 300 Q 10 300 10 345 L 10 395 Q 10 440 35 440" fill="none" stroke="#3fb950" stroke-width="2" stroke-dasharray="6,3"/>
+  <text x="5" y="370" fill="#3fb950" font-family="system-ui, sans-serif" font-size="9" font-weight="bold" transform="rotate(-90, 5, 370)">recall</text>
+
+  <!-- Bottom: key insight -->
+  <rect x="100" y="672" width="600" height="22" rx="6" fill="#161b22" stroke="#30363d" stroke-width="1"/>
+  <text x="400" y="687" text-anchor="middle" fill="#8b949e" font-family="system-ui, sans-serif" font-size="10">Hooks run automatically. No user action needed. Memory builds itself over time.</text>
 </svg>
