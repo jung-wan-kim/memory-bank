@@ -33,10 +33,10 @@ graph LR
 
 ## 설치
 
-```bash
-# 마켓플레이스 등록 & 설치
-claude plugin marketplace add https://github.com/jung-wan-kim/memory-bank
-claude plugin install memory-bank
+Claude Code에서:
+```
+/plugin marketplace add https://github.com/jung-wan-kim/memory-bank
+/plugin install memory-bank
 ```
 
 ## 빠른 시작

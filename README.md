@@ -33,10 +33,10 @@ graph LR
 
 ## Install
 
-```bash
-# Add marketplace & install
-claude plugin marketplace add https://github.com/jung-wan-kim/memory-bank
-claude plugin install memory-bank
+In Claude Code:
+```
+/plugin marketplace add https://github.com/jung-wan-kim/memory-bank
+/plugin install memory-bank
 ```
 
 ## Quick Start
