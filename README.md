@@ -34,11 +34,11 @@ graph LR
 ## Install
 
 ```bash
-# Claude Code plugin (recommended)
-claude plugin add -- https://github.com/jung-wan-kim/memory-bank
+# Claude Code Marketplace (recommended)
+claude plugin add memory-bank
 
-# npm
-npm install memory-bank
+# Or install from GitHub directly
+claude plugin add -- https://github.com/jung-wan-kim/memory-bank
 ```
 
 ## Quick Start

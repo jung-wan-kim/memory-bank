@@ -34,11 +34,11 @@ graph LR
 ## 설치
 
 ```bash
-# Claude Code 플러그인 (권장)
-claude plugin add -- https://github.com/jung-wan-kim/memory-bank
+# Claude Code 마켓플레이스 (권장)
+claude plugin add memory-bank
 
-# npm
-npm install memory-bank
+# 또는 GitHub에서 직접 설치
+claude plugin add -- https://github.com/jung-wan-kim/memory-bank
 ```
 
 ## 빠른 시작

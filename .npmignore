@@ -1,0 +1,23 @@
+# Test files
+test/
+vitest.config.ts
+
+# Video source & output
+video/
+
+# Docs (images)
+docs/*.gif
+docs/*.svg
+
+# Source (dist is enough)
+src/
+
+# Dev config
+.omc/
+.claude-plugin/
+tsconfig.json
+scripts/
+
+# Git
+.git/
+.gitignore
