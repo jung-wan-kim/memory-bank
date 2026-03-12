@@ -34,7 +34,9 @@ graph LR
 ## Install
 
 ```bash
-claude plugin add -- https://github.com/jung-wan-kim/memory-bank
+# Add marketplace & install
+claude plugin marketplace add https://github.com/jung-wan-kim/memory-bank
+claude plugin install memory-bank
 ```
 
 ## Quick Start
