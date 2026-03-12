@@ -34,10 +34,6 @@ graph LR
 ## Install
 
 ```bash
-# Claude Code Marketplace (recommended)
-claude plugin add memory-bank
-
-# Or install from GitHub directly
 claude plugin add -- https://github.com/jung-wan-kim/memory-bank
 ```
 

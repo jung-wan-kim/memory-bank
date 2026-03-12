@@ -34,10 +34,6 @@ graph LR
 ## 설치
 
 ```bash
-# Claude Code 마켓플레이스 (권장)
-claude plugin add memory-bank
-
-# 또는 GitHub에서 직접 설치
 claude plugin add -- https://github.com/jung-wan-kim/memory-bank
 ```
 
