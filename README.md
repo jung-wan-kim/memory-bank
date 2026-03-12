@@ -113,6 +113,27 @@ Project A sees: Project A facts + Global facts (never Project B).
 }
 ```
 
+## Claude Desktop Integration
+
+Share Claude Code's memory with Claude Desktop by adding the MCP server:
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
+
+```json
+{
+  "mcpServers": {
+    "memory-bank": {
+      "command": "node",
+      "args": ["/path/to/memory-bank/cli/mcp-server-wrapper.js"]
+    }
+  }
+}
+```
+
+Replace `/path/to/memory-bank` with the actual plugin path (check `~/.claude/plugins/`).
+
+Claude Desktop will then have access to all your Claude Code conversations and extracted facts via the same `search`, `read`, and `search_facts` tools.
+
 ## Configuration
 
 ```bash

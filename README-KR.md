@@ -113,6 +113,27 @@ graph TB
 }
 ```
 
+## Claude Desktop 연동
+
+Claude Code의 기억을 Claude Desktop에서도 사용할 수 있습니다.
+
+`~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)에 추가:
+
+```json
+{
+  "mcpServers": {
+    "memory-bank": {
+      "command": "node",
+      "args": ["/path/to/memory-bank/cli/mcp-server-wrapper.js"]
+    }
+  }
+}
+```
+
+`/path/to/memory-bank`를 실제 플러그인 경로로 변경하세요 (`~/.claude/plugins/` 확인).
+
+Claude Desktop에서 동일한 `search`, `read`, `search_facts` 도구로 Claude Code 대화와 팩트를 검색할 수 있습니다.
+
 ## 설정
 
 ```bash
