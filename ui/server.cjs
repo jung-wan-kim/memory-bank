@@ -274,6 +274,31 @@ select:focus{border-color:var(--accent);outline:none}
 .pagination{display:flex;gap:10px;padding:20px 0;justify-content:center;align-items:center}
 .page-info{color:var(--text-dim);font-size:13px;font-family:'JetBrains Mono',monospace}
 
+/* Searchable Select */
+.searchable-select{position:relative;min-width:220px}
+.ss-trigger{background:var(--bg-glass);border:1px solid var(--border);color:var(--text);padding:10px 36px 10px 16px;
+  border-radius:20px;font-size:13px;font-family:'Outfit',sans-serif;cursor:pointer;backdrop-filter:blur(10px);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:all 0.2s;width:100%}
+.ss-trigger:hover{border-color:var(--border-hover)}
+.ss-trigger.open{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow);border-radius:20px 20px 0 0}
+.ss-trigger::after{content:'';position:absolute;right:14px;top:50%;transform:translateY(-50%);
+  border:5px solid transparent;border-top:5px solid var(--text-dim);transition:transform 0.2s}
+.ss-trigger.open::after{transform:translateY(-50%) rotate(180deg)}
+.ss-dropdown{position:absolute;top:100%;left:0;right:0;background:var(--bg-card);border:1px solid var(--accent);
+  border-top:none;border-radius:0 0 12px 12px;max-height:320px;overflow:hidden;z-index:200;
+  display:none;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,0.5)}
+.ss-dropdown.open{display:flex}
+.ss-search{background:var(--bg-glass);border:none;border-bottom:1px solid var(--border);color:var(--text-bright);
+  padding:10px 14px;font-size:13px;font-family:'Outfit',sans-serif;outline:none}
+.ss-search::placeholder{color:var(--text-dim)}
+.ss-list{overflow-y:auto;max-height:264px}
+.ss-option{padding:8px 14px;cursor:pointer;font-size:13px;color:var(--text);transition:background 0.15s;
+  display:flex;justify-content:space-between;align-items:center}
+.ss-option:hover,.ss-option.highlighted{background:var(--bg-hover);color:var(--text-bright)}
+.ss-option.selected{color:var(--accent);font-weight:500}
+.ss-option .ss-count{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-dim)}
+.ss-empty{padding:12px 14px;font-size:12px;color:var(--text-dim);text-align:center;font-style:italic}
+
 /* Utils */
 .result-count{font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--text-dim);margin-bottom:16px}
 
@@ -406,34 +431,87 @@ async function browseProject(project){currentProject=project;await doSearch('',p
 
 async function showSearchUI(){
   setContent('<div class="controls"><input type="search" class="search-input" id="searchInput" placeholder="Search all conversations...">'+
-    '<select id="projectFilter"><option value="">All Projects</option></select>'+
+    '<div class="searchable-select" id="projectFilter"></div>'+
     '<button class="btn" id="searchBtn">Search</button></div><div id="results"></div>');
-  await loadProjectOptions('projectFilter');
+  await initSearchableSelect('projectFilter',doSearchFromUI);
   getEl('searchBtn').addEventListener('click',doSearchFromUI);
   getEl('searchInput').addEventListener('keydown',e=>{if(e.key==='Enter')doSearchFromUI()});
-  getEl('projectFilter').addEventListener('change',doSearchFromUI);
   getEl('searchInput').focus();
   doSearchFromUI();
 }
 
 async function showPromptsUI(){
   setContent('<div class="controls"><input type="search" class="search-input" id="promptInput" placeholder="Search user prompts...">'+
-    '<select id="promptProject"><option value="">All Projects</option></select>'+
+    '<div class="searchable-select" id="promptProject"></div>'+
     '<button class="btn" id="promptBtn">Search</button></div><div id="results"></div>');
-  await loadProjectOptions('promptProject');
+  await initSearchableSelect('promptProject',doPromptSearchFromUI);
   getEl('promptBtn').addEventListener('click',doPromptSearchFromUI);
   getEl('promptInput').addEventListener('keydown',e=>{if(e.key==='Enter')doPromptSearchFromUI()});
-  getEl('promptProject').addEventListener('change',doPromptSearchFromUI);
   getEl('promptInput').focus();
   doPromptSearchFromUI();
 }
 
-async function loadProjectOptions(sid){
-  const projects=await api('/api/projects');const sel=getEl(sid);if(!sel)return;
-  projects.forEach(p=>{const o=document.createElement('option');o.value=p.project;o.textContent=shortProject(p.project)+' ('+p.count+')';sel.appendChild(o)});
+const ssState={};
+async function initSearchableSelect(containerId,onChange){
+  const projects=await api('/api/projects');
+  projects.forEach(p=>registerPath(p.project,p.real_path));
+  const options=[{value:'',label:'All Projects',count:null},...projects.map(p=>({value:p.project,label:shortProject(p.project),count:p.count}))];
+  ssState[containerId]={value:'',options};
+  const container=getEl(containerId);
+  container.innerHTML='<div class="ss-trigger" data-ss="'+containerId+'">All Projects</div>'+
+    '<div class="ss-dropdown" id="ss-dd-'+containerId+'">'+
+    '<input type="text" class="ss-search" placeholder="Search projects..." id="ss-search-'+containerId+'">'+
+    '<div class="ss-list" id="ss-list-'+containerId+'"></div></div>';
+  renderSSOptions(containerId);
+  const trigger=container.querySelector('.ss-trigger');
+  const dd=getEl('ss-dd-'+containerId);
+  const searchInput=getEl('ss-search-'+containerId);
+  trigger.addEventListener('click',e=>{
+    e.stopPropagation();
+    const isOpen=dd.classList.contains('open');
+    closeAllSS();
+    if(!isOpen){dd.classList.add('open');trigger.classList.add('open');searchInput.value='';renderSSOptions(containerId);searchInput.focus()}
+  });
+  searchInput.addEventListener('input',()=>renderSSOptions(containerId,searchInput.value));
+  searchInput.addEventListener('click',e=>e.stopPropagation());
+  searchInput.addEventListener('keydown',e=>{
+    if(e.key==='Escape'){closeAllSS()}
+    if(e.key==='Enter'){const first=getEl('ss-list-'+containerId).querySelector('.ss-option');if(first)first.click()}
+  });
+  container._getValue=()=>ssState[containerId].value;
+  container._onChange=onChange;
 }
 
-async function doSearchFromUI(){searchOffset=0;await doSearch(getEl('searchInput')?.value||'',getEl('projectFilter')?.value||'',0)}
+function renderSSOptions(containerId,filter){
+  const st=ssState[containerId];
+  const list=getEl('ss-list-'+containerId);
+  const filtered=filter?st.options.filter(o=>o.label.toLowerCase().includes(filter.toLowerCase())):st.options;
+  if(filtered.length===0){list.innerHTML='<div class="ss-empty">No projects found</div>';return}
+  list.innerHTML=filtered.map(o=>
+    '<div class="ss-option'+(o.value===st.value?' selected':'')+'" data-value="'+esc(o.value)+'">'+
+    '<span>'+esc(o.label)+'</span>'+(o.count!=null?'<span class="ss-count">'+o.count.toLocaleString()+'</span>':'')+'</div>'
+  ).join('');
+  list.querySelectorAll('.ss-option').forEach(opt=>{
+    opt.addEventListener('click',e=>{
+      e.stopPropagation();
+      const val=opt.dataset.value;
+      st.value=val;
+      const container=getEl(containerId);
+      container.querySelector('.ss-trigger').textContent=filtered.find(o=>o.value===val)?.label||'All Projects';
+      closeAllSS();
+      if(container._onChange)container._onChange();
+    });
+  });
+}
+
+function closeAllSS(){
+  document.querySelectorAll('.ss-dropdown.open').forEach(d=>{d.classList.remove('open');d.parentElement.querySelector('.ss-trigger').classList.remove('open')});
+}
+document.addEventListener('click',closeAllSS);
+
+function getSSValue(containerId){const c=getEl(containerId);return c&&c._getValue?c._getValue():''}
+
+async function doSearchFromUI(){searchOffset=0;await doSearch(getEl('searchInput')?.value||'',getSSValue('projectFilter'),0)}
 
 async function doSearch(q,project,offset){
   const data=await api('/api/search?'+new URLSearchParams({q,project,limit:50,offset}));
@@ -441,7 +519,7 @@ async function doSearch(q,project,offset){
 }
 
 let promptOffset=0;
-async function doPromptSearchFromUI(){promptOffset=0;await doPromptSearch(getEl('promptInput')?.value||'',getEl('promptProject')?.value||'',0)}
+async function doPromptSearchFromUI(){promptOffset=0;await doPromptSearch(getEl('promptInput')?.value||'',getSSValue('promptProject'),0)}
 
 async function doPromptSearch(q,project,offset){
   const data=await api('/api/user-prompts?'+new URLSearchParams({q,project,limit:50,offset}));
