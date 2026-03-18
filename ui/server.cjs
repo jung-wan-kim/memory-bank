@@ -411,7 +411,9 @@ async function showSearchUI(){
   await loadProjectOptions('projectFilter');
   getEl('searchBtn').addEventListener('click',doSearchFromUI);
   getEl('searchInput').addEventListener('keydown',e=>{if(e.key==='Enter')doSearchFromUI()});
+  getEl('projectFilter').addEventListener('change',doSearchFromUI);
   getEl('searchInput').focus();
+  doSearchFromUI();
 }
 
 async function showPromptsUI(){
@@ -419,9 +421,11 @@ async function showPromptsUI(){
     '<select id="promptProject"><option value="">All Projects</option></select>'+
     '<button class="btn" id="promptBtn">Search</button></div><div id="results"></div>');
   await loadProjectOptions('promptProject');
-  getEl('promptBtn').addEventListener('click',doPromptSearch);
-  getEl('promptInput').addEventListener('keydown',e=>{if(e.key==='Enter')doPromptSearch()});
+  getEl('promptBtn').addEventListener('click',doPromptSearchFromUI);
+  getEl('promptInput').addEventListener('keydown',e=>{if(e.key==='Enter')doPromptSearchFromUI()});
+  getEl('promptProject').addEventListener('change',doPromptSearchFromUI);
   getEl('promptInput').focus();
+  doPromptSearchFromUI();
 }
 
 async function loadProjectOptions(sid){
@@ -436,16 +440,33 @@ async function doSearch(q,project,offset){
   renderResults(data,q,project);
 }
 
-async function doPromptSearch(){
-  const q=getEl('promptInput')?.value||'',p=getEl('promptProject')?.value||'';
-  const data=await api('/api/user-prompts?'+new URLSearchParams({q,project:p,limit:50,offset:0}));
+let promptOffset=0;
+async function doPromptSearchFromUI(){promptOffset=0;await doPromptSearch(getEl('promptInput')?.value||'',getEl('promptProject')?.value||'',0)}
+
+async function doPromptSearch(q,project,offset){
+  const data=await api('/api/user-prompts?'+new URLSearchParams({q,project,limit:50,offset}));
+  renderPromptResults(data,q,project);
+}
+
+function renderPromptResults(data,q,project){
   const el=getEl('results');
-  el.innerHTML='<div class="result-count">'+data.total.toLocaleString()+' prompts found</div>'+
-    '<div class="exchange-list">'+data.results.map(r=>
-      '<div class="exchange-item" data-id="'+esc(r.id)+'"><div class="exchange-msg">'+esc(truncate(r.user_message,300))+'</div>'+
-      '<div class="exchange-meta"><span class="project-tag">'+esc(shortProject(r.project))+'</span><span>'+relativeDate(r.timestamp)+'</span></div></div>'
-    ).join('')+'</div>';
+  const range=data.total>0?(data.offset+1)+'-'+Math.min(data.offset+data.limit,data.total):'0';
+  const totalPages=Math.max(1,Math.ceil(data.total/50));
+  const curPage=Math.floor(data.offset/50)+1;
+  const items=data.results.map(r=>
+    '<div class="exchange-item" data-id="'+esc(r.id)+'"><div class="exchange-msg">'+esc(truncate(r.user_message,300))+'</div>'+
+    '<div class="exchange-meta"><span class="project-tag">'+esc(shortProject(r.project))+'</span><span>'+relativeDate(r.timestamp)+'</span></div></div>'
+  ).join('');
+  el.innerHTML='<div class="result-count">'+data.total.toLocaleString()+' prompts &middot; '+range+'</div>'+
+    '<div class="exchange-list">'+items+'</div>'+
+    '<div class="pagination">'+
+    (data.offset>0?'<button class="btn btn-ghost prevBtn">Prev</button>':'')+
+    '<span class="page-info">Page '+curPage+'/'+totalPages+'</span>'+
+    (data.offset+data.limit<data.total?'<button class="btn btn-ghost nextBtn">Next</button>':'')+'</div>';
+  promptOffset=data.offset;
   el.querySelectorAll('.exchange-item').forEach(c=>c.addEventListener('click',()=>showExchange(c.dataset.id)));
+  el.querySelector('.prevBtn')?.addEventListener('click',()=>doPromptSearch(q,project,Math.max(0,promptOffset-50)));
+  el.querySelector('.nextBtn')?.addEventListener('click',()=>doPromptSearch(q,project,promptOffset+50));
 }
 
 function renderResults(data,q,project){
