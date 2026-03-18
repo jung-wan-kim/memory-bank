@@ -13,6 +13,7 @@
 - **Fact Consolidation** -- Duplicate detection, contradiction handling, evolution tracking
 - **Scope Isolation** -- Project facts stay in their project, global facts are shared
 - **MCP Integration** -- `search`, `read`, and `search_facts` tools for Claude
+- **Web UI** -- Dark-theme web interface for browsing and searching conversations
 
 ## How It Works
 
@@ -112,6 +113,33 @@ Project A sees: Project A facts + Global facts (never Project B).
   "limit": 10
 }
 ```
+
+## Web UI
+
+A cinematic dark-theme web interface for browsing and searching your conversation history.
+
+![Web UI](docs/ui-projects.png)
+
+### Features
+
+- **Projects View** -- Browse all projects grouped by category, sorted by latest/most/A-Z
+- **Search** -- Full-text search across all conversations
+- **User Prompts** -- Browse and search only user messages
+- **Exchange Detail** -- View full user/assistant messages with tool call history
+
+### Run
+
+```bash
+node ui/server.cjs
+# Memory Bank UI: http://localhost:3847
+```
+
+Custom port:
+```bash
+PORT=8080 node ui/server.cjs
+```
+
+> **Note:** Requires `memory-bank sync` to have been run at least once to populate the database.
 
 ## Claude Desktop Integration
 
