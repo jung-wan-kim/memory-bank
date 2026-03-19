@@ -58,18 +58,18 @@ export function insertFact(db: Database.Database, params: InsertFactParams): str
 }
 
 export function getActiveFacts(db: Database.Database): Fact[] {
-  return db.prepare('SELECT * FROM facts WHERE is_active = 1 ORDER BY consolidated_count DESC')
-    .all()
+  return (db.prepare('SELECT * FROM facts WHERE is_active = 1 ORDER BY consolidated_count DESC')
+    .all() as Record<string, unknown>[])
     .map(rowToFact);
 }
 
 export function getFactsByProject(db: Database.Database, project: string): Fact[] {
-  return db.prepare(`
+  return (db.prepare(`
     SELECT * FROM facts
     WHERE is_active = 1
       AND ((scope_type = 'project' AND scope_project = ?) OR scope_type = 'global')
     ORDER BY consolidated_count DESC
-  `).all(project).map(rowToFact);
+  `).all(project) as Record<string, unknown>[]).map(rowToFact);
 }
 
 export function updateFact(db: Database.Database, id: string, params: UpdateFactParams): void {
@@ -151,7 +151,7 @@ export function searchSimilarFacts(
     const similarity = 1 - (vr.distance * vr.distance) / 2;
     if (similarity < threshold) continue;
 
-    const row = db.prepare('SELECT * FROM facts WHERE id = ? AND is_active = 1').get(vr.id);
+    const row = db.prepare('SELECT * FROM facts WHERE id = ? AND is_active = 1').get(vr.id) as Record<string, unknown> | undefined;
     if (!row) continue;
 
     const fact = rowToFact(row);
@@ -166,37 +166,48 @@ export function searchSimilarFacts(
 }
 
 export function getTopFacts(db: Database.Database, project: string, limit: number = 10): Fact[] {
-  return db.prepare(`
+  return (db.prepare(`
     SELECT * FROM facts
     WHERE is_active = 1
       AND ((scope_type = 'project' AND scope_project = ?) OR scope_type = 'global')
     ORDER BY consolidated_count DESC
     LIMIT ?
-  `).all(project, limit).map(rowToFact);
+  `).all(project, limit) as Record<string, unknown>[]).map(rowToFact);
 }
 
 export function getNewFactsSince(db: Database.Database, project: string, since: string): Fact[] {
-  return db.prepare(`
+  return (db.prepare(`
     SELECT * FROM facts
     WHERE is_active = 1
       AND created_at > ?
       AND ((scope_type = 'project' AND scope_project = ?) OR scope_type = 'global')
     ORDER BY created_at ASC
-  `).all(since, project).map(rowToFact);
+  `).all(since, project) as Record<string, unknown>[]).map(rowToFact);
 }
 
-function rowToFact(row: any): Fact {
+function rowToFact(row: Record<string, unknown>): Fact {
+  const embeddingRaw = row['embedding'];
+  let embedding: Float32Array | null = null;
+  if (embeddingRaw instanceof Buffer) {
+    embedding = new Float32Array(embeddingRaw.buffer, embeddingRaw.byteOffset, embeddingRaw.byteLength / 4);
+  } else if (embeddingRaw instanceof Uint8Array) {
+    embedding = new Float32Array(embeddingRaw.buffer, embeddingRaw.byteOffset, embeddingRaw.byteLength / 4);
+  }
+
   return {
-    id: row.id,
-    fact: row.fact,
-    category: row.category,
-    scope_type: row.scope_type,
-    scope_project: row.scope_project,
-    source_exchange_ids: row.source_exchange_ids ? JSON.parse(row.source_exchange_ids) : [],
-    embedding: row.embedding ? new Float32Array(row.embedding.buffer ?? row.embedding) : null,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-    consolidated_count: row.consolidated_count,
-    is_active: Boolean(row.is_active),
+    id: row['id'] as string,
+    fact: row['fact'] as string,
+    category: row['category'] as Fact['category'],
+    scope_type: row['scope_type'] as Fact['scope_type'],
+    scope_project: (row['scope_project'] as string | null) ?? null,
+    source_exchange_ids: row['source_exchange_ids']
+      ? JSON.parse(row['source_exchange_ids'] as string)
+      : [],
+    embedding,
+    created_at: row['created_at'] as string,
+    updated_at: row['updated_at'] as string,
+    consolidated_count: row['consolidated_count'] as number,
+    is_active: Boolean(row['is_active']),
+    ontology_category_id: (row['ontology_category_id'] as string | null) ?? null,
   };
 }

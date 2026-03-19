@@ -178,6 +178,51 @@ export function initDatabase(): Database.Database {
     )
   `);
 
+  // === Ontology Schema ===
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ontology_domains (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ontology_categories (
+      id TEXT PRIMARY KEY,
+      domain_id TEXT NOT NULL REFERENCES ontology_domains(id),
+      name TEXT NOT NULL,
+      description TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Idempotent column addition for facts.ontology_category_id
+  const factColumns = db.prepare(
+    `SELECT name FROM pragma_table_info('facts')`
+  ).all() as Array<{ name: string }>;
+  const factColumnNames = new Set(factColumns.map((c) => c.name));
+  if (!factColumnNames.has('ontology_category_id')) {
+    db.prepare('ALTER TABLE facts ADD COLUMN ontology_category_id TEXT').run();
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ontology_relations (
+      id TEXT PRIMARY KEY,
+      source_fact_id TEXT NOT NULL REFERENCES facts(id),
+      relation_type TEXT NOT NULL CHECK(relation_type IN ('INFLUENCES','SUPERSEDES','SUPPORTS','CONTRADICTS')),
+      target_fact_id TEXT NOT NULL REFERENCES facts(id),
+      reasoning TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_relations_source ON ontology_relations(source_fact_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_relations_target ON ontology_relations(target_fact_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_facts_ontology ON facts(ontology_category_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_ontology_categories_domain ON ontology_categories(domain_id)`);
+
   return db;
 }
 

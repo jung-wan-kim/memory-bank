@@ -115,17 +115,28 @@ export function getNewFactsSince(db, project, since) {
   `).all(since, project).map(rowToFact);
 }
 function rowToFact(row) {
+    const embeddingRaw = row['embedding'];
+    let embedding = null;
+    if (embeddingRaw instanceof Buffer) {
+        embedding = new Float32Array(embeddingRaw.buffer, embeddingRaw.byteOffset, embeddingRaw.byteLength / 4);
+    }
+    else if (embeddingRaw instanceof Uint8Array) {
+        embedding = new Float32Array(embeddingRaw.buffer, embeddingRaw.byteOffset, embeddingRaw.byteLength / 4);
+    }
     return {
-        id: row.id,
-        fact: row.fact,
-        category: row.category,
-        scope_type: row.scope_type,
-        scope_project: row.scope_project,
-        source_exchange_ids: row.source_exchange_ids ? JSON.parse(row.source_exchange_ids) : [],
-        embedding: row.embedding ? new Float32Array(row.embedding.buffer ?? row.embedding) : null,
-        created_at: row.created_at,
-        updated_at: row.updated_at,
-        consolidated_count: row.consolidated_count,
-        is_active: Boolean(row.is_active),
+        id: row['id'],
+        fact: row['fact'],
+        category: row['category'],
+        scope_type: row['scope_type'],
+        scope_project: row['scope_project'] ?? null,
+        source_exchange_ids: row['source_exchange_ids']
+            ? JSON.parse(row['source_exchange_ids'])
+            : [],
+        embedding,
+        created_at: row['created_at'],
+        updated_at: row['updated_at'],
+        consolidated_count: row['consolidated_count'],
+        is_active: Boolean(row['is_active']),
+        ontology_category_id: row['ontology_category_id'] ?? null,
     };
 }

@@ -24,6 +24,8 @@ import { formatConversationAsMarkdown } from './show.js';
 import { initDatabase } from './db.js';
 import { searchSimilarFacts, getRevisions, getTopFacts } from './fact-db.js';
 import { generateEmbedding, initEmbeddings } from './embeddings.js';
+import { getOntologyTree, listDomains, listCategories, getFactsByCategory, getRelatedFacts } from './ontology-db.js';
+import { askAvatar } from './avatar-responder.js';
 import fs from 'fs';
 
 // Zod Schemas for Input Validation
@@ -104,6 +106,25 @@ const SearchFactsInputSchema = z
     limit: z.number().int().min(1).max(50).default(10),
   })
   .strict();
+
+const SearchOntologyInputSchema = z
+  .object({
+    domain: z.string().optional().describe('Filter by domain name (case-insensitive partial match)'),
+    category: z.string().optional().describe('Filter by category name (case-insensitive partial match)'),
+    include_relations: z.boolean().default(false).describe('Include 1-hop fact relations'),
+  })
+  .strict();
+
+type SearchOntologyInput = z.infer<typeof SearchOntologyInputSchema>;
+
+const AskAvatarInputSchema = z
+  .object({
+    question: z.string().min(2, 'Question must be at least 2 characters').describe('Question to ask'),
+    project: z.string().optional().describe('Project path to scope the search'),
+  })
+  .strict();
+
+type AskAvatarInput = z.infer<typeof AskAvatarInputSchema>;
 
 // Error Handling Utility
 
@@ -207,6 +228,46 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           readOnlyHint: true,
           destructiveHint: false,
           idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      {
+        name: 'search_ontology',
+        description: 'Browse the ontology hierarchy (Domain > Category > Facts). Use to understand how past decisions are organized, or to find all facts in a specific domain/category.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            domain: { type: 'string', description: 'Filter by domain name (partial, case-insensitive)' },
+            category: { type: 'string', description: 'Filter by category name (partial, case-insensitive)' },
+            include_relations: { type: 'boolean', default: false, description: 'Include 1-hop relations for each fact' },
+          },
+          additionalProperties: false,
+        },
+        annotations: {
+          title: 'Search Ontology',
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      {
+        name: 'ask_avatar',
+        description: 'Ask the user\'s technical alter ego a question. Returns an answer grounded in past decisions and preferences, with cited sources and confidence level.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            question: { type: 'string', minLength: 2, description: 'Question to ask' },
+            project: { type: 'string', description: 'Project path to scope the search (optional)' },
+          },
+          required: ['question'],
+          additionalProperties: false,
+        },
+        annotations: {
+          title: 'Ask Avatar',
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: false,
           openWorldHint: false,
         },
       },
@@ -359,6 +420,123 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return {
           content: [{ type: 'text', text: output }],
         };
+      } catch (error) {
+        return {
+          content: [{ type: 'text', text: handleError(error) }],
+          isError: true,
+        };
+      }
+    }
+
+    if (name === 'search_ontology') {
+      const params = SearchOntologyInputSchema.parse(args) as SearchOntologyInput;
+
+      try {
+        const db = initDatabase();
+        const tree = getOntologyTree(db);
+
+        // Apply domain/category filters
+        const domainFilter = params.domain?.toLowerCase();
+        const categoryFilter = params.category?.toLowerCase();
+
+        const filtered = tree.filter((entry) => {
+          if (domainFilter && !entry.domain.name.toLowerCase().includes(domainFilter)) return false;
+          return true;
+        });
+
+        let output = `# Ontology Tree\n\n`;
+
+        if (filtered.length === 0) {
+          output += '_No ontology data found. Facts are classified automatically as they are extracted._\n';
+        }
+
+        for (const { domain, categories } of filtered) {
+          output += `## ${domain.name}\n`;
+          if (domain.description) output += `> ${domain.description}\n`;
+          output += '\n';
+
+          const filteredCategories = categories.filter(({ category }) => {
+            if (categoryFilter && !category.name.toLowerCase().includes(categoryFilter)) return false;
+            return true;
+          });
+
+          if (filteredCategories.length === 0) {
+            output += '_No matching categories._\n\n';
+            continue;
+          }
+
+          for (const { category, facts } of filteredCategories) {
+            output += `### ${category.name}`;
+            if (category.description) output += ` — ${category.description}`;
+            output += `\n(${facts.length} facts)\n\n`;
+
+            for (const fact of facts) {
+              output += `- **[${fact.category}]** ${fact.fact}\n`;
+              output += `  - ID: ${fact.id} | Confirmed: ${fact.consolidated_count}x | ${fact.created_at.slice(0, 10)}\n`;
+
+              if (params.include_relations) {
+                const related = getRelatedFacts(db, fact.id, 1);
+                if (related.length > 0) {
+                  for (const { fact: relFact, relation } of related) {
+                    output += `  - ↔ [${relation.relation_type}] "${relFact.fact}"\n`;
+                  }
+                }
+              }
+            }
+            output += '\n';
+          }
+        }
+
+        db.close();
+        return { content: [{ type: 'text', text: output }] };
+      } catch (error) {
+        return {
+          content: [{ type: 'text', text: handleError(error) }],
+          isError: true,
+        };
+      }
+    }
+
+    if (name === 'ask_avatar') {
+      const params = AskAvatarInputSchema.parse(args) as AskAvatarInput;
+      const project = params.project || process.cwd();
+
+      try {
+        const db = initDatabase();
+        const result = await askAvatar(db, params.question, project);
+        db.close();
+
+        const confidenceLabel =
+          result.confidence >= 0.9
+            ? 'HIGH'
+            : result.confidence >= 0.7
+              ? 'MEDIUM'
+              : result.confidence >= 0.5
+                ? 'LOW'
+                : 'INSUFFICIENT';
+
+        let output = `# Avatar Response\n\n`;
+        output += `**Question:** ${params.question}\n\n`;
+        output += `**Answer:** ${result.answer}\n\n`;
+        output += `**Confidence:** ${(result.confidence * 100).toFixed(0)}% (${confidenceLabel})\n\n`;
+
+        if (result.sources.length > 0) {
+          output += `## Supporting Decisions\n\n`;
+          for (const source of result.sources) {
+            output += `- **[${source.domain}/${source.category}]** ${source.fact.fact}\n`;
+            output += `  - Relevance: ${(source.relevance * 100).toFixed(0)}% | Date: ${source.fact.created_at.slice(0, 10)}\n`;
+          }
+          output += '\n';
+        }
+
+        if (result.relatedDecisions.length > 0) {
+          output += `## Related Decisions\n\n`;
+          for (const { fact, relation } of result.relatedDecisions) {
+            output += `- **[${relation}]** ${fact.fact} _(${fact.created_at.slice(0, 10)})_\n`;
+          }
+        }
+
+        return { content: [{ type: 'text', text: output }] };
       } catch (error) {
         return {
           content: [{ type: 'text', text: handleError(error) }],

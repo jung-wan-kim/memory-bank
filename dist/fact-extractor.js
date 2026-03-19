@@ -1,6 +1,7 @@
 import { callHaiku, parseJsonResponse } from './llm.js';
 import { insertFact } from './fact-db.js';
 import { generateEmbedding, initEmbeddings } from './embeddings.js';
+import { classifyAndLinkFact } from './ontology-classifier.js';
 const EXTRACTION_SYSTEM_PROMPT = `You are an expert at extracting long-term facts from conversations.
 
 ## Rules
@@ -90,6 +91,10 @@ export async function saveExtractedFacts(db, facts, project, sourceExchangeIds) 
             embedding,
         });
         savedIds.push(id);
+        // Ontology classification + relation detection (non-blocking, fire-and-forget in background)
+        classifyAndLinkFact(db, id, embedding).catch((err) => {
+            console.error(`Ontology pipeline failed for fact ${id}:`, err);
+        });
     }
     return savedIds;
 }

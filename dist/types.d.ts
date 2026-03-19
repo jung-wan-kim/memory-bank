@@ -53,6 +53,7 @@ export interface Fact {
     updated_at: string;
     consolidated_count: number;
     is_active: boolean;
+    ontology_category_id?: string | null;
 }
 export interface FactRevision {
     id: string;
@@ -77,4 +78,47 @@ export interface ConsolidationResult {
     relation: FactRelation;
     merged_fact: string;
     reason: string;
+}
+export interface OntologyDomain {
+    id: string;
+    name: string;
+    description: string | null;
+    created_at: string;
+}
+export interface OntologyCategory {
+    id: string;
+    domain_id: string;
+    name: string;
+    description: string | null;
+    created_at: string;
+}
+export type RelationType = 'INFLUENCES' | 'SUPERSEDES' | 'SUPPORTS' | 'CONTRADICTS';
+export interface OntologyRelation {
+    id: string;
+    source_fact_id: string;
+    relation_type: RelationType;
+    target_fact_id: string;
+    reasoning: string | null;
+    created_at: string;
+}
+export interface AvatarResponse {
+    answer: string;
+    sources: Array<{
+        fact: Fact;
+        domain: string;
+        category: string;
+        relevance: number;
+    }>;
+    confidence: number;
+    relatedDecisions: Array<{
+        fact: Fact;
+        relation: RelationType;
+    }>;
+}
+export interface DomainTree {
+    domain: OntologyDomain;
+    categories: Array<{
+        category: OntologyCategory;
+        facts: Fact[];
+    }>;
 }
