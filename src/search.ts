@@ -1,4 +1,3 @@
-import Database from 'better-sqlite3';
 import { initDatabase } from './db.js';
 import { initEmbeddings, generateEmbedding } from './embeddings.js';
 import { SearchResult, ConversationExchange, MultiConceptResult } from './types.js';
@@ -36,82 +35,100 @@ export async function searchConversations(
 
   const db = initDatabase();
 
-  let results: any[] = [];
-
-  // Build time filter clause
-  const timeFilter = [];
-  if (after) timeFilter.push(`e.timestamp >= '${after}'`);
-  if (before) timeFilter.push(`e.timestamp <= '${before}'`);
-  const timeClause = timeFilter.length > 0 ? `AND ${timeFilter.join(' AND ')}` : '';
-
-  if (mode === 'vector' || mode === 'both') {
-    // Vector similarity search
-    await initEmbeddings();
-    const queryEmbedding = await generateEmbedding(query);
-
-    const stmt = db.prepare(`
-      SELECT
-        e.id,
-        e.project,
-        e.timestamp,
-        e.user_message,
-        e.assistant_message,
-        e.archive_path,
-        e.line_start,
-        e.line_end,
-        vec.distance
-      FROM vec_exchanges AS vec
-      JOIN exchanges AS e ON vec.id = e.id
-      WHERE vec.embedding MATCH ?
-        AND k = ?
-        ${timeClause}
-      ORDER BY vec.distance ASC
-    `);
-
-    results = stmt.all(
-      Buffer.from(new Float32Array(queryEmbedding).buffer),
-      limit
-    );
+  interface ExchangeRow {
+    id: string;
+    project: string;
+    timestamp: string;
+    user_message: string;
+    assistant_message: string;
+    archive_path: string;
+    line_start: number;
+    line_end: number;
+    distance: number;
   }
 
-  if (mode === 'text' || mode === 'both') {
-    // Text search
-    const textStmt = db.prepare(`
-      SELECT
-        e.id,
-        e.project,
-        e.timestamp,
-        e.user_message,
-        e.assistant_message,
-        e.archive_path,
-        e.line_start,
-        e.line_end,
-        0 as distance
-      FROM exchanges AS e
-      WHERE (e.user_message LIKE ? OR e.assistant_message LIKE ?)
-        ${timeClause}
-      ORDER BY e.timestamp DESC
-      LIMIT ?
-    `);
+  let results: ExchangeRow[] = [];
 
-    const textResults = textStmt.all(`%${query}%`, `%${query}%`, limit);
+  try {
+    // Build time filter clause
+    const timeFilter = [];
+    if (after) timeFilter.push(`e.timestamp >= '${after}'`);
+    if (before) timeFilter.push(`e.timestamp <= '${before}'`);
+    const timeClause = timeFilter.length > 0 ? `AND ${timeFilter.join(' AND ')}` : '';
 
-    if (mode === 'both') {
-      // Merge and deduplicate by ID
-      const seenIds = new Set(results.map(r => r.id));
-      for (const textResult of textResults) {
-        if (!seenIds.has((textResult as any).id)) {
-          results.push(textResult);
-        }
-      }
-    } else {
-      results = textResults;
+    if (mode === 'vector' || mode === 'both') {
+      // Vector similarity search
+      await initEmbeddings();
+      const queryEmbedding = await generateEmbedding(query);
+
+      const stmt = db.prepare(`
+        SELECT
+          e.id,
+          e.project,
+          e.timestamp,
+          e.user_message,
+          e.assistant_message,
+          e.archive_path,
+          e.line_start,
+          e.line_end,
+          vec.distance
+        FROM vec_exchanges AS vec
+        JOIN exchanges AS e ON vec.id = e.id
+        WHERE vec.embedding MATCH ?
+          AND k = ?
+          ${timeClause}
+        ORDER BY vec.distance ASC
+      `);
+
+      results = stmt.all(
+        Buffer.from(new Float32Array(queryEmbedding).buffer),
+        limit
+      ) as ExchangeRow[];
     }
+
+    if (mode === 'text' || mode === 'both') {
+      // Escape LIKE metacharacters
+      const escapedQuery = query.replace(/%/g, '\\%').replace(/_/g, '\\_');
+      const likePattern = `%${escapedQuery}%`;
+
+      // Text search
+      const textStmt = db.prepare(`
+        SELECT
+          e.id,
+          e.project,
+          e.timestamp,
+          e.user_message,
+          e.assistant_message,
+          e.archive_path,
+          e.line_start,
+          e.line_end,
+          0 as distance
+        FROM exchanges AS e
+        WHERE (e.user_message LIKE ? ESCAPE '\\' OR e.assistant_message LIKE ? ESCAPE '\\')
+          ${timeClause}
+        ORDER BY e.timestamp DESC
+        LIMIT ?
+      `);
+
+      const textResults = textStmt.all(likePattern, likePattern, limit) as ExchangeRow[];
+
+      if (mode === 'both') {
+        // Merge and deduplicate by ID
+        const seenIds = new Set(results.map(r => r.id));
+        for (const textResult of textResults) {
+          if (!seenIds.has(textResult.id)) {
+            results.push(textResult);
+          }
+        }
+      } else {
+        results = textResults;
+      }
+    }
+  } finally {
+    db.close();
   }
 
-  db.close();
-
-  return results.map((row: any) => {
+  return results.map((row) => {
     const exchange: ConversationExchange = {
       id: row.id,
       project: row.project,

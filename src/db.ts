@@ -52,6 +52,7 @@ export function initDatabase(): Database.Database {
 
   // Enable WAL mode for better concurrency
   db.pragma('journal_mode = WAL');
+  db.pragma('busy_timeout = 5000');
 
   // Create exchanges table
   db.exec(`
@@ -115,6 +116,9 @@ export function initDatabase(): Database.Database {
   `);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_sidechain ON exchanges(is_sidechain)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_archive_path ON exchanges(archive_path)
   `);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_git_branch ON exchanges(git_branch)
