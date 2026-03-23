@@ -272,7 +272,7 @@ export async function searchMultipleConcepts(
   // Find conversations that match ALL concepts
   const multiConceptResults: MultiConceptResult[] = [];
 
-  for (const [archivePath, results] of conversationMap.entries()) {
+  for (const [, results] of conversationMap.entries()) {
     // Check if all concepts are represented
     const representedConcepts = new Set(results.map(r => r.conceptIndex));
     if (representedConcepts.size === concepts.length) {

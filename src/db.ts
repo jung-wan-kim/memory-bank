@@ -234,7 +234,7 @@ export function insertExchange(
   db: Database.Database,
   exchange: ConversationExchange,
   embedding: number[],
-  toolNames?: string[]
+  _toolNames?: string[]
 ): void {
   const now = Date.now();
 
