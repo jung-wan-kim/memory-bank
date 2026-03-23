@@ -34,7 +34,14 @@ export function formatConversationAsMarkdown(jsonl: string, startLine?: number, 
       )
     : allLines;
 
-  const allMessages: ConversationMessage[] = lines.map(line => JSON.parse(line));
+  const allMessages: ConversationMessage[] = [];
+  for (const line of lines) {
+    try {
+      allMessages.push(JSON.parse(line));
+    } catch {
+      // Skip malformed JSONL lines
+    }
+  }
 
   // Filter out system messages and messages with no content
   const messages = allMessages.filter(msg => {
@@ -222,7 +229,14 @@ export function formatConversationAsMarkdown(jsonl: string, startLine?: number, 
 
 export function formatConversationAsHTML(jsonl: string): string {
   const lines = jsonl.trim().split('\n').filter(line => line.trim());
-  const allMessages: ConversationMessage[] = lines.map(line => JSON.parse(line));
+  const allMessages: ConversationMessage[] = [];
+  for (const line of lines) {
+    try {
+      allMessages.push(JSON.parse(line));
+    } catch {
+      // Skip malformed JSONL lines
+    }
+  }
 
   // Filter out system messages and messages with no content
   const messages = allMessages.filter(msg => {

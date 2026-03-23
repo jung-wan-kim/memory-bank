@@ -51,8 +51,13 @@ function copyIfNewer(src: string, dest: string): boolean {
 
   // Atomic copy: temp file + rename
   const tempDest = dest + '.tmp.' + process.pid;
-  fs.copyFileSync(src, tempDest);
-  fs.renameSync(tempDest, dest); // Atomic on same filesystem
+  try {
+    fs.copyFileSync(src, tempDest);
+    fs.renameSync(tempDest, dest); // Atomic on same filesystem
+  } catch (e) {
+    try { fs.unlinkSync(tempDest); } catch { /* cleanup best effort */ }
+    throw e;
+  }
   return true;
 }
 
