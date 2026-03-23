@@ -22,7 +22,7 @@ import {
 } from './search.js';
 import { formatConversationAsMarkdown } from './show.js';
 import { initDatabase } from './db.js';
-import { searchSimilarFacts, getRevisions, getTopFacts } from './fact-db.js';
+import { searchSimilarFacts, getRevisions } from './fact-db.js';
 import { generateEmbedding, initEmbeddings } from './embeddings.js';
 import { getOntologyTree, listDomains, listCategories, getFactsByCategory, getRelatedFacts } from './ontology-db.js';
 import { askAvatar } from './avatar-responder.js';
@@ -72,8 +72,6 @@ const SearchInputSchema = z
   })
   .strict();
 
-type SearchInput = z.infer<typeof SearchInputSchema>;
-
 const ShowConversationInputSchema = z
   .object({
     path: z
@@ -94,8 +92,6 @@ const ShowConversationInputSchema = z
       .describe('Ending line number (1-indexed, inclusive). Omit to read to end.'),
   })
   .strict();
-
-type ShowConversationInput = z.infer<typeof ShowConversationInputSchema>;
 
 const SearchFactsInputSchema = z
   .object({
@@ -352,13 +348,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === 'read') {
       const params = ShowConversationInputSchema.parse(args);
 
+      // Validate path: must be absolute and a .jsonl file
+      const resolvedPath = require('path').resolve(params.path);
+      if (!resolvedPath.endsWith('.jsonl')) {
+        throw new Error(`Invalid file type: only .jsonl files are supported`);
+      }
+
       // Verify file exists
-      if (!fs.existsSync(params.path)) {
-        throw new Error(`File not found: ${params.path}`);
+      if (!fs.existsSync(resolvedPath)) {
+        throw new Error(`File not found: ${resolvedPath}`);
       }
 
       // Read and format conversation with optional line range
-      const jsonlContent = fs.readFileSync(params.path, 'utf-8');
+      const jsonlContent = fs.readFileSync(resolvedPath, 'utf-8');
       const markdownContent = formatConversationAsMarkdown(
         jsonlContent,
         params.startLine,
