@@ -23,6 +23,14 @@ interface ConversationMessage {
   toolUseResult?: Array<{ type: string; text: string }> | string;
 }
 
+function parseJsonlMessages(lines: string[]): ConversationMessage[] {
+  const messages: ConversationMessage[] = [];
+  for (const line of lines) {
+    try { messages.push(JSON.parse(line)); } catch { /* skip malformed */ }
+  }
+  return messages;
+}
+
 export function formatConversationAsMarkdown(jsonl: string, startLine?: number, endLine?: number): string {
   const allLines = jsonl.trim().split('\n').filter(line => line.trim());
 
@@ -34,14 +42,7 @@ export function formatConversationAsMarkdown(jsonl: string, startLine?: number, 
       )
     : allLines;
 
-  const allMessages: ConversationMessage[] = [];
-  for (const line of lines) {
-    try {
-      allMessages.push(JSON.parse(line));
-    } catch {
-      // Skip malformed JSONL lines
-    }
-  }
+  const allMessages = parseJsonlMessages(lines);
 
   // Filter out system messages and messages with no content
   const messages = allMessages.filter(msg => {
@@ -229,18 +230,10 @@ export function formatConversationAsMarkdown(jsonl: string, startLine?: number, 
 
 export function formatConversationAsHTML(jsonl: string): string {
   const lines = jsonl.trim().split('\n').filter(line => line.trim());
-  const allMessages: ConversationMessage[] = [];
-  for (const line of lines) {
-    try {
-      allMessages.push(JSON.parse(line));
-    } catch {
-      // Skip malformed JSONL lines
-    }
-  }
+  const allMessages = parseJsonlMessages(lines);
 
   // Filter out system messages and messages with no content
   const messages = allMessages.filter(msg => {
-    // Skip file-history-snapshot and other non-conversation messages
     if (msg.type !== 'user' && msg.type !== 'assistant') return false;
 
     // Skip messages with null timestamps

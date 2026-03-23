@@ -11,6 +11,18 @@ export interface SearchOptions {
   before?: string; // ISO date string
 }
 
+interface ExchangeRow {
+  id: string;
+  project: string;
+  timestamp: string;
+  user_message: string;
+  assistant_message: string;
+  archive_path: string;
+  line_start: number;
+  line_end: number;
+  distance: number;
+}
+
 function validateISODate(dateStr: string, paramName: string): void {
   const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
   if (!isoDateRegex.test(dateStr)) {
@@ -34,19 +46,6 @@ export async function searchConversations(
   if (before) validateISODate(before, '--before');
 
   const db = initDatabase();
-
-  interface ExchangeRow {
-    id: string;
-    project: string;
-    timestamp: string;
-    user_message: string;
-    assistant_message: string;
-    archive_path: string;
-    line_start: number;
-    line_end: number;
-    distance: number;
-  }
-
   let results: ExchangeRow[] = [];
 
   try {
@@ -143,9 +142,7 @@ export async function searchConversations(
     // Try to load summary if available
     const summaryPath = row.archive_path.replace('.jsonl', '-summary.txt');
     let summary: string | undefined;
-    if (fs.existsSync(summaryPath)) {
-      summary = fs.readFileSync(summaryPath, 'utf-8').trim();
-    }
+    try { summary = fs.readFileSync(summaryPath, 'utf-8').trim(); } catch { /* absent */ }
 
     // Create snippet (first 200 chars, collapse newlines)
     const snippetText = exchange.userMessage.substring(0, 200).replace(/\s+/g, ' ').trim();

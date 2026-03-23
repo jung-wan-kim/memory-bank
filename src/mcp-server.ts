@@ -27,6 +27,7 @@ import { generateEmbedding, initEmbeddings } from './embeddings.js';
 import { getOntologyTree, listDomains, listCategories, getFactsByCategory, getRelatedFacts } from './ontology-db.js';
 import { askAvatar } from './avatar-responder.js';
 import fs from 'fs';
+import path from 'path';
 
 // Zod Schemas for Input Validation
 
@@ -349,7 +350,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const params = ShowConversationInputSchema.parse(args);
 
       // Validate path: must be absolute and a .jsonl file
-      const resolvedPath = require('path').resolve(params.path);
+      const resolvedPath = path.resolve(params.path);
       if (!resolvedPath.endsWith('.jsonl')) {
         throw new Error(`Invalid file type: only .jsonl files are supported`);
       }
@@ -381,9 +382,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const params = SearchFactsInputSchema.parse(args);
       const currentProject = params.project || process.cwd();
 
+      await initEmbeddings();
+      const db = initDatabase();
       try {
-        await initEmbeddings();
-        const db = initDatabase();
         const queryEmbedding = await generateEmbedding(params.query);
         const results = searchSimilarFacts(db, queryEmbedding, currentProject, params.limit);
 
@@ -417,8 +418,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           output += '\n';
         }
 
-        db.close();
-
         return {
           content: [{ type: 'text', text: output }],
         };
@@ -427,6 +426,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [{ type: 'text', text: handleError(error) }],
           isError: true,
         };
+      } finally {
+        db.close();
       }
     }
 
