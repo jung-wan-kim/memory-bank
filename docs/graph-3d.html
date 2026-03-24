@@ -1,0 +1,2055 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memory Bank — 3D Knowledge Graph</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; overflow: hidden; }
+  #canvas { width: 100vw; height: 100vh; display: block; }
+
+  #hud {
+    position: fixed; top: 0; left: 0; right: 0;
+    padding: 16px 24px;
+    background: linear-gradient(180deg, rgba(13,17,23,0.95) 0%, transparent 100%);
+    pointer-events: none; z-index: 10;
+    display: flex; justify-content: space-between; align-items: flex-start;
+  }
+  #hud h1 { font-size: 20px; font-weight: 600; }
+  #hud h1 span { color: #d2a8ff; }
+  #hud .sub { font-size: 13px; color: #8b949e; margin-top: 4px; font-family: 'SF Mono', Menlo, monospace; }
+
+  #stats { display: flex; gap: 24px; align-items: center; }
+  .stat-item { text-align: center; }
+  .stat-val { font-size: 22px; font-weight: 700; font-family: 'SF Mono', Menlo, monospace; }
+  .stat-lbl { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
+
+  #tooltip {
+    position: fixed; display: none;
+    background: rgba(22,27,34,0.96); border: 1px solid #30363d;
+    border-radius: 10px; padding: 16px 20px; pointer-events: none;
+    z-index: 20; max-width: 340px; backdrop-filter: blur(12px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+  .tt-name { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+  .tt-meta { font-size: 12px; color: #8b949e; line-height: 1.5; }
+  .tt-tools { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .tt-tag { font-size: 10px; padding: 2px 8px; border-radius: 10px; background: rgba(88,166,255,0.12); color: #58a6ff; display: inline-block; }
+
+  #legend {
+    position: fixed; bottom: 16px; left: 24px; z-index: 10;
+    display: flex; gap: 16px; flex-wrap: wrap;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #8b949e; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+  #controls {
+    position: fixed; bottom: 16px; right: 24px; z-index: 10;
+    font-size: 12px; color: #8b949e; text-align: right;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+
+<div id="hud">
+  <div>
+    <h1><span>Memory</span> Bank — Knowledge Graph</h1>
+    <div class="sub">3D Ontology Visualization · Force-Directed Layout</div>
+  </div>
+  <div id="stats">
+    <div class="stat-item"><div class="stat-val" style="color:#58a6ff" id="s-nodes">0</div><div class="stat-lbl">Nodes</div></div>
+    <div class="stat-item"><div class="stat-val" style="color:#3fb950" id="s-edges">0</div><div class="stat-lbl">Edges</div></div>
+    <div class="stat-item"><div class="stat-val" style="color:#d2a8ff" id="s-exchanges">0</div><div class="stat-lbl">Exchanges</div></div>
+  </div>
+</div>
+
+<div id="tooltip">
+  <div class="tt-name" id="tt-name"></div>
+  <div class="tt-meta" id="tt-meta"></div>
+  <div class="tt-tools" id="tt-tools"></div>
+</div>
+
+<div id="legend"></div>
+<div id="controls">Drag to rotate · Scroll to zoom · Hover for details</div>
+
+<script>
+// ===== DATA =====
+const GRAPH_DATA = {
+  "projects": [
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "exchanges": 30172,
+      "first_seen": "2026-01-31T15:04:42.426Z",
+      "last_seen": "2026-03-24T07:39:10.469Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "exchanges": 810,
+      "first_seen": "2026-01-31T14:57:05.392Z",
+      "last_seen": "2026-03-24T06:16:07.012Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "exchanges": 766,
+      "first_seen": "2026-01-31T14:56:28.416Z",
+      "last_seen": "2026-03-24T06:12:11.117Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "exchanges": 631,
+      "first_seen": "2026-03-03T02:14:27.837Z",
+      "last_seen": "2026-03-24T07:39:11.888Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "exchanges": 462,
+      "first_seen": "2026-02-23T05:33:00.311Z",
+      "last_seen": "2026-03-24T00:59:29.901Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "exchanges": 425,
+      "first_seen": "2026-01-31T15:02:44.047Z",
+      "last_seen": "2026-03-18T06:12:01.242Z"
+    },
+    {
+      "project": "-Users-jung-wankim",
+      "exchanges": 342,
+      "first_seen": "2026-01-31T17:50:09.294Z",
+      "last_seen": "2026-03-23T02:12:15.176Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "exchanges": 260,
+      "first_seen": "2026-02-25T06:17:22.295Z",
+      "last_seen": "2026-03-18T06:11:59.695Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "exchanges": 213,
+      "first_seen": "2026-03-05T23:23:06.414Z",
+      "last_seen": "2026-03-08T23:18:23.835Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "exchanges": 150,
+      "first_seen": "2026-02-23T01:43:15.515Z",
+      "last_seen": "2026-03-03T00:00:55.913Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "exchanges": 122,
+      "first_seen": "2026-03-13T05:41:24.715Z",
+      "last_seen": "2026-03-19T00:11:43.208Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-match-system",
+      "exchanges": 116,
+      "first_seen": "2026-02-26T01:13:54.014Z",
+      "last_seen": "2026-03-18T08:23:47.155Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-gatekeeper",
+      "exchanges": 111,
+      "first_seen": "2026-03-05T07:02:49.848Z",
+      "last_seen": "2026-03-11T01:30:49.444Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "exchanges": 109,
+      "first_seen": "2026-02-07T11:26:45.583Z",
+      "last_seen": "2026-02-08T06:38:55.036Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-why-crying",
+      "exchanges": 101,
+      "first_seen": "2026-03-09T05:33:18.020Z",
+      "last_seen": "2026-03-09T06:51:15.029Z"
+    },
+    {
+      "project": "-Users-jung-wankim--cokacdir-workspace-yyotu2d0",
+      "exchanges": 94,
+      "first_seen": "2026-02-23T06:09:53.459Z",
+      "last_seen": "2026-02-23T07:48:44.279Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-memory-bank",
+      "exchanges": 83,
+      "first_seen": "2026-03-18T05:58:19.792Z",
+      "last_seen": "2026-03-24T00:01:18.744Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "exchanges": 82,
+      "first_seen": "2026-02-23T03:50:32.120Z",
+      "last_seen": "2026-03-18T08:55:15.118Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-temp",
+      "exchanges": 81,
+      "first_seen": "2026-03-24T00:20:18.799Z",
+      "last_seen": "2026-03-24T07:35:30.550Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-ai-token-monitor",
+      "exchanges": 75,
+      "first_seen": "2026-03-23T23:39:17.842Z",
+      "last_seen": "2026-03-24T06:38:12.971Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-app",
+      "exchanges": 75,
+      "first_seen": "2026-03-09T06:36:03.246Z",
+      "last_seen": "2026-03-10T07:57:18.699Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin-admin-v2",
+      "exchanges": 72,
+      "first_seen": "2026-03-19T00:06:12.877Z",
+      "last_seen": "2026-03-19T00:26:18.653Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "exchanges": 71,
+      "first_seen": "2026-03-19T06:20:20.444Z",
+      "last_seen": "2026-03-20T00:40:49.848Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-episodic-memory",
+      "exchanges": 69,
+      "first_seen": "2026-03-12T05:24:19.069Z",
+      "last_seen": "2026-03-12T07:04:46.772Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "exchanges": 66,
+      "first_seen": "2026-03-04T04:44:37.246Z",
+      "last_seen": "2026-03-18T06:12:04.404Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "exchanges": 63,
+      "first_seen": "2026-03-10T03:51:13.842Z",
+      "last_seen": "2026-03-18T08:52:24.538Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-mbti-univercity",
+      "exchanges": 59,
+      "first_seen": "2026-02-27T04:49:39.057Z",
+      "last_seen": "2026-02-27T08:43:32.006Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft",
+      "exchanges": 52,
+      "first_seen": "2026-01-29T11:07:13.543Z",
+      "last_seen": "2026-03-18T05:11:17.064Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-6",
+      "exchanges": 50,
+      "first_seen": "2026-03-10T01:21:29.718Z",
+      "last_seen": "2026-03-10T02:33:37.776Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "exchanges": 49,
+      "first_seen": "2026-02-25T04:33:05.542Z",
+      "last_seen": "2026-03-05T06:59:05.439Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "exchanges": 35,
+      "first_seen": "2026-03-13T06:42:37.144Z",
+      "last_seen": "2026-03-13T14:11:54.451Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-Private",
+      "exchanges": 31,
+      "first_seen": "2026-03-10T00:09:27.294Z",
+      "last_seen": "2026-03-10T00:22:05.620Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "exchanges": 30,
+      "first_seen": "2026-03-18T05:32:55.512Z",
+      "last_seen": "2026-03-18T08:49:01.893Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "exchanges": 29,
+      "first_seen": "2026-03-24T06:00:56.564Z",
+      "last_seen": "2026-03-24T07:25:09.083Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync-plugins-marketplaces-memory-bank-dev",
+      "exchanges": 17,
+      "first_seen": "2026-03-19T00:12:21.420Z",
+      "last_seen": "2026-03-19T00:30:10.688Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "exchanges": 16,
+      "first_seen": "2026-03-13T06:42:38.643Z",
+      "last_seen": "2026-03-13T07:59:51.348Z"
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-deer-flow",
+      "exchanges": 11,
+      "first_seen": "2026-03-10T08:04:45.610Z",
+      "last_seen": "2026-03-10T23:55:48.900Z"
+    }
+  ],
+  "toolUsage": [
+    {
+      "project": "-Users-jung-wankim",
+      "tool_name": "Agent",
+      "cnt": 16
+    },
+    {
+      "project": "-Users-jung-wankim",
+      "tool_name": "Skill",
+      "cnt": 9
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "Agent",
+      "cnt": 61
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "CronCreate",
+      "cnt": 178
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "CronDelete",
+      "cnt": 70
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "CronList",
+      "cnt": 30
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "EnterPlanMode",
+      "cnt": 20
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "EnterWorktree",
+      "cnt": 13
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "ExitPlanMode",
+      "cnt": 187
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "ExitWorktree",
+      "cnt": 10
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "ListMcpResourcesTool",
+      "cnt": 71
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "ReadMcpResourceTool",
+      "cnt": 291
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "SendMessage",
+      "cnt": 22
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "Skill",
+      "cnt": 1156
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "TeamCreate",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "mcp__claude_ai_Supabase__execute_sql",
+      "cnt": 16
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "mcp__claude_ai_Supabase__list_migrations",
+      "cnt": 8
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "mcp__claude_ai_Supabase__list_projects",
+      "cnt": 18
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "mcp__claude_ai_Supabase__search_docs",
+      "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim--cokacdir-workspace-yyotu2d0",
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__search",
+      "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-ai-token-monitor",
+      "tool_name": "Agent",
+      "cnt": 60
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "Agent",
+      "cnt": 247
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "CronCreate",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "CronDelete",
+      "cnt": 6
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "CronList",
+      "cnt": 6
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "Skill",
+      "cnt": 66
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "WebFetch",
+      "cnt": 552
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "WebSearch",
+      "cnt": 168
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__decisions",
+      "cnt": 10
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__find_by_concept",
+      "cnt": 20
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__find_by_type",
+      "cnt": 40
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__get_recent_context",
+      "cnt": 10
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__search",
+      "cnt": 16
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__search_observations",
+      "cnt": 190
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__search_sessions",
+      "cnt": 30
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__search_user_prompts",
+      "cnt": 70
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "mcp__plugin_episodic-memory_episodic-memory__search",
+      "cnt": 50
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "mcp__plugin_memory-bank_memory-bank__search",
+      "cnt": 106
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "mcp__plugin_memory-bank_memory-bank__search_facts",
+      "cnt": 62
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "tool_name": "Agent",
+      "cnt": 42
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "tool_name": "Skill",
+      "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "tool_name": "WebFetch",
+      "cnt": 14
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "tool_name": "SendMessage",
+      "cnt": 9
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "tool_name": "Task",
+      "cnt": 10
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "tool_name": "mcp__plugin_superpowers-chrome_chrome__use_browser",
+      "cnt": 240
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-temp",
+      "tool_name": "CronCreate",
+      "cnt": 6
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-temp",
+      "tool_name": "Skill",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-temp",
+      "tool_name": "mcp__plugin_memory-bank_memory-bank__read",
+      "cnt": 6
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-temp",
+      "tool_name": "mcp__plugin_memory-bank_memory-bank__search",
+      "cnt": 24
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-temp",
+      "tool_name": "mcp__plugin_memory-bank_memory-bank__search_facts",
+      "cnt": 39
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "Agent",
+      "cnt": 635
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "CronCreate",
+      "cnt": 11
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "CronDelete",
+      "cnt": 8
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "EnterPlanMode",
+      "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "SendMessage",
+      "cnt": 40
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "Skill",
+      "cnt": 23
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "TaskStop",
+      "cnt": 99
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "TeamCreate",
+      "cnt": 14
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "TeamDelete",
+      "cnt": 17
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "WebFetch",
+      "cnt": 58
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "WebSearch",
+      "cnt": 38
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "mcp__claude_ai_Supabase__apply_migration",
+      "cnt": 19
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "mcp__claude_ai_Supabase__execute_sql",
+      "cnt": 150
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "mcp__claude_ai_Supabase__get_project",
+      "cnt": 45
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "mcp__claude_ai_Supabase__list_edge_functions",
+      "cnt": 45
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "mcp__claude_ai_Supabase__list_migrations",
+      "cnt": 45
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "mcp__claude_ai_Supabase__list_projects",
+      "cnt": 110
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "mcp__claude_ai_Supabase__list_tables",
+      "cnt": 18
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "mcp__plugin_episodic-memory_episodic-memory__search",
+      "cnt": 8
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "mcp__plugin_memory-bank_memory-bank__search",
+      "cnt": 21
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "mcp__plugin_memory-bank_memory-bank__search_facts",
+      "cnt": 18
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "tool_name": "Agent",
+      "cnt": 405
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "tool_name": "Skill",
+      "cnt": 50
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "tool_name": "TaskGet",
+      "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-why-crying",
+      "tool_name": "Agent",
+      "cnt": 15
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-why-crying",
+      "tool_name": "Skill",
+      "cnt": 14
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "EnterPlanMode",
+      "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "ExitPlanMode",
+      "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "Task",
+      "cnt": 31
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "WebFetch",
+      "cnt": 9
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "mcp__claude_ai_Supabase__apply_migration",
+      "cnt": 37
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "mcp__claude_ai_Supabase__execute_sql",
+      "cnt": 401
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "mcp__claude_ai_Supabase__get_edge_function",
+      "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "mcp__claude_ai_Supabase__get_logs",
+      "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "mcp__claude_ai_Supabase__get_project",
+      "cnt": 13
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "mcp__claude_ai_Supabase__get_project_url",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "mcp__claude_ai_Supabase__get_publishable_keys",
+      "cnt": 17
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "mcp__claude_ai_Supabase__list_edge_functions",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "mcp__claude_ai_Supabase__list_projects",
+      "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "mcp__claude_ai_Supabase__list_tables",
+      "cnt": 15
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "mcp__plugin_superpowers-chrome_chrome__use_browser",
+      "cnt": 50
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "tool_name": "Agent",
+      "cnt": 30
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "tool_name": "mcp__claude_ai_Supabase__execute_sql",
+      "cnt": 6
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "tool_name": "Agent",
+      "cnt": 11
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "tool_name": "Skill",
+      "cnt": 13
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "tool_name": "Task",
+      "cnt": 44
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "tool_name": "mcp__plugin_superpowers-chrome_chrome__use_browser",
+      "cnt": 6
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-6",
+      "tool_name": "mcp__pencil__get_screenshot",
+      "cnt": 10
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-gatekeeper",
+      "tool_name": "Agent",
+      "cnt": 6
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "tool_name": "Agent",
+      "cnt": 32
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "tool_name": "Skill",
+      "cnt": 24
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "tool_name": "WebSearch",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "tool_name": "mcp__claude_ai_Supabase__execute_sql",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "tool_name": "Agent",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "tool_name": "ExitPlanMode",
+      "cnt": 8
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "tool_name": "SendMessage",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "tool_name": "Skill",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "tool_name": "Task",
+      "cnt": 112
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "tool_name": "Agent",
+      "cnt": 33
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "tool_name": "CronCreate",
+      "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "tool_name": "Task",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "tool_name": "WebFetch",
+      "cnt": 9
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__search",
+      "cnt": 18
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "tool_name": "mcp__plugin_superpowers-chrome_chrome__use_browser",
+      "cnt": 18
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "Agent",
+      "cnt": 1469
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "SendMessage",
+      "cnt": 21
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "Skill",
+      "cnt": 29
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "Task",
+      "cnt": 49
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "TaskGet",
+      "cnt": 13
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "TodoWrite",
+      "cnt": 14
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "WebFetch",
+      "cnt": 446
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__search",
+      "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "mcp__plugin_memory-bank_memory-bank__search",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "mcp__plugin_memory-bank_memory-bank__search_facts",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "mcp__plugin_superpowers-chrome_chrome__use_browser",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin-admin-v2",
+      "tool_name": "TodoWrite",
+      "cnt": 19
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "tool_name": "Agent",
+      "cnt": 32
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "tool_name": "Skill",
+      "cnt": 13
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "tool_name": "Task",
+      "cnt": 44
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "tool_name": "WebFetch",
+      "cnt": 34
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "tool_name": "WebSearch",
+      "cnt": 109
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__search",
+      "cnt": 20
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "tool_name": "mcp__plugin_episodic-memory_episodic-memory__search",
+      "cnt": 6
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-match-system",
+      "tool_name": "Agent",
+      "cnt": 103
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-match-system",
+      "tool_name": "WebSearch",
+      "cnt": 112
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "tool_name": "Agent",
+      "cnt": 18
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "tool_name": "Skill",
+      "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "Skill",
+      "cnt": 10
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "Task",
+      "cnt": 194
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "WebFetch",
+      "cnt": 42
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "WebSearch",
+      "cnt": 177
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "mcp__claude_ai_Supabase__apply_migration",
+      "cnt": 17
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "mcp__claude_ai_Supabase__execute_sql",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "mcp__claude_ai_Supabase__get_cost",
+      "cnt": 11
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "mcp__claude_ai_Supabase__get_logs",
+      "cnt": 8
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "mcp__claude_ai_Supabase__list_organizations",
+      "cnt": 22
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "mcp__claude_ai_Supabase__list_projects",
+      "cnt": 15
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "mcp__plugin_superpowers-chrome_chrome__use_browser",
+      "cnt": 122
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "tool_name": "Agent",
+      "cnt": 259
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "tool_name": "Skill",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "tool_name": "TaskStop",
+      "cnt": 25
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "tool_name": "mcp__claude_ai_Supabase__get_cost",
+      "cnt": 10
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "tool_name": "mcp__claude_ai_Supabase__get_project_url",
+      "cnt": 10
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "tool_name": "mcp__claude_ai_Supabase__get_publishable_keys",
+      "cnt": 10
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "tool_name": "WebFetch",
+      "cnt": 8
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "tool_name": "Agent",
+      "cnt": 6
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "tool_name": "Skill",
+      "cnt": 6
+    },
+    {
+      "project": "-Users-jung-wankim-Project-mbti-univercity",
+      "tool_name": "Task",
+      "cnt": 16
+    },
+    {
+      "project": "-Users-jung-wankim-Project-mbti-univercity",
+      "tool_name": "WebFetch",
+      "cnt": 8
+    }
+  ],
+  "connections": [
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "weight": 18
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "weight": 14
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-bs-hanyang",
+      "weight": 13
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-bs-hanyang",
+      "weight": 13
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "weight": 10
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "weight": 10
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "weight": 9
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "weight": 9
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "weight": 9
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "weight": 9
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "weight": 8
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "weight": 8
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "weight": 8
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "weight": 8
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "weight": 7
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "weight": 7
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "weight": 7
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "weight": 7
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "weight": 7
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "weight": 7
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "weight": 7
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "weight": 7
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "weight": 7
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "weight": 6
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "weight": 6
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "weight": 6
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "weight": 6
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "target": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "weight": 6
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "weight": 6
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "weight": 6
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "weight": 6
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "weight": 6
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-bs-hanyang",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-Claude-temp",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-Claude-why-crying",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "target": "-Users-jung-wankim-Project-bs-hanyang",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-temp",
+      "target": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-Claude-why-crying",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-why-crying",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-why-crying",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-why-crying",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-Claude-why-crying",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-bs-hanyang",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-hugh-soft",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "target": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "target": "-Users-jung-wankim-Project-Claude-why-crying",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-temp",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-hugh-soft",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-why-crying",
+      "target": "-Users-jung-wankim-Project-hugh-soft",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-why-crying",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-why-crying",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-why-crying",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-why-crying",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-why-crying",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "target": "-Users-jung-wankim-Project-hugh-soft",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "weight": 3
+    }
+  ]
+}
+;
+
+// ===== DOMAIN CATEGORIZATION =====
+const domainRules = [
+  { match: /claude|cc-sync|memory-bank|episodic|config-editor|insights/i, domain: "Claude Ecosystem", color: "#d2a8ff" },
+  { match: /article|artricle|docs/i, domain: "Article21", color: "#f0883e" },
+  { match: /trader|algorithm|token/i, domain: "Trading", color: "#3fb950" },
+  { match: /bs-hanyang|HANY|KFM|gatekeeper/i, domain: "Construction MIS", color: "#58a6ff" },
+  { match: /hugh-soft|running|match|studio/i, domain: "Hugh Soft", color: "#56d4dd" },
+  { match: /thedotmack|marketplace/i, domain: "Marketplace", color: "#f85149" },
+  { match: /mbti|why-crying|fit5x5/i, domain: "Side Projects", color: "#d29922" },
+];
+
+function classifyProject(name) {
+  for (const rule of domainRules) {
+    if (rule.match.test(name)) return { domain: rule.domain, color: rule.color };
+  }
+  return { domain: "Other", color: "#8b949e" };
+}
+
+// ===== BUILD GRAPH =====
+const nodes = [];
+const edges = [];
+const nodeMap = new Map();
+
+for (const p of GRAPH_DATA.projects) {
+  const shortName = p.project.replace(/-Users-jung-wankim[-]?/g, '').replace(/^Project-/, '').replace(/-/g, '/') || 'home';
+  const { domain, color } = classifyProject(p.project);
+  const tools = GRAPH_DATA.toolUsage.filter(t => t.project === p.project).map(t => t.tool_name.replace(/mcp__[^_]+_[^_]+__/, ''));
+  const size = Math.max(3, Math.min(18, Math.log2(p.exchanges) * 2.5));
+  const node = { id: p.project, name: shortName, domain, color, size, exchanges: p.exchanges, tools, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
+  nodes.push(node);
+  nodeMap.set(p.project, node);
+}
+
+for (const c of GRAPH_DATA.connections) {
+  if (nodeMap.has(c.source) && nodeMap.has(c.target)) {
+    edges.push({ source: nodeMap.get(c.source), target: nodeMap.get(c.target), weight: c.weight });
+  }
+}
+
+// Stats
+document.getElementById('s-nodes').textContent = nodes.length;
+document.getElementById('s-edges').textContent = edges.length;
+document.getElementById('s-exchanges').textContent = GRAPH_DATA.projects.reduce(function(s, p) { return s + p.exchanges; }, 0).toLocaleString();
+
+// Legend (safe DOM manipulation)
+const domains = [...new Set(nodes.map(function(n) { return n.domain; }))].sort();
+const legendEl = document.getElementById('legend');
+for (const d of domains) {
+  const color = nodes.find(function(n) { return n.domain === d; })?.color || '#8b949e';
+  const item = document.createElement('div');
+  item.className = 'legend-item';
+  const dot = document.createElement('div');
+  dot.className = 'legend-dot';
+  dot.style.background = color;
+  item.appendChild(dot);
+  item.appendChild(document.createTextNode(d));
+  legendEl.appendChild(item);
+}
+
+// ===== FORCE SIMULATION =====
+for (const n of nodes) {
+  const theta = Math.random() * Math.PI * 2;
+  const phi = Math.acos(2 * Math.random() - 1);
+  const r = 80 + Math.random() * 40;
+  n.x = r * Math.sin(phi) * Math.cos(theta);
+  n.y = r * Math.sin(phi) * Math.sin(theta);
+  n.z = r * Math.cos(phi);
+}
+
+function simulate(iterations) {
+  for (let iter = 0; iter < iterations; iter++) {
+    const alpha = 0.3 * (1 - iter / iterations);
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const dx = nodes[j].x - nodes[i].x;
+        const dy = nodes[j].y - nodes[i].y;
+        const dz = nodes[j].z - nodes[i].z;
+        const dist = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1;
+        const force = 800 / (dist * dist) * alpha;
+        nodes[i].vx -= dx / dist * force; nodes[i].vy -= dy / dist * force; nodes[i].vz -= dz / dist * force;
+        nodes[j].vx += dx / dist * force; nodes[j].vy += dy / dist * force; nodes[j].vz += dz / dist * force;
+      }
+    }
+    for (const e of edges) {
+      const dx = e.target.x - e.source.x;
+      const dy = e.target.y - e.source.y;
+      const dz = e.target.z - e.source.z;
+      const dist = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1;
+      const force = (dist - 40) * 0.02 * alpha * e.weight;
+      e.source.vx += dx/dist*force; e.source.vy += dy/dist*force; e.source.vz += dz/dist*force;
+      e.target.vx -= dx/dist*force; e.target.vy -= dy/dist*force; e.target.vz -= dz/dist*force;
+    }
+    for (const n of nodes) {
+      n.vx -= n.x * 0.005 * alpha; n.vy -= n.y * 0.005 * alpha; n.vz -= n.z * 0.005 * alpha;
+      n.x += n.vx; n.y += n.vy; n.z += n.vz;
+      n.vx *= 0.6; n.vy *= 0.6; n.vz *= 0.6;
+    }
+  }
+}
+simulate(200);
+
+// ===== 3D RENDERING =====
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let W, H;
+function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+resize();
+window.addEventListener('resize', resize);
+
+let rotX = -0.3, rotY = 0.5, zoom = 3.5;
+let dragging = false, lastMX = 0, lastMY = 0;
+let autoRotate = true;
+let mouseX = -1, mouseY = -1;
+
+canvas.addEventListener('mousedown', function(e) { dragging = true; lastMX = e.clientX; lastMY = e.clientY; autoRotate = false; });
+canvas.addEventListener('mousemove', function(e) {
+  mouseX = e.clientX; mouseY = e.clientY;
+  if (dragging) {
+    rotY += (e.clientX - lastMX) * 0.005;
+    rotX += (e.clientY - lastMY) * 0.005;
+    rotX = Math.max(-Math.PI/2, Math.min(Math.PI/2, rotX));
+    lastMX = e.clientX; lastMY = e.clientY;
+  }
+});
+canvas.addEventListener('mouseup', function() { dragging = false; });
+canvas.addEventListener('mouseleave', function() { dragging = false; mouseX = -1; mouseY = -1; });
+canvas.addEventListener('wheel', function(e) { zoom *= e.deltaY > 0 ? 0.95 : 1.05; zoom = Math.max(1, Math.min(10, zoom)); e.preventDefault(); }, { passive: false });
+
+function project(x, y, z) {
+  let x1 = x * Math.cos(rotY) - z * Math.sin(rotY);
+  let z1 = x * Math.sin(rotY) + z * Math.cos(rotY);
+  let y1 = y * Math.cos(rotX) - z1 * Math.sin(rotX);
+  let z2 = y * Math.sin(rotX) + z1 * Math.cos(rotX);
+  const perspective = 600;
+  const scale = perspective / (perspective + z2) * zoom;
+  return { sx: W/2 + x1 * scale, sy: H/2 + y1 * scale, scale: scale, z: z2 };
+}
+
+function hexToRgba(hex, alpha) {
+  const r = parseInt(hex.slice(1,3), 16);
+  const g = parseInt(hex.slice(3,5), 16);
+  const b = parseInt(hex.slice(5,7), 16);
+  return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+}
+
+function render() {
+  if (autoRotate) rotY += 0.002;
+  ctx.clearRect(0, 0, W, H);
+
+  // Background
+  const grad = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, W*0.6);
+  grad.addColorStop(0, '#161b22');
+  grad.addColorStop(1, '#0d1117');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  // Project nodes
+  const projected = nodes.map(function(n) {
+    const p = project(n.x, n.y, n.z);
+    return Object.assign({}, n, p);
+  });
+  projected.sort(function(a, b) { return a.z - b.z; });
+
+  // Edges
+  for (const e of edges) {
+    const s = project(e.source.x, e.source.y, e.source.z);
+    const t = project(e.target.x, e.target.y, e.target.z);
+    const avgZ = (s.z + t.z) / 2;
+    const alpha = Math.max(0.04, Math.min(0.25, 0.15 - avgZ * 0.0005)) * (e.weight / 10);
+    ctx.beginPath();
+    ctx.moveTo(s.sx, s.sy);
+    ctx.lineTo(t.sx, t.sy);
+    ctx.strokeStyle = hexToRgba('#58a6ff', alpha);
+    ctx.lineWidth = Math.max(0.5, e.weight * 0.15 * s.scale);
+    ctx.stroke();
+  }
+
+  // Find hovered node
+  let hoveredNode = null;
+  let minDist = 30;
+
+  // Nodes
+  for (const n of projected) {
+    const r = n.size * n.scale * 0.4;
+    const alpha = Math.max(0.3, Math.min(1, 0.8 - n.z * 0.002));
+
+    // Glow
+    const glowGrad = ctx.createRadialGradient(n.sx, n.sy, 0, n.sx, n.sy, r * 3);
+    glowGrad.addColorStop(0, hexToRgba(n.color, 0.15 * alpha));
+    glowGrad.addColorStop(1, 'transparent');
+    ctx.fillStyle = glowGrad;
+    ctx.fillRect(n.sx - r*3, n.sy - r*3, r*6, r*6);
+
+    // Circle
+    ctx.beginPath();
+    ctx.arc(n.sx, n.sy, r, 0, Math.PI * 2);
+    ctx.fillStyle = hexToRgba(n.color, 0.9 * alpha);
+    ctx.fill();
+    ctx.strokeStyle = hexToRgba(n.color, 0.5 * alpha);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Label
+    if (r > 3) {
+      ctx.fillStyle = hexToRgba('#e6edf3', 0.7 * alpha);
+      ctx.font = Math.max(9, r * 1.2) + 'px -apple-system, sans-serif';
+      ctx.textAlign = 'center';
+      const label = n.name.length > 22 ? n.name.slice(0, 20) + '..' : n.name;
+      ctx.fillText(label, n.sx, n.sy + r + 14);
+    }
+
+    // Hover
+    if (mouseX >= 0) {
+      const dx = mouseX - n.sx;
+      const dy = mouseY - n.sy;
+      const d = Math.sqrt(dx*dx + dy*dy);
+      if (d < Math.max(r + 8, minDist)) { minDist = d; hoveredNode = n; }
+    }
+  }
+
+  // Tooltip (safe DOM methods)
+  const tt = document.getElementById('tooltip');
+  if (hoveredNode && !dragging) {
+    tt.style.display = 'block';
+    tt.style.left = Math.min(mouseX + 16, W - 360) + 'px';
+    tt.style.top = Math.min(mouseY + 16, H - 200) + 'px';
+
+    const ttName = document.getElementById('tt-name');
+    ttName.textContent = hoveredNode.name;
+    ttName.style.color = hoveredNode.color;
+
+    const ttMeta = document.getElementById('tt-meta');
+    ttMeta.textContent = '';
+    const domainLine = document.createElement('div');
+    domainLine.textContent = 'Domain: ' + hoveredNode.domain;
+    domainLine.style.color = hoveredNode.color;
+    const exchLine = document.createElement('div');
+    exchLine.textContent = 'Exchanges: ' + hoveredNode.exchanges.toLocaleString();
+    const connLine = document.createElement('div');
+    const connCount = edges.filter(function(e) { return e.source.id === hoveredNode.id || e.target.id === hoveredNode.id; }).length;
+    connLine.textContent = 'Connections: ' + connCount;
+    ttMeta.appendChild(domainLine);
+    ttMeta.appendChild(exchLine);
+    ttMeta.appendChild(connLine);
+
+    const ttTools = document.getElementById('tt-tools');
+    ttTools.textContent = '';
+    hoveredNode.tools.slice(0, 8).forEach(function(t) {
+      const tag = document.createElement('span');
+      tag.className = 'tt-tag';
+      tag.textContent = t;
+      ttTools.appendChild(tag);
+    });
+  } else {
+    tt.style.display = 'none';
+  }
+
+  requestAnimationFrame(render);
+}
+render();
+</script>
+</body>
+</html>
