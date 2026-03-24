@@ -291,6 +291,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           openWorldHint: false,
         },
       },
+      {
+        name: 'graph_stats',
+        description: 'Get knowledge graph statistics: total facts, domains, categories, relations, and top domains by fact count. Useful for understanding what knowledge has been accumulated.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            project: { type: 'string', description: 'Project path to scope stats (optional, default: all)' },
+          },
+          additionalProperties: false,
+        },
+        annotations: {
+          title: 'Knowledge Graph Stats',
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
     ],
   };
 });
@@ -654,6 +672,69 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [{ type: 'text', text: handleError(error) }],
           isError: true,
         };
+      } finally {
+        db.close();
+      }
+    }
+
+    if (name === 'graph_stats') {
+      const params = z.object({
+        project: z.string().optional(),
+      }).strict().parse(args);
+
+      const db = initDatabase();
+      try {
+        const totalFacts = (db.prepare('SELECT COUNT(*) as count FROM facts WHERE is_active = 1').get() as { count: number }).count;
+        const totalDomains = (db.prepare('SELECT COUNT(*) as count FROM ontology_domains').get() as { count: number }).count;
+        const totalCategories = (db.prepare('SELECT COUNT(*) as count FROM ontology_categories').get() as { count: number }).count;
+        const totalRelations = (db.prepare('SELECT COUNT(*) as count FROM ontology_relations').get() as { count: number }).count;
+        const totalRevisions = (db.prepare('SELECT COUNT(*) as count FROM fact_revisions').get() as { count: number }).count;
+
+        const categoryBreakdown = db.prepare(
+          'SELECT category, COUNT(*) as count FROM facts WHERE is_active = 1 GROUP BY category ORDER BY count DESC'
+        ).all() as Array<{ category: string; count: number }>;
+
+        const topDomains = db.prepare(`
+          SELECT d.name, COUNT(f.id) as fact_count
+          FROM ontology_domains d
+          JOIN ontology_categories c ON c.domain_id = d.id
+          JOIN facts f ON f.ontology_category_id = c.id AND f.is_active = 1
+          GROUP BY d.id ORDER BY fact_count DESC LIMIT 10
+        `).all() as Array<{ name: string; fact_count: number }>;
+
+        const relationBreakdown = db.prepare(
+          'SELECT relation_type, COUNT(*) as count FROM ontology_relations GROUP BY relation_type ORDER BY count DESC'
+        ).all() as Array<{ relation_type: string; count: number }>;
+
+        let output = `# Knowledge Graph Statistics\n\n`;
+        output += `| Metric | Count |\n|--------|-------|\n`;
+        output += `| Active Facts | ${totalFacts} |\n`;
+        output += `| Domains | ${totalDomains} |\n`;
+        output += `| Categories | ${totalCategories} |\n`;
+        output += `| Relations | ${totalRelations} |\n`;
+        output += `| Revisions | ${totalRevisions} |\n\n`;
+
+        if (categoryBreakdown.length > 0) {
+          output += `## Fact Categories\n\n`;
+          for (const { category, count } of categoryBreakdown) output += `- ${category}: ${count}\n`;
+          output += '\n';
+        }
+
+        if (topDomains.length > 0) {
+          output += `## Top Domains\n\n`;
+          for (const { name: dn, fact_count } of topDomains) output += `- ${dn}: ${fact_count} facts\n`;
+          output += '\n';
+        }
+
+        if (relationBreakdown.length > 0) {
+          output += `## Relation Types\n\n`;
+          for (const { relation_type, count } of relationBreakdown) output += `- ${relation_type}: ${count}\n`;
+          output += '\n';
+        }
+
+        return { content: [{ type: 'text', text: output }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: handleError(error) }], isError: true };
       } finally {
         db.close();
       }
