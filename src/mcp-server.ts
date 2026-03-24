@@ -330,6 +330,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           openWorldHint: false,
         },
       },
+      {
+        name: 'explore_graph',
+        description: 'Explore the knowledge graph starting from a fact or topic. Performs multi-hop traversal to discover indirectly connected knowledge, patterns, and decision chains.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', minLength: 2, description: 'Starting topic or fact to explore from' },
+            hops: { type: 'number', minimum: 1, maximum: 3, default: 2, description: 'Graph traversal depth (1-3 hops)' },
+            project: { type: 'string', description: 'Project scope (optional)' },
+          },
+          required: ['query'],
+          additionalProperties: false,
+        },
+        annotations: {
+          title: 'Explore Knowledge Graph',
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
     ],
   };
 });
@@ -803,6 +824,83 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
           output += '\n';
         }
+
+        return { content: [{ type: 'text', text: output }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: handleError(error) }], isError: true };
+      } finally {
+        db.close();
+      }
+    }
+
+    if (name === 'explore_graph') {
+      const params = z.object({
+        query: z.string().min(2),
+        hops: z.number().int().min(1).max(3).default(2),
+        project: z.string().optional(),
+      }).strict().parse(args);
+
+      await initEmbeddings();
+      const db = initDatabase();
+
+      try {
+        const queryEmbedding = await generateEmbedding(params.query);
+        const seedFacts = searchSimilarFacts(db, queryEmbedding, params.project ?? null, 3, 0.5);
+
+        if (seedFacts.length === 0) {
+          return { content: [{ type: 'text', text: `No facts found related to "${params.query}" to start graph exploration.` }] };
+        }
+
+        // Build domain/category maps
+        const domains = listDomains(db);
+        const categories = listCategories(db);
+        const domainMap = new Map(domains.map(d => [d.id, d.name]));
+        const categoryMap = new Map(categories.map(c => [c.id, { name: c.name, domainId: c.domain_id }]));
+
+        let output = `# Knowledge Graph Exploration\n\nSeed: "${params.query}" | Depth: ${params.hops} hops\n\n`;
+
+        const allDiscovered = new Set<string>();
+
+        for (const { fact: seedFact, distance } of seedFacts) {
+          const similarity = Math.round((1 - distance * distance / 2) * 100);
+          const catInfo = seedFact.ontology_category_id ? categoryMap.get(seedFact.ontology_category_id) : undefined;
+          const domainName = catInfo ? (domainMap.get(catInfo.domainId) ?? '?') : '?';
+          const catName = catInfo ? catInfo.name : '?';
+
+          output += `## Seed: ${seedFact.fact}\n`;
+          output += `- [${domainName}/${catName}] ${seedFact.category} | ${similarity}% relevant\n\n`;
+
+          allDiscovered.add(seedFact.id);
+
+          // Multi-hop traversal
+          const related = getRelatedFacts(db, seedFact.id, params.hops);
+
+          if (related.length === 0) {
+            output += `_No connected facts found._\n\n`;
+            continue;
+          }
+
+          // Group by hop distance (approximate via order)
+          output += `### Connected Facts (${related.length} found, up to ${params.hops} hops)\n\n`;
+
+          for (const { fact: relFact, relation } of related) {
+            if (allDiscovered.has(relFact.id)) continue;
+            allDiscovered.add(relFact.id);
+
+            const relCatInfo = relFact.ontology_category_id ? categoryMap.get(relFact.ontology_category_id) : undefined;
+            const relDomain = relCatInfo ? (domainMap.get(relCatInfo.domainId) ?? '?') : '?';
+            const relCat = relCatInfo ? relCatInfo.name : '?';
+
+            output += `- **[${relation.relation_type}]** ${relFact.fact}\n`;
+            output += `  [${relDomain}/${relCat}] ${relFact.category} | ${relFact.created_at.slice(0, 10)}\n`;
+            if (relation.reasoning) {
+              output += `  _${relation.reasoning}_\n`;
+            }
+          }
+          output += '\n';
+        }
+
+        output += `\n_Total unique facts discovered: ${allDiscovered.size}_\n`;
 
         return { content: [{ type: 'text', text: output }] };
       } catch (error) {
