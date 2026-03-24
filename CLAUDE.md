@@ -82,12 +82,60 @@ Consolidation relations: `DUPLICATE` (merge), `CONTRADICTION` (replace), `EVOLUT
 | `MEMORY_BANK_DB_PATH` / `TEST_DB_PATH` | Override database path |
 | `TEST_ARCHIVE_DIR` | Override archive directory for tests |
 
+### Ontology System
+
+Automatic classification of facts into domain/category hierarchy:
+- `ontology_domains` — Top-level groupings (e.g., "Infrastructure", "Frontend")
+- `ontology_categories` — Sub-groupings within domains
+- `ontology_relations` — Typed relations between facts: `INFLUENCES`, `SUPERSEDES`, `SUPPORTS`, `CONTRADICTS`
+- Classification runs asynchronously after fact insertion via `classifyAndLinkFact()`
+
+### Avatar Responder
+
+`ask_avatar` tool — answers questions grounded in the user's past decisions and facts with confidence scoring and cited sources.
+
 ## Tech Stack
 
-- TypeScript (ES2022, ESM modules)
-- SQLite via `better-sqlite3` + `sqlite-vec` for vector search
-- `@xenova/transformers` for local embedding generation (all-MiniLM-L6-v2, 384-dim)
-- `@anthropic-ai/sdk` for LLM calls
-- `@modelcontextprotocol/sdk` for MCP server
-- Vitest for testing (30s timeout per test)
-- esbuild for MCP server bundling
+- TypeScript 5.9+ (ES2022, ESM modules — `"type": "module"` in package.json)
+- SQLite via `better-sqlite3` 12.x + `sqlite-vec` 0.1.x for vector search
+- `@xenova/transformers` 2.17+ for local embedding generation (all-MiniLM-L6-v2, 384-dim)
+- `@anthropic-ai/sdk` 0.78+ for LLM calls (Haiku)
+- `@modelcontextprotocol/sdk` 1.20+ for MCP server
+- `zod` 3.x for input validation
+- `marked` 16.x for Markdown rendering
+- Vitest 3.x for testing (30s timeout per test)
+- esbuild for MCP server bundling (native modules externalized)
+
+## Coding Conventions
+
+### ESM Module System
+- All imports use `.js` extension: `import { foo } from './bar.js'`
+- `require()` is forbidden — use `import` exclusively
+- CommonJS files use `.cjs` extension (e.g., `ui/server.cjs`)
+
+### Database Patterns
+- Always call `db.close()` in `finally` blocks to prevent connection leaks
+- Use `db.pragma('busy_timeout = 5000')` for concurrent access
+- Schema migrations are idempotent — check column existence before ALTER
+- Vector tables (sqlite-vec) require DELETE before INSERT (no REPLACE support)
+- Escape LIKE metacharacters (`%`, `_`) with `ESCAPE '\\'`
+- Use parameterized queries — never interpolate user input into SQL
+
+### Error Handling
+- `try { ... } catch { /* skip malformed */ }` for JSONL line parsing
+- `handleError()` utility wraps unknown errors into string messages
+- LLM failures logged but non-fatal — extraction continues with partial results
+- File operations use atomic copy: temp file + rename pattern
+
+### Type Patterns
+- Zod schemas for all MCP tool input validation
+- Interface types in `src/types.ts` for shared data structures
+- DB row types defined as local interfaces near usage (e.g., `ExchangeRow`)
+- `(row as Type)` casting for `better-sqlite3` query results
+
+### Testing Patterns
+- Test utilities in `test/test-utils.ts`: `createTestDb()`, `suppressConsole()`, `getFixturePath()`
+- Environment overrides via `TEST_DB_PATH`, `TEST_ARCHIVE_DIR` for isolation
+- Fixtures in `test/fixtures/*.jsonl`
+- Each test creates/destroys its own temp directory
+- 30s timeout per test (embedding model loading)
