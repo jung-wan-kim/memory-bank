@@ -24,7 +24,7 @@ import {
 } from './search.js';
 import { formatConversationAsMarkdown } from './show.js';
 import { initDatabase } from './db.js';
-import { searchSimilarFacts, getRevisions } from './fact-db.js';
+import { searchSimilarFacts, searchAllFacts, getRevisions } from './fact-db.js';
 import { generateEmbedding, initEmbeddings } from './embeddings.js';
 import { getOntologyTree, listDomains, listCategories, getFactsByCategory, getRelatedFacts } from './ontology-db.js';
 import { askAvatar } from './avatar-responder.js';
@@ -303,6 +303,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
         annotations: {
           title: 'Knowledge Graph Stats',
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      {
+        name: 'cross_project_insights',
+        description: 'Find similar decisions and patterns from OTHER projects. Useful for knowledge transfer — see how similar problems were solved in different projects.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', minLength: 2, description: 'Topic or decision to find cross-project insights for' },
+            current_project: { type: 'string', description: 'Current project path (results from this project are excluded)' },
+            limit: { type: 'number', minimum: 1, maximum: 20, default: 5, description: 'Max results' },
+          },
+          required: ['query'],
+          additionalProperties: false,
+        },
+        annotations: {
+          title: 'Cross-Project Insights',
           readOnlyHint: true,
           destructiveHint: false,
           idempotentHint: true,
@@ -729,6 +750,57 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (relationBreakdown.length > 0) {
           output += `## Relation Types\n\n`;
           for (const { relation_type, count } of relationBreakdown) output += `- ${relation_type}: ${count}\n`;
+          output += '\n';
+        }
+
+        return { content: [{ type: 'text', text: output }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: handleError(error) }], isError: true };
+      } finally {
+        db.close();
+      }
+    }
+
+    if (name === 'cross_project_insights') {
+      const params = z.object({
+        query: z.string().min(2),
+        current_project: z.string().optional(),
+        limit: z.number().int().min(1).max(20).default(5),
+      }).strict().parse(args);
+
+      await initEmbeddings();
+      const db = initDatabase();
+
+      try {
+        const queryEmbedding = await generateEmbedding(params.query);
+        const allResults = searchAllFacts(db, queryEmbedding, params.limit * 3, 0.5);
+
+        // Filter out current project facts, keep only OTHER projects
+        const currentProject = params.current_project || process.cwd();
+        const crossProjectResults = allResults.filter(
+          r => r.fact.scope_type === 'project' && r.fact.scope_project !== currentProject
+        ).slice(0, params.limit);
+
+        if (crossProjectResults.length === 0) {
+          return { content: [{ type: 'text', text: `No cross-project insights found for "${params.query}". Similar decisions may not exist in other projects yet.` }] };
+        }
+
+        // Group by project
+        const byProject = new Map<string, Array<{ fact: typeof crossProjectResults[0]['fact']; distance: number }>>();
+        for (const { fact, distance } of crossProjectResults) {
+          const proj = fact.scope_project || 'global';
+          if (!byProject.has(proj)) byProject.set(proj, []);
+          byProject.get(proj)!.push({ fact, distance });
+        }
+
+        let output = `# Cross-Project Insights\n\nQuery: "${params.query}"\nExcluding: ${currentProject}\n\n`;
+
+        for (const [project, facts] of byProject) {
+          output += `## Project: ${project}\n\n`;
+          for (const { fact, distance } of facts) {
+            const similarity = Math.round((1 - distance * distance / 2) * 100);
+            output += `- **[${fact.category}]** ${fact.fact} _(${similarity}% relevant, ${fact.created_at.slice(0, 10)})_\n`;
+          }
           output += '\n';
         }
 

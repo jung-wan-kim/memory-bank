@@ -185,6 +185,39 @@ export function getNewFactsSince(db: Database.Database, project: string, since: 
   `).all(since, project) as Record<string, unknown>[]).map(rowToFact);
 }
 
+/**
+ * Search facts across ALL projects (no scope filter).
+ * Used for cross-project knowledge transfer.
+ */
+export function searchAllFacts(
+  db: Database.Database,
+  embedding: number[],
+  limit: number = 10,
+  threshold: number = 0.6,
+): Array<{ fact: Fact; distance: number }> {
+  const vecResults = db.prepare(`
+    SELECT id, distance
+    FROM vec_facts
+    WHERE embedding MATCH ?
+    ORDER BY distance
+    LIMIT ?
+  `).all(Buffer.from(new Float32Array(embedding).buffer), limit * 2) as Array<{ id: string; distance: number }>;
+
+  const results: Array<{ fact: Fact; distance: number }> = [];
+  for (const vr of vecResults) {
+    const similarity = 1 - (vr.distance * vr.distance) / 2;
+    if (similarity < threshold) continue;
+
+    const row = db.prepare('SELECT * FROM facts WHERE id = ? AND is_active = 1').get(vr.id) as Record<string, unknown> | undefined;
+    if (!row) continue;
+
+    results.push({ fact: rowToFact(row), distance: vr.distance });
+    if (results.length >= limit) break;
+  }
+
+  return results;
+}
+
 function rowToFact(row: Record<string, unknown>): Fact {
   const embeddingRaw = row['embedding'];
   let embedding: Float32Array | null = null;
