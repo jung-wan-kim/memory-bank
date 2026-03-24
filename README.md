@@ -1,21 +1,42 @@
 # Memory Bank
 
-> Semantic search + fact extraction for Claude Code conversations.
+> Conversations → Knowledge Graph. Claude Code conversations become searchable, structured knowledge.
 
-![Architecture](docs/architecture.svg)
-
-![Demo](docs/fact-consolidation-demo.gif?v=2)
+![Memory Bank](docs/memory-bank.gif)
 
 ## Features
 
+- **Knowledge Graph** -- Ontology classification (Domain → Category) + typed relations (INFLUENCES, SUPPORTS, SUPERSEDES, CONTRADICTS)
+- **RAG Search** -- Search results auto-enriched with related facts and ontology context
 - **Conversation Search** -- Semantic vector search across all past conversations
 - **Fact Extraction** -- Automatic extraction of decisions, preferences, patterns from conversations
 - **Fact Consolidation** -- Duplicate detection, contradiction handling, evolution tracking
+- **Graph Traversal** -- Multi-hop exploration (up to 3 hops) to trace decision chains
+- **Cross-Project Insights** -- Find similar decisions from other projects
+- **Fact Provenance** -- Trace any fact back to its source conversation
 - **Scope Isolation** -- Project facts stay in their project, global facts are shared
-- **MCP Integration** -- `search`, `read`, and `search_facts` tools for Claude
+- **MCP Integration** -- 9 tools: `search`, `read`, `search_facts`, `search_ontology`, `ask_avatar`, `trace_fact`, `explore_graph`, `cross_project_insights`, `graph_stats`
+- **3D Visualization** -- Interactive neon-style knowledge graph with data flow animation
 - **Web UI** -- Dark-theme web interface for browsing and searching conversations
 
 ## How It Works
+
+### Data Pipeline
+
+```
+▲ Prompt Input       User messages, tool calls, assistant responses
+│                    → JSONL archiving → embedding (384-dim)
+│
+◎ User Scope         LLM extracts facts (decisions, preferences, patterns)
+│                    → global facts shared across all projects
+│
+● Project Scope      Facts scoped per project, clustered by domain
+│                    → cross-project insights available
+│
+◇ Ontology           Auto-classified into domains & categories
+                     → typed relations: INFLUENCES / SUPPORTS / SUPERSEDES / CONTRADICTS
+                     → multi-hop graph traversal (up to 3 hops)
+```
 
 ```mermaid
 graph LR
@@ -24,13 +45,20 @@ graph LR
     C --> D[SQLite + sqlite-vec]
 
     A -->|extract| E[Haiku LLM]
-    E --> F[Facts Table]
+    E --> F[Facts]
+    F -->|classify| G[Ontology]
+    G -->|detect| H[Relations]
 
-    G[Session Start] -->|consolidate| H[Vector Search]
-    H --> I[Haiku LLM]
-    I -->|merge/replace/evolve| F
-    F -->|top 10| J[Context Injection]
+    I[Session Start] -->|consolidate| J[Vector Search]
+    J --> K[Haiku LLM]
+    K -->|merge/replace/evolve| F
+
+    L[Query] -->|search| D
+    L -->|RAG| F
+    L -->|traverse| H
 ```
+
+![Architecture](docs/architecture.svg)
 
 ## Install
 
@@ -99,19 +127,27 @@ Project A sees: Project A facts + Global facts (never Project B).
 
 | Tool | Description |
 |------|-------------|
-| `search` | Semantic/text search across conversations |
+| `search` | Semantic/text search + RAG context (related facts auto-attached) |
 | `read` | Display full conversation from JSONL |
-| `search_facts` | Query extracted facts with category filter |
+| `search_facts` | Query facts with ontology context + graph relations |
+| `search_ontology` | Browse ontology hierarchy (Domain → Category → Facts) |
+| `ask_avatar` | Ask your technical alter ego — answers grounded in past decisions |
+| `trace_fact` | Trace a fact back to its source conversations |
+| `explore_graph` | Multi-hop graph traversal (1-3 hops) from any fact |
+| `cross_project_insights` | Find similar decisions from other projects |
+| `graph_stats` | Knowledge graph statistics and health |
 
-### search_facts example
+### Knowledge Graph Tools
 
-```json
-{
-  "query": "state management",
-  "category": "decision",
-  "include_revisions": true,
-  "limit": 10
-}
+```bash
+# Trace why a decision was made
+trace_fact --query "state management" --limit 3
+
+# Find how other projects solved auth
+cross_project_insights --query "authentication" --current_project ./my-app
+
+# Explore decision chains
+explore_graph --query "database choice" --hops 3
 ```
 
 ## Web UI
@@ -173,18 +209,34 @@ export ANTHROPIC_API_KEY=your-key
 export MEMORY_BANK_API_MODEL=opus
 ```
 
+## 3D Knowledge Graph
+
+Interactive visualization of the full knowledge graph with neon-style nodes and data flow animation.
+
+![Knowledge Graph](docs/graph-3d-screenshot.png)
+
+```bash
+open docs/graph-3d.html   # Interactive 3D graph (local)
+```
+
+4 layers: **Prompt Input** → **User Scope** → **Project Scope** → **Ontology**, with animated particles showing data flow direction.
+
 ## Architecture
 
 ```
 ~/.config/superpowers/
-├── conversation-archive/    # Archived JSONL files
+├── conversation-archive/       # Archived JSONL files
 └── conversation-index/
-    └── db.sqlite            # SQLite + sqlite-vec
-        ├── exchanges        # Conversation data + embeddings
-        ├── facts            # Extracted facts + embeddings
-        ├── fact_revisions   # Change history
-        ├── vec_exchanges    # Vector index (384-dim)
-        └── vec_facts        # Vector index (384-dim)
+    └── db.sqlite               # SQLite + sqlite-vec
+        ├── exchanges           # Conversation data + embeddings
+        ├── tool_calls          # Tool usage records
+        ├── facts               # Extracted facts + embeddings
+        ├── fact_revisions      # Change history
+        ├── ontology_domains    # Domain hierarchy
+        ├── ontology_categories # Category classification
+        ├── ontology_relations  # Typed fact relations
+        ├── vec_exchanges       # Vector index (384-dim)
+        └── vec_facts           # Vector index (384-dim)
 ```
 
 ## Development
