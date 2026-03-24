@@ -44,12 +44,12 @@ canvas{display:block}
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="hud"><div class="hud-l"><h1><b>Memory</b> Bank</h1><div class="hud-sub">Knowledge Graph · Data Flow Visualization</div></div><div id="stats"><div class="st"><div class="st-v" style="color:#58a6ff" id="sN">0</div><div class="st-l">Nodes</div></div><div class="st"><div class="st-v" style="color:#3fb950" id="sE">0</div><div class="st-l">Edges</div></div><div class="st"><div class="st-v" style="color:#bf7af0" id="sD">0</div><div class="st-l">Domains</div></div><div class="st"><div class="st-v" style="color:#f0883e" id="sX">0</div><div class="st-l">Exchanges</div></div></div></div>
+<div id="hud"><div class="hud-l"><h1><b>Memory</b> Bank</h1><div class="hud-sub">Knowledge Graph · User Scope · Project Scope · Ontology</div></div><div id="stats"><div class="st"><div class="st-v" style="color:#58a6ff" id="sN">0</div><div class="st-l">Nodes</div></div><div class="st"><div class="st-v" style="color:#3fb950" id="sE">0</div><div class="st-l">Edges</div></div><div class="st"><div class="st-v" style="color:#bf7af0" id="sD">0</div><div class="st-l">Domains</div></div><div class="st"><div class="st-v" style="color:#f0883e" id="sX">0</div><div class="st-l">Exchanges</div></div></div></div>
 <div id="layers"></div>
 <div id="tt"><div class="th"><div class="td" id="tDot"></div><div class="tn" id="tNm"></div><div class="ts" id="tSc"></div></div><div class="tb" id="tBd"></div><div class="tx" id="tTx" style="display:none"><div class="tx-t" id="tTxT"></div><div class="tags" id="tTg"></div></div><div class="tx" id="tRx" style="display:none"><div class="tx-t">Relations</div><div id="tRl"></div></div></div>
 <div id="rl"></div>
 <div id="legend"></div>
-<div id="ctrl">drag rotate · scroll zoom · hover details · left panel layers</div>
+<div id="ctrl">drag rotate · scroll zoom · hover details</div>
 
 <script>
 var R={
@@ -4871,7 +4871,7 @@ for(var rn in RS){if(rn==='SHARES')continue;var el=document.createElement('div')
 
 // LAYER BTN
 var lyE=document.getElementById('layers');
-var lyD=[{k:'ontology',l:'Ontology',d:'Domains · Categories',c:'#bf7af0'},{k:'project',l:'Projects',d:'Clusters · Relations',c:'#3b82f6'},{k:'source',l:'User Scope',d:'Global · Preferences',c:'#22c55e'}];
+var lyD=[{k:'ontology',l:'Ontology',d:'Domains · Categories',c:'#bf7af0'},{k:'project',l:'Project Scope',d:'Clusters · Relations',c:'#3b82f6'},{k:'source',l:'User Scope',d:'Global · Preferences',c:'#22c55e'}];
 var aL={ontology:true,project:true,source:true};
 lyD.forEach(function(ld){var b=document.createElement('div');b.className='lbtn on';b.style.setProperty('--lc',ld.c);
 var nm=document.createElement('div');nm.className='nm';nm.textContent=ld.l;b.appendChild(nm);
@@ -4904,15 +4904,16 @@ function pj(x,y,z){var x1=x*Math.cos(rY)-z*Math.sin(rY),z1=x*Math.sin(rY)+z*Math
 function render(){
 frame++;
 if(ar)rY+=.001;
-cx.clearRect(0,0,W,H);
 
-// BG
-cx.fillStyle='#05080d';cx.fillRect(0,0,W,H);
+// Trail effect: semi-transparent overlay instead of full clear
+cx.fillStyle='rgba(5,8,13,0.28)';cx.fillRect(0,0,W,H);
+// Full clear every 90 frames to prevent permanent ghosting
+if(frame%90===0){cx.fillStyle='#05080d';cx.fillRect(0,0,W,H)}
 
 // LAYER GRIDS — neon grid planes
 var lyKeys=['source','project','ontology'];
 var lyColors={source:'#22c55e',project:'#3b82f6',ontology:'#bf7af0'};
-var lyLabels={source:'USER SCOPE',project:'PROJECT LAYER',ontology:'ONTOLOGY LAYER'};
+var lyLabels={source:'USER SCOPE',project:'PROJECT SCOPE',ontology:'ONTOLOGY'};
 for(var li=0;li<lyKeys.length;li++){var lk=lyKeys[li];if(!aL[lk])continue;
 var yy=LY[lk],col=lyColors[lk];
 // Draw grid lines
@@ -4933,30 +4934,30 @@ cx.strokeStyle=rgba(col,.12);cx.lineWidth=1;cx.shadowColor=col;cx.shadowBlur=8;c
 var lp=pj(-gridSize+5,yy,-gridSize+5);
 cx.fillStyle=rgba(col,.35);cx.font='bold 9px "SF Mono",Menlo,monospace';cx.textAlign='left';cx.fillText(lyLabels[lk],lp.sx,lp.sy-4)}
 
-// DATA FLOW ARROWS (animated particles flowing between layers)
-var flowTime=frame*.02;
-// source→project flow
+// DATA FLOW particles (User Scope → Project Scope → Ontology)
+var flowTime=frame*.018;
+// User Scope → Project Scope
 if(aL.source&&aL.project){
-for(var fi=0;fi<8;fi++){
-var t=((flowTime+fi*.125)%1);
-var fx=(Math.sin(fi*2.3))*40;
-var fz=(Math.cos(fi*1.7))*40;
+for(var fi=0;fi<12;fi++){
+var t=((flowTime+fi/12)%1);
+var fx=(Math.sin(fi*2.3+flowTime*.5))*50;
+var fz=(Math.cos(fi*1.7+flowTime*.3))*50;
 var fy=LY.source+(LY.project-LY.source)*t;
 var fp=pj(fx,fy,fz);
-var pr=1.5*fp.s;var fa=Math.sin(t*Math.PI)*.5;
+var pr=2.2*fp.s;var fa=Math.sin(t*Math.PI)*.65;
 cx.beginPath();cx.arc(fp.sx,fp.sy,pr,0,Math.PI*2);
-cx.fillStyle=rgba('#22c55e',fa);cx.shadowColor='#22c55e';cx.shadowBlur=6;cx.fill();cx.shadowBlur=0}}
-// project→ontology flow
+cx.fillStyle=rgba('#22c55e',fa);cx.shadowColor='#22c55e';cx.shadowBlur=pr*4;cx.fill();cx.shadowBlur=0}}
+// Project Scope → Ontology
 if(aL.project&&aL.ontology){
-for(var fi=0;fi<8;fi++){
-var t=((flowTime*.8+fi*.125)%1);
-var fx=(Math.sin(fi*1.9+1))*40;
-var fz=(Math.cos(fi*2.1+1))*40;
+for(var fi=0;fi<12;fi++){
+var t=((flowTime*.7+fi/12)%1);
+var fx=(Math.sin(fi*1.9+1+flowTime*.4))*50;
+var fz=(Math.cos(fi*2.1+1+flowTime*.3))*50;
 var fy=LY.project+(LY.ontology-LY.project)*t;
 var fp=pj(fx,fy,fz);
-var pr=1.5*fp.s;var fa=Math.sin(t*Math.PI)*.5;
+var pr=2.2*fp.s;var fa=Math.sin(t*Math.PI)*.65;
 cx.beginPath();cx.arc(fp.sx,fp.sy,pr,0,Math.PI*2);
-cx.fillStyle=rgba('#bf7af0',fa);cx.shadowColor='#bf7af0';cx.shadowBlur=6;cx.fill();cx.shadowBlur=0}}
+cx.fillStyle=rgba('#bf7af0',fa);cx.shadowColor='#bf7af0';cx.shadowBlur=pr*4;cx.fill();cx.shadowBlur=0}}
 
 var vN=N.filter(function(n){return aL[n.ly]});
 var vE=E.filter(function(e){return aL[e.s.ly]&&aL[e.t.ly]});
@@ -4964,15 +4965,20 @@ var vE=E.filter(function(e){return aL[e.s.ly]&&aL[e.t.ly]});
 // EDGES
 for(var i=0;i<vE.length;i++){var e=vE[i],s=pj(e.s.x,e.s.y,e.s.z),t=pj(e.t.x,e.t.y,e.t.z);
 var rs=RS[e.tp]||RS.SHARES;var cl=e.s.ly!==e.t.ly;
-var ba=cl?.04:.08;
-var a=Math.max(.01,Math.min(.2,ba-(s.z+t.z)/2*.0002))*Math.min(e.w/4,1);
+var ba=cl?.15:.25;
+var a=Math.max(.03,Math.min(.5,ba-(s.z+t.z)/2*.0001))*Math.min(e.w/3,1);
 cx.beginPath();cx.moveTo(s.sx,s.sy);cx.lineTo(t.sx,t.sy);
-cx.strokeStyle=rgba(rs.c,a);cx.lineWidth=Math.max(.3,Math.min(e.w*.12,1.5)*s.s);
-cx.shadowColor=rs.c;cx.shadowBlur=cl?0:3;
+cx.strokeStyle=rgba(rs.c,a);cx.lineWidth=Math.max(.4,Math.min(e.w*.18,2.5)*s.s);
+cx.shadowColor=rs.c;cx.shadowBlur=cl?4:6;
 cx.setLineDash(rs.d);cx.stroke();cx.setLineDash([]);cx.shadowBlur=0;
-// Animated flow dot on cross-layer edges
-if(cl&&a>.02){var ft=((frame*.015+i*.1)%1);var fx2=s.sx+(t.sx-s.sx)*ft;var fy2=s.sy+(t.sy-s.sy)*ft;
-cx.beginPath();cx.arc(fx2,fy2,1.2*s.s,0,Math.PI*2);cx.fillStyle=rgba(rs.c,Math.sin(ft*Math.PI)*.4);cx.fill()}}
+// Animated flow dots on ALL edges (data flow visualization)
+var dotCount=cl?2:1;
+for(var di=0;di<dotCount;di++){
+var ft=((frame*.012+i*.07+di*.5)%1);
+var fx2=s.sx+(t.sx-s.sx)*ft;var fy2=s.sy+(t.sy-s.sy)*ft;
+var dotR=(cl?2:1.5)*s.s;var dotA=Math.sin(ft*Math.PI)*.7;
+cx.beginPath();cx.arc(fx2,fy2,dotR,0,Math.PI*2);
+cx.fillStyle=rgba(rs.c,dotA);cx.shadowColor=rs.c;cx.shadowBlur=dotR*3;cx.fill();cx.shadowBlur=0}}
 
 // NODES
 var hov=null,mnd=30;
@@ -4982,10 +4988,11 @@ pArr.sort(function(a,b){return a.z-b.z});
 for(var i=0;i<pArr.length;i++){var n=pArr[i];
 var r=n.sz*n.s*.3;
 var a=Math.max(.15,Math.min(1,.8-n.z*.001));
-var pulse=1+Math.sin(frame*.03+i)*.05;
+var pulse=1+Math.sin(frame*.05+i*1.7)*.12;
+var twinkle=.7+Math.sin(frame*.08+i*2.3)*.3;
 
-// Neon glow
-cx.shadowColor=n.c;cx.shadowBlur=r*3*a;
+// Neon glow with twinkle
+cx.shadowColor=n.c;cx.shadowBlur=r*4*a*twinkle;
 
 if(n.t==='domain'){
 // Diamond
