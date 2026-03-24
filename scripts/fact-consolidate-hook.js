@@ -12,6 +12,7 @@ import { initDatabase } from '../dist/db.js';
 import { consolidateFacts } from '../dist/consolidator.js';
 import { getTopFacts } from '../dist/fact-db.js';
 import { getLastSessionContext, formatSessionContinuity } from '../dist/session-continuity.js';
+import { predictIntent, formatIntentContext } from '../dist/intent-predictor.js';
 
 async function main() {
   const project = process.env.CWD || process.env.PROJECT_DIR || process.cwd();
@@ -48,6 +49,18 @@ async function main() {
       }
     } catch {
       // Non-fatal: session continuity is best-effort
+    }
+
+    // 4. Inject project intent profile
+    try {
+      const intent = predictIntent(project);
+      const intentCtx = formatIntentContext(intent);
+      if (intentCtx) {
+        console.log('');
+        console.log(intentCtx);
+      }
+    } catch {
+      // Non-fatal: intent prediction is best-effort
     }
   } catch (error) {
     console.error('fact-consolidate: Error:', error instanceof Error ? error.message : error);
