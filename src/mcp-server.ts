@@ -490,11 +490,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           output += '_No matching facts found._\n';
         }
 
+        // Build ontology lookup
+        const allDomains = listDomains(db);
+        const allCategories = listCategories(db);
+        const domainMap = new Map(allDomains.map(d => [d.id, d.name]));
+        const catMap = new Map(allCategories.map(c => [c.id, { name: c.name, domainId: c.domain_id }]));
+
         for (const { fact, distance } of filtered) {
           const similarity = (1 - distance * distance / 2).toFixed(3);
+          const catInfo = fact.ontology_category_id ? catMap.get(fact.ontology_category_id) : undefined;
+          const domainName = catInfo ? (domainMap.get(catInfo.domainId) ?? '') : '';
+          const catName = catInfo ? catInfo.name : '';
+
           output += `## [${fact.category}] ${fact.fact}\n`;
           output += `- Scope: ${fact.scope_type}${fact.scope_project ? ` (${fact.scope_project})` : ''}\n`;
           output += `- Confirmed: ${fact.consolidated_count}x | Similarity: ${similarity}\n`;
+          if (domainName) output += `- Ontology: ${domainName}/${catName}\n`;
           output += `- Created: ${fact.created_at}\n`;
 
           if (params.include_revisions) {
@@ -506,6 +517,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               }
             }
           }
+
+          // Show graph relations for this fact
+          const related = getRelatedFacts(db, fact.id, 1);
+          if (related.length > 0) {
+            output += `- Related:\n`;
+            for (const { fact: relFact, relation } of related) {
+              output += `  - [${relation.relation_type}] ${relFact.fact}\n`;
+            }
+          }
+
           output += '\n';
         }
 
