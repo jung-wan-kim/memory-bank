@@ -165,7 +165,41 @@ export function searchSimilarFacts(
   return results;
 }
 
+/**
+ * Get top facts using a relevance score that combines:
+ * - Confirmation count (consolidated_count) — how established is this fact
+ * - Recency (updated_at) — how recent is this fact
+ * - Scope priority — project-specific facts rank higher than global for that project
+ *
+ * Score = (log2(consolidated_count + 1) * 3) + recency_bonus + scope_bonus
+ *   recency_bonus: 5 if updated in last 7 days, 3 if last 30 days, 1 if last 90 days, 0 otherwise
+ *   scope_bonus: 2 for project-scoped facts, 0 for global
+ */
 export function getTopFacts(db: Database.Database, project: string, limit: number = 10): Fact[] {
+  const now = new Date();
+  const d7 = new Date(now.getTime() - 7 * 86400000).toISOString();
+  const d30 = new Date(now.getTime() - 30 * 86400000).toISOString();
+  const d90 = new Date(now.getTime() - 90 * 86400000).toISOString();
+
+  return (db.prepare(`
+    SELECT *,
+      (
+        CASE WHEN consolidated_count > 0 THEN (3.0 * (1.0 + LOG(consolidated_count + 1) / LOG(2))) ELSE 3.0 END
+        + CASE WHEN updated_at >= ? THEN 5 WHEN updated_at >= ? THEN 3 WHEN updated_at >= ? THEN 1 ELSE 0 END
+        + CASE WHEN scope_type = 'project' AND scope_project = ? THEN 2 ELSE 0 END
+      ) as relevance_score
+    FROM facts
+    WHERE is_active = 1
+      AND ((scope_type = 'project' AND scope_project = ?) OR scope_type = 'global')
+    ORDER BY relevance_score DESC
+    LIMIT ?
+  `).all(d7, d30, d90, project, project, limit) as Record<string, unknown>[]).map(rowToFact);
+}
+
+/**
+ * Legacy: get facts by pure confirmation count (for backward compatibility).
+ */
+export function getTopFactsByCount(db: Database.Database, project: string, limit: number = 10): Fact[] {
   return (db.prepare(`
     SELECT * FROM facts
     WHERE is_active = 1
