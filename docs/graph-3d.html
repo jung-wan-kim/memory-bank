@@ -5,302 +5,347 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Memory Bank — 3D Knowledge Graph</title>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; overflow: hidden; }
-  #canvas { width: 100vw; height: 100vh; display: block; }
-
-  #hud {
-    position: fixed; top: 0; left: 0; right: 0;
-    padding: 16px 24px;
-    background: linear-gradient(180deg, rgba(13,17,23,0.95) 0%, transparent 100%);
-    pointer-events: none; z-index: 10;
-    display: flex; justify-content: space-between; align-items: flex-start;
-  }
-  #hud h1 { font-size: 20px; font-weight: 600; }
-  #hud h1 span { color: #d2a8ff; }
-  #hud .sub { font-size: 13px; color: #8b949e; margin-top: 4px; font-family: 'SF Mono', Menlo, monospace; }
-
-  #stats { display: flex; gap: 24px; align-items: center; }
-  .stat-item { text-align: center; }
-  .stat-val { font-size: 22px; font-weight: 700; font-family: 'SF Mono', Menlo, monospace; }
-  .stat-lbl { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 1px; }
-
-  #tooltip {
-    position: fixed; display: none;
-    background: rgba(22,27,34,0.96); border: 1px solid #30363d;
-    border-radius: 10px; padding: 16px 20px; pointer-events: none;
-    z-index: 20; max-width: 340px; backdrop-filter: blur(12px);
-    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-  }
-  .tt-name { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
-  .tt-meta { font-size: 12px; color: #8b949e; line-height: 1.5; }
-  .tt-tools { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
-  .tt-tag { font-size: 10px; padding: 2px 8px; border-radius: 10px; background: rgba(88,166,255,0.12); color: #58a6ff; display: inline-block; }
-
-  #legend {
-    position: fixed; bottom: 16px; left: 24px; z-index: 10;
-    display: flex; gap: 16px; flex-wrap: wrap;
-  }
-  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #8b949e; }
-  .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
-
-  #controls {
-    position: fixed; bottom: 16px; right: 24px; z-index: 10;
-    font-size: 12px; color: #8b949e; text-align: right;
-    pointer-events: none;
-  }
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0e14;color:#e6edf3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;overflow:hidden}
+canvas{display:block}
+#hud{position:fixed;top:0;left:0;right:0;padding:14px 20px;background:linear-gradient(180deg,rgba(10,14,20,.95) 60%,transparent);pointer-events:none;z-index:10;display:flex;justify-content:space-between;align-items:flex-start}
+#hud h1{font-size:18px;font-weight:600}
+#hud h1 b{color:#d2a8ff}
+.hud-sub{font-size:11px;color:#6e7681;margin-top:2px;font-family:'SF Mono',Menlo,monospace}
+#stats{display:flex;gap:20px}
+.st{text-align:center}.st-v{font-size:20px;font-weight:700;font-family:'SF Mono',Menlo,monospace}.st-l{font-size:10px;color:#6e7681;text-transform:uppercase;letter-spacing:.8px}
+#layers{position:fixed;left:20px;top:50%;transform:translateY(-50%);z-index:10;display:flex;flex-direction:column;gap:6px}
+.layer-btn{width:140px;padding:8px 12px;border:1px solid #21262d;border-radius:8px;background:rgba(22,27,34,.8);color:#8b949e;font-size:11px;cursor:pointer;text-align:left;backdrop-filter:blur(8px);transition:all .15s;pointer-events:auto}
+.layer-btn:hover{border-color:#58a6ff;color:#e6edf3}
+.layer-btn.active{border-color:#58a6ff;color:#58a6ff;background:rgba(88,166,255,.08)}
+#tooltip{position:fixed;display:none;background:rgba(13,17,23,.96);border:1px solid #30363d;border-radius:10px;padding:14px 18px;pointer-events:none;z-index:20;max-width:360px;backdrop-filter:blur(12px);box-shadow:0 8px 32px rgba(0,0,0,.6)}
+.tt-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.tt-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.tt-name{font-size:14px;font-weight:600}
+.tt-scope{font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.tt-body{font-size:12px;color:#8b949e;line-height:1.5}
+.tt-section{margin-top:8px;padding-top:8px;border-top:1px solid #21262d}
+.tt-section-title{font-size:10px;font-weight:600;color:#6e7681;text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px}
+.tt-tags{display:flex;flex-wrap:wrap;gap:3px;margin-top:4px}
+.tt-tag{font-size:9px;padding:2px 7px;border-radius:10px;display:inline-block}
+.tt-rel{font-size:11px;display:flex;align-items:center;gap:6px;margin-top:3px}
+.tt-rel-type{font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;text-transform:uppercase}
+#legend{position:fixed;bottom:12px;left:20px;z-index:10;display:flex;gap:12px;flex-wrap:wrap}
+.lg{display:flex;align-items:center;gap:5px;font-size:11px;color:#6e7681}
+.lg-d{width:8px;height:8px;border-radius:50%}
+#controls{position:fixed;bottom:12px;right:20px;z-index:10;font-size:11px;color:#484f58;text-align:right}
+#rel-legend{position:fixed;right:20px;top:50%;transform:translateY(-50%);z-index:10;display:flex;flex-direction:column;gap:4px}
+.rl{display:flex;align-items:center;gap:6px;font-size:10px;color:#6e7681}
+.rl-line{width:20px;height:0;border-top:2px}
 </style>
 </head>
 <body>
-
-<canvas id="canvas"></canvas>
-
-<div id="hud">
-  <div>
-    <h1><span>Memory</span> Bank — Knowledge Graph</h1>
-    <div class="sub">3D Ontology Visualization · Force-Directed Layout</div>
-  </div>
-  <div id="stats">
-    <div class="stat-item"><div class="stat-val" style="color:#58a6ff" id="s-nodes">0</div><div class="stat-lbl">Nodes</div></div>
-    <div class="stat-item"><div class="stat-val" style="color:#3fb950" id="s-edges">0</div><div class="stat-lbl">Edges</div></div>
-    <div class="stat-item"><div class="stat-val" style="color:#d2a8ff" id="s-exchanges">0</div><div class="stat-lbl">Exchanges</div></div>
-  </div>
-</div>
-
-<div id="tooltip">
-  <div class="tt-name" id="tt-name"></div>
-  <div class="tt-meta" id="tt-meta"></div>
-  <div class="tt-tools" id="tt-tools"></div>
-</div>
-
+<canvas id="c"></canvas>
+<div id="hud"><div><h1><b>Memory</b> Bank — Knowledge Graph</h1><div class="hud-sub">Ontology · Project Clusters · Scope Layers · Relations</div></div><div id="stats"><div class="st"><div class="st-v" style="color:#58a6ff" id="sN">0</div><div class="st-l">Nodes</div></div><div class="st"><div class="st-v" style="color:#3fb950" id="sE">0</div><div class="st-l">Edges</div></div><div class="st"><div class="st-v" style="color:#d2a8ff" id="sD">0</div><div class="st-l">Domains</div></div><div class="st"><div class="st-v" style="color:#f0883e" id="sX">0</div><div class="st-l">Exchanges</div></div></div></div>
+<div id="layers"></div>
+<div id="tooltip"><div class="tt-head"><div class="tt-dot" id="ttDot"></div><div class="tt-name" id="ttName"></div><div class="tt-scope" id="ttScope"></div></div><div class="tt-body" id="ttBody"></div><div class="tt-section" id="ttToolsSec" style="display:none"><div class="tt-section-title">Tools / Categories</div><div class="tt-tags" id="ttTools"></div></div><div class="tt-section" id="ttRelsSec" style="display:none"><div class="tt-section-title">Relations</div><div id="ttRels"></div></div></div>
+<div id="rel-legend"></div>
 <div id="legend"></div>
-<div id="controls">Drag to rotate · Scroll to zoom · Hover for details</div>
+<div id="controls">Drag: rotate · Scroll: zoom · Hover: details · Left: layers</div>
 
 <script>
-// ===== DATA =====
-const GRAPH_DATA = {
+var RAW = {
   "projects": [
     {
       "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
       "exchanges": 30172,
+      "sessions": 2415,
       "first_seen": "2026-01-31T15:04:42.426Z",
-      "last_seen": "2026-03-24T07:39:10.469Z"
+      "last_seen": "2026-03-24T07:39:10.469Z",
+      "branches": 5
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
       "exchanges": 810,
+      "sessions": 150,
       "first_seen": "2026-01-31T14:57:05.392Z",
-      "last_seen": "2026-03-24T06:16:07.012Z"
+      "last_seen": "2026-03-24T06:16:07.012Z",
+      "branches": 6
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-cc-sync",
       "exchanges": 766,
+      "sessions": 205,
       "first_seen": "2026-01-31T14:56:28.416Z",
-      "last_seen": "2026-03-24T06:12:11.117Z"
+      "last_seen": "2026-03-24T06:12:11.117Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
       "exchanges": 631,
+      "sessions": 76,
       "first_seen": "2026-03-03T02:14:27.837Z",
-      "last_seen": "2026-03-24T07:39:11.888Z"
+      "last_seen": "2026-03-24T07:39:11.888Z",
+      "branches": 2
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
       "exchanges": 462,
+      "sessions": 126,
       "first_seen": "2026-02-23T05:33:00.311Z",
-      "last_seen": "2026-03-24T00:59:29.901Z"
+      "last_seen": "2026-03-24T00:59:29.901Z",
+      "branches": 3
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-article21",
       "exchanges": 425,
+      "sessions": 128,
       "first_seen": "2026-01-31T15:02:44.047Z",
-      "last_seen": "2026-03-18T06:12:01.242Z"
+      "last_seen": "2026-03-18T06:12:01.242Z",
+      "branches": 6
     },
     {
       "project": "-Users-jung-wankim",
       "exchanges": 342,
+      "sessions": 121,
       "first_seen": "2026-01-31T17:50:09.294Z",
-      "last_seen": "2026-03-23T02:12:15.176Z"
+      "last_seen": "2026-03-23T02:12:15.176Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
       "exchanges": 260,
+      "sessions": 66,
       "first_seen": "2026-02-25T06:17:22.295Z",
-      "last_seen": "2026-03-18T06:11:59.695Z"
+      "last_seen": "2026-03-18T06:11:59.695Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
       "exchanges": 213,
+      "sessions": 39,
       "first_seen": "2026-03-05T23:23:06.414Z",
-      "last_seen": "2026-03-08T23:18:23.835Z"
+      "last_seen": "2026-03-08T23:18:23.835Z",
+      "branches": 2
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang",
       "exchanges": 150,
+      "sessions": 36,
       "first_seen": "2026-02-23T01:43:15.515Z",
-      "last_seen": "2026-03-03T00:00:55.913Z"
+      "last_seen": "2026-03-03T00:00:55.913Z",
+      "branches": 2
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
       "exchanges": 122,
+      "sessions": 23,
       "first_seen": "2026-03-13T05:41:24.715Z",
-      "last_seen": "2026-03-19T00:11:43.208Z"
+      "last_seen": "2026-03-19T00:11:43.208Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-match-system",
       "exchanges": 116,
+      "sessions": 11,
       "first_seen": "2026-02-26T01:13:54.014Z",
-      "last_seen": "2026-03-18T08:23:47.155Z"
+      "last_seen": "2026-03-18T08:23:47.155Z",
+      "branches": 5
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-gatekeeper",
       "exchanges": 111,
+      "sessions": 42,
       "first_seen": "2026-03-05T07:02:49.848Z",
-      "last_seen": "2026-03-11T01:30:49.444Z"
+      "last_seen": "2026-03-11T01:30:49.444Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-insights-ui",
       "exchanges": 109,
+      "sessions": 25,
       "first_seen": "2026-02-07T11:26:45.583Z",
-      "last_seen": "2026-02-08T06:38:55.036Z"
+      "last_seen": "2026-02-08T06:38:55.036Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-why-crying",
       "exchanges": 101,
+      "sessions": 32,
       "first_seen": "2026-03-09T05:33:18.020Z",
-      "last_seen": "2026-03-09T06:51:15.029Z"
+      "last_seen": "2026-03-09T06:51:15.029Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim--cokacdir-workspace-yyotu2d0",
       "exchanges": 94,
+      "sessions": 41,
       "first_seen": "2026-02-23T06:09:53.459Z",
-      "last_seen": "2026-02-23T07:48:44.279Z"
+      "last_seen": "2026-02-23T07:48:44.279Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-memory-bank",
       "exchanges": 83,
+      "sessions": 31,
       "first_seen": "2026-03-18T05:58:19.792Z",
-      "last_seen": "2026-03-24T00:01:18.744Z"
+      "last_seen": "2026-03-24T00:01:18.744Z",
+      "branches": 2
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
       "exchanges": 82,
+      "sessions": 13,
       "first_seen": "2026-02-23T03:50:32.120Z",
-      "last_seen": "2026-03-18T08:55:15.118Z"
+      "last_seen": "2026-03-18T08:55:15.118Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-temp",
       "exchanges": 81,
+      "sessions": 6,
       "first_seen": "2026-03-24T00:20:18.799Z",
-      "last_seen": "2026-03-24T07:35:30.550Z"
+      "last_seen": "2026-03-24T07:35:30.550Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-ai-token-monitor",
       "exchanges": 75,
+      "sessions": 21,
       "first_seen": "2026-03-23T23:39:17.842Z",
-      "last_seen": "2026-03-24T06:38:12.971Z"
+      "last_seen": "2026-03-24T06:38:12.971Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-cc-app",
       "exchanges": 75,
+      "sessions": 30,
       "first_seen": "2026-03-09T06:36:03.246Z",
-      "last_seen": "2026-03-10T07:57:18.699Z"
+      "last_seen": "2026-03-10T07:57:18.699Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin-admin-v2",
       "exchanges": 72,
+      "sessions": 26,
       "first_seen": "2026-03-19T00:06:12.877Z",
-      "last_seen": "2026-03-19T00:26:18.653Z"
+      "last_seen": "2026-03-19T00:26:18.653Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-claude-config-editor",
       "exchanges": 71,
+      "sessions": 17,
       "first_seen": "2026-03-19T06:20:20.444Z",
-      "last_seen": "2026-03-20T00:40:49.848Z"
+      "last_seen": "2026-03-20T00:40:49.848Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-episodic-memory",
       "exchanges": 69,
+      "sessions": 27,
       "first_seen": "2026-03-12T05:24:19.069Z",
-      "last_seen": "2026-03-12T07:04:46.772Z"
+      "last_seen": "2026-03-12T07:04:46.772Z",
+      "branches": 2
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang-ETL",
       "exchanges": 66,
+      "sessions": 10,
       "first_seen": "2026-03-04T04:44:37.246Z",
-      "last_seen": "2026-03-18T06:12:04.404Z"
+      "last_seen": "2026-03-18T06:12:04.404Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
       "exchanges": 63,
+      "sessions": 7,
       "first_seen": "2026-03-10T03:51:13.842Z",
-      "last_seen": "2026-03-18T08:52:24.538Z"
+      "last_seen": "2026-03-18T08:52:24.538Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-mbti-univercity",
       "exchanges": 59,
+      "sessions": 10,
       "first_seen": "2026-02-27T04:49:39.057Z",
-      "last_seen": "2026-02-27T08:43:32.006Z"
+      "last_seen": "2026-02-27T08:43:32.006Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft",
       "exchanges": 52,
+      "sessions": 11,
       "first_seen": "2026-01-29T11:07:13.543Z",
-      "last_seen": "2026-03-18T05:11:17.064Z"
+      "last_seen": "2026-03-18T05:11:17.064Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-6",
       "exchanges": 50,
+      "sessions": 18,
       "first_seen": "2026-03-10T01:21:29.718Z",
-      "last_seen": "2026-03-10T02:33:37.776Z"
+      "last_seen": "2026-03-10T02:33:37.776Z",
+      "branches": 3
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang-HANY",
       "exchanges": 49,
+      "sessions": 6,
       "first_seen": "2026-02-25T04:33:05.542Z",
-      "last_seen": "2026-03-05T06:59:05.439Z"
+      "last_seen": "2026-03-05T06:59:05.439Z",
+      "branches": 2
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
       "exchanges": 35,
+      "sessions": 1,
       "first_seen": "2026-03-13T06:42:37.144Z",
-      "last_seen": "2026-03-13T14:11:54.451Z"
+      "last_seen": "2026-03-13T14:11:54.451Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-Private",
       "exchanges": 31,
+      "sessions": 11,
       "first_seen": "2026-03-10T00:09:27.294Z",
-      "last_seen": "2026-03-10T00:22:05.620Z"
+      "last_seen": "2026-03-10T00:22:05.620Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-ontology",
       "exchanges": 30,
+      "sessions": 7,
       "first_seen": "2026-03-18T05:32:55.512Z",
-      "last_seen": "2026-03-18T08:49:01.893Z"
+      "last_seen": "2026-03-18T08:49:01.893Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
       "exchanges": 29,
+      "sessions": 3,
       "first_seen": "2026-03-24T06:00:56.564Z",
-      "last_seen": "2026-03-24T07:25:09.083Z"
+      "last_seen": "2026-03-24T07:25:09.083Z",
+      "branches": 2
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-cc-sync-plugins-marketplaces-memory-bank-dev",
       "exchanges": 17,
+      "sessions": 6,
       "first_seen": "2026-03-19T00:12:21.420Z",
-      "last_seen": "2026-03-19T00:30:10.688Z"
+      "last_seen": "2026-03-19T00:30:10.688Z",
+      "branches": 1
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
       "exchanges": 16,
+      "sessions": 1,
       "first_seen": "2026-03-13T06:42:38.643Z",
-      "last_seen": "2026-03-13T07:59:51.348Z"
+      "last_seen": "2026-03-13T07:59:51.348Z",
+      "branches": 2
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-deer-flow",
       "exchanges": 11,
+      "sessions": 1,
       "first_seen": "2026-03-10T08:04:45.610Z",
-      "last_seen": "2026-03-10T23:55:48.900Z"
+      "last_seen": "2026-03-10T23:55:48.900Z",
+      "branches": 1
     }
   ],
   "toolUsage": [
@@ -311,13 +356,73 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim",
+      "tool_name": "Bash",
+      "cnt": 402
+    },
+    {
+      "project": "-Users-jung-wankim",
+      "tool_name": "Edit",
+      "cnt": 46
+    },
+    {
+      "project": "-Users-jung-wankim",
+      "tool_name": "Glob",
+      "cnt": 68
+    },
+    {
+      "project": "-Users-jung-wankim",
+      "tool_name": "Grep",
+      "cnt": 22
+    },
+    {
+      "project": "-Users-jung-wankim",
+      "tool_name": "Read",
+      "cnt": 66
+    },
+    {
+      "project": "-Users-jung-wankim",
       "tool_name": "Skill",
       "cnt": 9
+    },
+    {
+      "project": "-Users-jung-wankim",
+      "tool_name": "TaskCreate",
+      "cnt": 136
+    },
+    {
+      "project": "-Users-jung-wankim",
+      "tool_name": "TaskList",
+      "cnt": 8
+    },
+    {
+      "project": "-Users-jung-wankim",
+      "tool_name": "TaskUpdate",
+      "cnt": 168
+    },
+    {
+      "project": "-Users-jung-wankim",
+      "tool_name": "ToolSearch",
+      "cnt": 40
+    },
+    {
+      "project": "-Users-jung-wankim",
+      "tool_name": "Write",
+      "cnt": 16
+    },
+    {
+      "project": "-Users-jung-wankim",
+      "tool_name": "mcp__plugin_episodic-memory_episodic-memory__search",
+      "cnt": 5
     },
     {
       "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
       "tool_name": "Agent",
       "cnt": 61
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "Bash",
+      "cnt": 69
     },
     {
       "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
@@ -376,13 +481,38 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "TaskCreate",
+      "cnt": 5
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "TaskOutput",
+      "cnt": 3703
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
       "tool_name": "TeamCreate",
       "cnt": 12
     },
     {
       "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "Write",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
       "tool_name": "mcp__claude_ai_Supabase__execute_sql",
       "cnt": 16
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "mcp__claude_ai_Supabase__get_project",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "tool_name": "mcp__claude_ai_Supabase__list_edge_functions",
+      "cnt": 5
     },
     {
       "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
@@ -401,8 +531,38 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim--cokacdir-workspace-yyotu2d0",
+      "tool_name": "Bash",
+      "cnt": 57
+    },
+    {
+      "project": "-Users-jung-wankim--cokacdir-workspace-yyotu2d0",
+      "tool_name": "Glob",
+      "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim--cokacdir-workspace-yyotu2d0",
+      "tool_name": "Read",
+      "cnt": 5
+    },
+    {
+      "project": "-Users-jung-wankim--cokacdir-workspace-yyotu2d0",
       "tool_name": "mcp__plugin_claude-mem_claude-mem-search__search",
       "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-Aperant",
+      "tool_name": "Bash",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-Aperant",
+      "tool_name": "Glob",
+      "cnt": 9
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-Aperant",
+      "tool_name": "Read",
+      "cnt": 13
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-ai-token-monitor",
@@ -410,9 +570,64 @@ const GRAPH_DATA = {
       "cnt": 60
     },
     {
+      "project": "-Users-jung-wankim-Project-Claude-ai-token-monitor",
+      "tool_name": "Bash",
+      "cnt": 838
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-ai-token-monitor",
+      "tool_name": "Edit",
+      "cnt": 72
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-ai-token-monitor",
+      "tool_name": "Glob",
+      "cnt": 51
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-ai-token-monitor",
+      "tool_name": "Grep",
+      "cnt": 48
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-ai-token-monitor",
+      "tool_name": "Read",
+      "cnt": 288
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-ai-token-monitor",
+      "tool_name": "Write",
+      "cnt": 24
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-app",
+      "tool_name": "Bash",
+      "cnt": 65
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-app",
+      "tool_name": "Glob",
+      "cnt": 25
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-app",
+      "tool_name": "Read",
+      "cnt": 13
+    },
+    {
       "project": "-Users-jung-wankim-Project-Claude-cc-sync",
       "tool_name": "Agent",
       "cnt": 247
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "AskUserQuestion",
+      "cnt": 163
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "Bash",
+      "cnt": 7393
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-cc-sync",
@@ -431,8 +646,48 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "Edit",
+      "cnt": 1973
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "Glob",
+      "cnt": 624
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "Grep",
+      "cnt": 345
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "Read",
+      "cnt": 3478
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
       "tool_name": "Skill",
       "cnt": 66
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "TaskCreate",
+      "cnt": 957
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "TaskList",
+      "cnt": 34
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "TaskUpdate",
+      "cnt": 1977
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "ToolSearch",
+      "cnt": 302
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-cc-sync",
@@ -443,6 +698,11 @@ const GRAPH_DATA = {
       "project": "-Users-jung-wankim-Project-Claude-cc-sync",
       "tool_name": "WebSearch",
       "cnt": 168
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "tool_name": "Write",
+      "cnt": 2383
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-cc-sync",
@@ -500,9 +760,44 @@ const GRAPH_DATA = {
       "cnt": 62
     },
     {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync-plugins-marketplaces-memory-bank-dev",
+      "tool_name": "Bash",
+      "cnt": 19
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync-plugins-marketplaces-memory-bank-dev",
+      "tool_name": "Glob",
+      "cnt": 5
+    },
+    {
       "project": "-Users-jung-wankim-Project-Claude-claude-config-editor",
       "tool_name": "Agent",
       "cnt": 42
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "tool_name": "AskUserQuestion",
+      "cnt": 14
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "tool_name": "Bash",
+      "cnt": 673
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "tool_name": "Edit",
+      "cnt": 112
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "tool_name": "Glob",
+      "cnt": 30
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "tool_name": "Read",
+      "cnt": 307
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-claude-config-editor",
@@ -511,8 +806,93 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "tool_name": "ToolSearch",
+      "cnt": 14
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-claude-config-editor",
       "tool_name": "WebFetch",
       "cnt": 14
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "tool_name": "Write",
+      "cnt": 77
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-deer-flow",
+      "tool_name": "Agent",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-deer-flow",
+      "tool_name": "Bash",
+      "cnt": 56
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-deer-flow",
+      "tool_name": "Edit",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-deer-flow",
+      "tool_name": "Grep",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-deer-flow",
+      "tool_name": "Read",
+      "cnt": 32
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-deer-flow",
+      "tool_name": "TaskOutput",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-deer-flow",
+      "tool_name": "ToolSearch",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-deer-flow",
+      "tool_name": "Write",
+      "cnt": 8
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-episodic-memory",
+      "tool_name": "Bash",
+      "cnt": 24
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-episodic-memory",
+      "tool_name": "Glob",
+      "cnt": 9
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "tool_name": "Bash",
+      "cnt": 229
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "tool_name": "Edit",
+      "cnt": 85
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "tool_name": "Glob",
+      "cnt": 41
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "tool_name": "Grep",
+      "cnt": 35
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "tool_name": "Read",
+      "cnt": 308
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-insights-ui",
@@ -526,8 +906,58 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "tool_name": "TaskCreate",
+      "cnt": 29
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "tool_name": "TaskList",
+      "cnt": 8
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "tool_name": "TaskUpdate",
+      "cnt": 61
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "tool_name": "Write",
+      "cnt": 25
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-insights-ui",
       "tool_name": "mcp__plugin_superpowers-chrome_chrome__use_browser",
       "cnt": 240
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-memory-bank",
+      "tool_name": "Bash",
+      "cnt": 57
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-memory-bank",
+      "tool_name": "Glob",
+      "cnt": 24
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-memory-bank",
+      "tool_name": "Read",
+      "cnt": 19
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-rcli",
+      "tool_name": "Glob",
+      "cnt": 14
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-rcli",
+      "tool_name": "Read",
+      "cnt": 46
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-temp",
+      "tool_name": "Bash",
+      "cnt": 683
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-temp",
@@ -536,8 +966,48 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-temp",
+      "tool_name": "Edit",
+      "cnt": 288
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-temp",
+      "tool_name": "Glob",
+      "cnt": 32
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-temp",
+      "tool_name": "Grep",
+      "cnt": 22
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-temp",
+      "tool_name": "Read",
+      "cnt": 489
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-temp",
       "tool_name": "Skill",
       "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-temp",
+      "tool_name": "TaskCreate",
+      "cnt": 88
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-temp",
+      "tool_name": "TaskUpdate",
+      "cnt": 193
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-temp",
+      "tool_name": "ToolSearch",
+      "cnt": 50
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-temp",
+      "tool_name": "Write",
+      "cnt": 177
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-temp",
@@ -561,6 +1031,16 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "AskUserQuestion",
+      "cnt": 461
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "Bash",
+      "cnt": 16651
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
       "tool_name": "CronCreate",
       "cnt": 11
     },
@@ -571,8 +1051,33 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "Edit",
+      "cnt": 3804
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
       "tool_name": "EnterPlanMode",
       "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "ExitPlanMode",
+      "cnt": 5
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "Glob",
+      "cnt": 456
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "Grep",
+      "cnt": 4047
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "Read",
+      "cnt": 7548
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
@@ -586,8 +1091,28 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "TaskCreate",
+      "cnt": 1709
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "TaskList",
+      "cnt": 120
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "TaskOutput",
+      "cnt": 3480
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
       "tool_name": "TaskStop",
       "cnt": 99
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "TaskUpdate",
+      "cnt": 3417
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
@@ -601,6 +1126,11 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "ToolSearch",
+      "cnt": 2138
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
       "tool_name": "WebFetch",
       "cnt": 58
     },
@@ -608,6 +1138,11 @@ const GRAPH_DATA = {
       "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
       "tool_name": "WebSearch",
       "cnt": 38
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "Write",
+      "cnt": 1858
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
@@ -660,9 +1195,44 @@ const GRAPH_DATA = {
       "cnt": 18
     },
     {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "tool_name": "mcp__plugin_superpowers-chrome_chrome__use_browser",
+      "cnt": 5
+    },
+    {
       "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
       "tool_name": "Agent",
       "cnt": 405
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "tool_name": "AskUserQuestion",
+      "cnt": 10
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "tool_name": "Bash",
+      "cnt": 1508
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "tool_name": "Edit",
+      "cnt": 632
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "tool_name": "Glob",
+      "cnt": 131
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "tool_name": "Grep",
+      "cnt": 342
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "tool_name": "Read",
+      "cnt": 1500
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
@@ -671,8 +1241,38 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "tool_name": "TaskCreate",
+      "cnt": 370
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
       "tool_name": "TaskGet",
       "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "tool_name": "TaskList",
+      "cnt": 22
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "tool_name": "TaskOutput",
+      "cnt": 24
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "tool_name": "TaskUpdate",
+      "cnt": 731
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "tool_name": "ToolSearch",
+      "cnt": 259
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "tool_name": "Write",
+      "cnt": 112
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-why-crying",
@@ -681,8 +1281,53 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-Claude-why-crying",
+      "tool_name": "Bash",
+      "cnt": 255
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-why-crying",
+      "tool_name": "Glob",
+      "cnt": 42
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-why-crying",
+      "tool_name": "Read",
+      "cnt": 44
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-why-crying",
       "tool_name": "Skill",
       "cnt": 14
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-why-crying",
+      "tool_name": "TaskCreate",
+      "cnt": 35
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-why-crying",
+      "tool_name": "TaskUpdate",
+      "cnt": 6
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-why-crying",
+      "tool_name": "ToolSearch",
+      "cnt": 9
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "AskUserQuestion",
+      "cnt": 28
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "Bash",
+      "cnt": 1622
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "Edit",
+      "cnt": 27
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang",
@@ -696,8 +1341,38 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "Glob",
+      "cnt": 22
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "Grep",
+      "cnt": 99
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "Read",
+      "cnt": 233
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
       "tool_name": "Task",
       "cnt": 31
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "TaskCreate",
+      "cnt": 77
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "TaskList",
+      "cnt": 9
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "TaskUpdate",
+      "cnt": 145
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang",
@@ -706,13 +1381,38 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "Write",
+      "cnt": 41
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
       "tool_name": "mcp__claude_ai_Supabase__apply_migration",
       "cnt": 37
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "mcp__claude_ai_Supabase__confirm_cost",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "mcp__claude_ai_Supabase__create_project",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "mcp__claude_ai_Supabase__deploy_edge_function",
+      "cnt": 5
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
       "tool_name": "mcp__claude_ai_Supabase__execute_sql",
       "cnt": 401
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "mcp__claude_ai_Supabase__get_cost",
+      "cnt": 4
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang",
@@ -723,6 +1423,11 @@ const GRAPH_DATA = {
       "project": "-Users-jung-wankim-Project-bs-hanyang",
       "tool_name": "mcp__claude_ai_Supabase__get_logs",
       "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "mcp__claude_ai_Supabase__get_organization",
+      "cnt": 4
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang",
@@ -746,6 +1451,11 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "mcp__claude_ai_Supabase__list_migrations",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
       "tool_name": "mcp__claude_ai_Supabase__list_projects",
       "cnt": 7
     },
@@ -753,6 +1463,11 @@ const GRAPH_DATA = {
       "project": "-Users-jung-wankim-Project-bs-hanyang",
       "tool_name": "mcp__claude_ai_Supabase__list_tables",
       "cnt": 15
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "tool_name": "mcp__claude_ai_Supabase__search_docs",
+      "cnt": 4
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang",
@@ -766,6 +1481,51 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "tool_name": "Bash",
+      "cnt": 214
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "tool_name": "Edit",
+      "cnt": 82
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "tool_name": "Glob",
+      "cnt": 8
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "tool_name": "Grep",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "tool_name": "Read",
+      "cnt": 242
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "tool_name": "TaskCreate",
+      "cnt": 64
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "tool_name": "TaskUpdate",
+      "cnt": 150
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "tool_name": "ToolSearch",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "tool_name": "Write",
+      "cnt": 78
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
       "tool_name": "mcp__claude_ai_Supabase__execute_sql",
       "cnt": 6
     },
@@ -773,6 +1533,81 @@ const GRAPH_DATA = {
       "project": "-Users-jung-wankim-Project-bs-hanyang-ETL",
       "tool_name": "Agent",
       "cnt": 11
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "tool_name": "Bash",
+      "cnt": 145
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "tool_name": "Edit",
+      "cnt": 140
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "tool_name": "Glob",
+      "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "tool_name": "Read",
+      "cnt": 77
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "tool_name": "Skill",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "tool_name": "TaskCreate",
+      "cnt": 60
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "tool_name": "TaskList",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "tool_name": "TaskUpdate",
+      "cnt": 104
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "tool_name": "ToolSearch",
+      "cnt": 20
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "tool_name": "Write",
+      "cnt": 118
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "tool_name": "Bash",
+      "cnt": 375
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "tool_name": "Edit",
+      "cnt": 78
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "tool_name": "Glob",
+      "cnt": 35
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "tool_name": "Grep",
+      "cnt": 36
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "tool_name": "Read",
+      "cnt": 130
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang-HANY",
@@ -786,8 +1621,68 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "tool_name": "TaskCreate",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "tool_name": "TaskUpdate",
+      "cnt": 27
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "tool_name": "ToolSearch",
+      "cnt": 9
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY",
       "tool_name": "mcp__plugin_superpowers-chrome_chrome__use_browser",
       "cnt": 6
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-6",
+      "tool_name": "Bash",
+      "cnt": 87
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-6",
+      "tool_name": "Edit",
+      "cnt": 13
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-6",
+      "tool_name": "Glob",
+      "cnt": 8
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-6",
+      "tool_name": "Grep",
+      "cnt": 9
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-6",
+      "tool_name": "Read",
+      "cnt": 27
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-6",
+      "tool_name": "TaskUpdate",
+      "cnt": 6
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-6",
+      "tool_name": "ToolSearch",
+      "cnt": 6
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-6",
+      "tool_name": "Write",
+      "cnt": 5
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-6",
+      "tool_name": "mcp__pencil__batch_get",
+      "cnt": 5
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-6",
@@ -795,9 +1690,64 @@ const GRAPH_DATA = {
       "cnt": 10
     },
     {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-Private",
+      "tool_name": "Bash",
+      "cnt": 35
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-Private",
+      "tool_name": "Glob",
+      "cnt": 7
+    },
+    {
       "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-gatekeeper",
       "tool_name": "Agent",
       "cnt": 6
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-gatekeeper",
+      "tool_name": "Bash",
+      "cnt": 225
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-gatekeeper",
+      "tool_name": "Edit",
+      "cnt": 108
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-gatekeeper",
+      "tool_name": "Glob",
+      "cnt": 36
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-gatekeeper",
+      "tool_name": "Grep",
+      "cnt": 9
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-gatekeeper",
+      "tool_name": "Read",
+      "cnt": 87
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-gatekeeper",
+      "tool_name": "TaskCreate",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-gatekeeper",
+      "tool_name": "TaskUpdate",
+      "cnt": 24
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-gatekeeper",
+      "tool_name": "ToolSearch",
+      "cnt": 42
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-gatekeeper",
+      "tool_name": "Write",
+      "cnt": 21
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
@@ -806,13 +1756,58 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "tool_name": "Bash",
+      "cnt": 1021
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "tool_name": "Edit",
+      "cnt": 32
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "tool_name": "Glob",
+      "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "tool_name": "Grep",
+      "cnt": 66
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "tool_name": "Read",
+      "cnt": 332
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
       "tool_name": "Skill",
       "cnt": 24
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "tool_name": "TaskCreate",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "tool_name": "TaskUpdate",
+      "cnt": 24
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "tool_name": "ToolSearch",
+      "cnt": 30
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
       "tool_name": "WebSearch",
       "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "tool_name": "Write",
+      "cnt": 54
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
@@ -826,8 +1821,33 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "tool_name": "Bash",
+      "cnt": 505
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "tool_name": "Edit",
+      "cnt": 142
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
       "tool_name": "ExitPlanMode",
       "cnt": 8
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "tool_name": "Glob",
+      "cnt": 10
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "tool_name": "Grep",
+      "cnt": 216
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "tool_name": "Read",
+      "cnt": 442
     },
     {
       "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
@@ -845,9 +1865,99 @@ const GRAPH_DATA = {
       "cnt": 112
     },
     {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "tool_name": "TaskCreate",
+      "cnt": 133
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "tool_name": "TaskList",
+      "cnt": 5
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "tool_name": "TaskOutput",
+      "cnt": 13
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "tool_name": "TaskUpdate",
+      "cnt": 232
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "tool_name": "ToolSearch",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "tool_name": "Write",
+      "cnt": 49
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft",
+      "tool_name": "AskUserQuestion",
+      "cnt": 19
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft",
+      "tool_name": "Bash",
+      "cnt": 430
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft",
+      "tool_name": "Edit",
+      "cnt": 28
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft",
+      "tool_name": "Glob",
+      "cnt": 21
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft",
+      "tool_name": "Read",
+      "cnt": 49
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft",
+      "tool_name": "Skill",
+      "cnt": 5
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft",
+      "tool_name": "TaskCreate",
+      "cnt": 16
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft",
+      "tool_name": "TaskUpdate",
+      "cnt": 32
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft",
+      "tool_name": "ToolSearch",
+      "cnt": 14
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft",
+      "tool_name": "WebFetch",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft",
+      "tool_name": "Write",
+      "cnt": 167
+    },
+    {
       "project": "-Users-jung-wankim-Project-hugh-soft-article21",
       "tool_name": "Agent",
       "cnt": 33
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "tool_name": "Bash",
+      "cnt": 2370
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-article21",
@@ -856,13 +1966,63 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "tool_name": "CronDelete",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "tool_name": "Edit",
+      "cnt": 259
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "tool_name": "Glob",
+      "cnt": 176
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "tool_name": "Grep",
+      "cnt": 155
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "tool_name": "Read",
+      "cnt": 280
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
       "tool_name": "Task",
       "cnt": 12
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "tool_name": "TaskCreate",
+      "cnt": 49
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "tool_name": "TaskOutput",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "tool_name": "TaskUpdate",
+      "cnt": 91
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "tool_name": "ToolSearch",
+      "cnt": 20
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
       "tool_name": "WebFetch",
       "cnt": 9
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "tool_name": "Write",
+      "cnt": 50
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-article21",
@@ -881,6 +2041,36 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "AskUserQuestion",
+      "cnt": 105
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "Bash",
+      "cnt": 18413
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "Edit",
+      "cnt": 3460
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "Glob",
+      "cnt": 684
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "Grep",
+      "cnt": 1792
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "Read",
+      "cnt": 4255
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
       "tool_name": "SendMessage",
       "cnt": 21
     },
@@ -896,8 +2086,33 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "TaskCreate",
+      "cnt": 125
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
       "tool_name": "TaskGet",
       "cnt": 13
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "TaskList",
+      "cnt": 125
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "TaskOutput",
+      "cnt": 11
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "TaskUpdate",
+      "cnt": 352
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "TeamCreate",
+      "cnt": 4
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
@@ -906,8 +2121,23 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "ToolSearch",
+      "cnt": 313
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
       "tool_name": "WebFetch",
       "cnt": 446
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "WebSearch",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "tool_name": "Write",
+      "cnt": 789
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
@@ -931,13 +2161,63 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin-admin-v2",
+      "tool_name": "Bash",
+      "cnt": 106
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin-admin-v2",
+      "tool_name": "Glob",
+      "cnt": 33
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin-admin-v2",
+      "tool_name": "Read",
+      "cnt": 185
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin-admin-v2",
       "tool_name": "TodoWrite",
       "cnt": 19
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin-admin-v2",
+      "tool_name": "ToolSearch",
+      "cnt": 5
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin-admin-v2",
+      "tool_name": "Write",
+      "cnt": 88
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
       "tool_name": "Agent",
       "cnt": 32
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "tool_name": "Bash",
+      "cnt": 1570
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "tool_name": "Edit",
+      "cnt": 286
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "tool_name": "Glob",
+      "cnt": 85
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "tool_name": "Grep",
+      "cnt": 48
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "tool_name": "Read",
+      "cnt": 372
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
@@ -951,6 +2231,21 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "tool_name": "TaskCreate",
+      "cnt": 149
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "tool_name": "TaskUpdate",
+      "cnt": 211
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "tool_name": "ToolSearch",
+      "cnt": 81
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
       "tool_name": "WebFetch",
       "cnt": 34
     },
@@ -958,6 +2253,11 @@ const GRAPH_DATA = {
       "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
       "tool_name": "WebSearch",
       "cnt": 109
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "tool_name": "Write",
+      "cnt": 127
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
@@ -976,8 +2276,48 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-match-system",
+      "tool_name": "Bash",
+      "cnt": 3435
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-match-system",
+      "tool_name": "Edit",
+      "cnt": 492
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-match-system",
+      "tool_name": "Glob",
+      "cnt": 68
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-match-system",
+      "tool_name": "Grep",
+      "cnt": 99
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-match-system",
+      "tool_name": "Read",
+      "cnt": 494
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-match-system",
+      "tool_name": "TaskOutput",
+      "cnt": 14
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-match-system",
+      "tool_name": "ToolSearch",
+      "cnt": 28
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-match-system",
       "tool_name": "WebSearch",
       "cnt": 112
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-match-system",
+      "tool_name": "Write",
+      "cnt": 246
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-ontology",
@@ -986,8 +2326,78 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "tool_name": "Bash",
+      "cnt": 527
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "tool_name": "Edit",
+      "cnt": 55
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "tool_name": "Glob",
+      "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "tool_name": "Grep",
+      "cnt": 20
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "tool_name": "Read",
+      "cnt": 223
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-ontology",
       "tool_name": "Skill",
       "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "tool_name": "TaskCreate",
+      "cnt": 27
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "tool_name": "TaskUpdate",
+      "cnt": 54
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "tool_name": "ToolSearch",
+      "cnt": 14
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "tool_name": "Write",
+      "cnt": 74
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "Bash",
+      "cnt": 2806
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "Edit",
+      "cnt": 442
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "Glob",
+      "cnt": 150
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "Grep",
+      "cnt": 131
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "Read",
+      "cnt": 754
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
@@ -1001,6 +2411,26 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "TaskCreate",
+      "cnt": 78
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "TaskOutput",
+      "cnt": 7
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "TaskUpdate",
+      "cnt": 172
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "ToolSearch",
+      "cnt": 188
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
       "tool_name": "WebFetch",
       "cnt": 42
     },
@@ -1008,6 +2438,11 @@ const GRAPH_DATA = {
       "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
       "tool_name": "WebSearch",
       "cnt": 177
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "tool_name": "Write",
+      "cnt": 175
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
@@ -1051,13 +2486,68 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "tool_name": "Bash",
+      "cnt": 1396
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "tool_name": "Edit",
+      "cnt": 49
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "tool_name": "Glob",
+      "cnt": 64
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "tool_name": "Grep",
+      "cnt": 5
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "tool_name": "Read",
+      "cnt": 176
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
       "tool_name": "Skill",
       "cnt": 12
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "tool_name": "TaskCreate",
+      "cnt": 240
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "tool_name": "TaskList",
+      "cnt": 12
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "tool_name": "TaskOutput",
+      "cnt": 48
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
       "tool_name": "TaskStop",
       "cnt": 25
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "tool_name": "TaskUpdate",
+      "cnt": 468
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "tool_name": "ToolSearch",
+      "cnt": 82
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "tool_name": "Write",
+      "cnt": 138
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
@@ -1076,8 +2566,68 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "tool_name": "Agent",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "tool_name": "Bash",
+      "cnt": 2098
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "tool_name": "Edit",
+      "cnt": 1672
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "tool_name": "Glob",
+      "cnt": 26
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "tool_name": "Grep",
+      "cnt": 86
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "tool_name": "Read",
+      "cnt": 1456
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "tool_name": "Skill",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "tool_name": "TaskCreate",
+      "cnt": 388
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "tool_name": "TaskOutput",
+      "cnt": 82
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "tool_name": "TaskUpdate",
+      "cnt": 764
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "tool_name": "ToolSearch",
+      "cnt": 82
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
       "tool_name": "WebFetch",
       "cnt": 8
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "tool_name": "Write",
+      "cnt": 184
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
@@ -1086,8 +2636,43 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "tool_name": "Bash",
+      "cnt": 24
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
       "tool_name": "Skill",
       "cnt": 6
+    },
+    {
+      "project": "-Users-jung-wankim-Project-mbti-univercity",
+      "tool_name": "AskUserQuestion",
+      "cnt": 17
+    },
+    {
+      "project": "-Users-jung-wankim-Project-mbti-univercity",
+      "tool_name": "Bash",
+      "cnt": 201
+    },
+    {
+      "project": "-Users-jung-wankim-Project-mbti-univercity",
+      "tool_name": "Edit",
+      "cnt": 25
+    },
+    {
+      "project": "-Users-jung-wankim-Project-mbti-univercity",
+      "tool_name": "Glob",
+      "cnt": 14
+    },
+    {
+      "project": "-Users-jung-wankim-Project-mbti-univercity",
+      "tool_name": "Grep",
+      "cnt": 4
+    },
+    {
+      "project": "-Users-jung-wankim-Project-mbti-univercity",
+      "tool_name": "Read",
+      "cnt": 69
     },
     {
       "project": "-Users-jung-wankim-Project-mbti-univercity",
@@ -1096,959 +2681,2273 @@ const GRAPH_DATA = {
     },
     {
       "project": "-Users-jung-wankim-Project-mbti-univercity",
+      "tool_name": "TaskCreate",
+      "cnt": 25
+    },
+    {
+      "project": "-Users-jung-wankim-Project-mbti-univercity",
+      "tool_name": "TaskUpdate",
+      "cnt": 52
+    },
+    {
+      "project": "-Users-jung-wankim-Project-mbti-univercity",
+      "tool_name": "ToolSearch",
+      "cnt": 14
+    },
+    {
+      "project": "-Users-jung-wankim-Project-mbti-univercity",
       "tool_name": "WebFetch",
       "cnt": 8
+    },
+    {
+      "project": "-Users-jung-wankim-Project-mbti-univercity",
+      "tool_name": "Write",
+      "cnt": 34
+    },
+    {
+      "project": "-Users-jung-wankim-Project-mbti-univercity",
+      "tool_name": "mcp__claude_ai_Supabase__get_project",
+      "cnt": 4
     }
   ],
   "connections": [
     {
-      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
-      "target": "-Users-jung-wankim-Project-Claude-trader-hugh",
-      "weight": 18
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "shared_tools": "Task,Skill,Agent",
+      "weight": 3
     },
     {
-      "source": "-Users-jung-wankim-Project-bs-hanyang",
-      "target": "-Users-jung-wankim-Project-mbti-univercity",
-      "weight": 14
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim--cokacdir-workspace-yyotu2d0",
+      "shared_tools": "mcp__plugin_claude-mem_claude-mem-search__search,mcp__plugin_episodic-memory_episodic-memory__search",
+      "weight": 2
     },
     {
-      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
-      "target": "-Users-jung-wankim-Project-bs-hanyang",
-      "weight": 13
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
-      "target": "-Users-jung-wankim-Project-bs-hanyang",
-      "weight": 13
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
-      "target": "-Users-jung-wankim-Project-Claude-trader-hugh",
-      "weight": 10
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
-      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
-      "weight": 10
-    },
-    {
-      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
-      "target": "-Users-jung-wankim-Project-mbti-univercity",
-      "weight": 9
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
-      "target": "-Users-jung-wankim-Project-mbti-univercity",
-      "weight": 9
-    },
-    {
-      "source": "-Users-jung-wankim-Project-bs-hanyang",
-      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
-      "weight": 9
-    },
-    {
-      "source": "-Users-jung-wankim-Project-hugh-soft-running-web",
-      "target": "-Users-jung-wankim-Project-mbti-univercity",
-      "weight": 9
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-Claude-cc-app",
+      "shared_tools": "mcp__plugin_episodic-memory_episodic-memory__search,Agent",
+      "weight": 2
     },
     {
       "source": "-Users-jung-wankim",
       "target": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "shared_tools": "WebFetch,mcp__plugin_claude-mem_claude-mem-search__search,mcp__plugin_episodic-memory_episodic-memory__search,mcp__plugin_claude-mem_claude-mem-search__get_recent_context,Task,Skill,mcp__plugin_claude-mem_claude-mem-search__search_sessions,Agent",
       "weight": 8
     },
     {
-      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
-      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
-      "weight": 8
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "shared_tools": "WebFetch,Skill,Agent",
+      "weight": 3
     },
     {
-      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
-      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
-      "weight": 8
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "shared_tools": "Task,Skill",
+      "weight": 2
     },
     {
-      "source": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
-      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
-      "weight": 8
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "shared_tools": "WebFetch,mcp__plugin_episodic-memory_episodic-memory__search,Skill,Agent",
+      "weight": 4
     },
     {
-      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
-      "target": "-Users-jung-wankim-Project-Claude-cc-sync",
-      "weight": 7
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
     },
     {
-      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-Claude-why-crying",
+      "shared_tools": "WebFetch,Skill,Agent",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-bs-hanyang",
+      "shared_tools": "WebFetch,mcp__plugin_episodic-memory_episodic-memory__search,Task",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "shared_tools": "Task,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "shared_tools": "WebFetch,Skill,Agent",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim",
       "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
-      "weight": 7
+      "shared_tools": "Task,Skill,Agent",
+      "weight": 3
     },
     {
-      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-hugh-soft",
+      "shared_tools": "WebFetch,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim",
       "target": "-Users-jung-wankim-Project-hugh-soft-article21",
-      "weight": 7
+      "shared_tools": "WebFetch,mcp__plugin_claude-mem_claude-mem-search__search,Task,Skill,Agent",
+      "weight": 5
     },
     {
-      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
-      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
-      "weight": 7
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
-      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
-      "weight": 7
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
-      "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
-      "weight": 7
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
-      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
-      "weight": 7
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
-      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
-      "weight": 7
-    },
-    {
-      "source": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "source": "-Users-jung-wankim",
       "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
-      "weight": 7
+      "shared_tools": "WebFetch,mcp__plugin_claude-mem_claude-mem-search__search,Task,Skill,Agent",
+      "weight": 5
     },
     {
       "source": "-Users-jung-wankim",
       "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "shared_tools": "WebFetch,mcp__plugin_claude-mem_claude-mem-search__search,mcp__plugin_episodic-memory_episodic-memory__search,Task,Skill,Agent",
       "weight": 6
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "shared_tools": "WebFetch,Task,Skill",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "shared_tools": "WebFetch,Skill,Agent",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "shared_tools": "WebFetch,Skill,Agent",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "WebFetch,Task,Skill",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "shared_tools": "Skill,Task,mcp__claude_ai_Supabase__list_projects,Agent,CronCreate,CronDelete,CronList",
+      "weight": 7
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
     },
     {
       "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
       "target": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "shared_tools": "Skill,EnterPlanMode,ExitPlanMode,TeamCreate,SendMessage,Task",
       "weight": 6
     },
     {
       "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
-      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
-      "weight": 6
+      "target": "-Users-jung-wankim-Project-Claude-temp",
+      "shared_tools": "Skill,CronCreate",
+      "weight": 2
     },
     {
       "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
-      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
-      "weight": 6
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
       "target": "-Users-jung-wankim-Project-Claude-trader-hugh",
-      "weight": 6
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
-      "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
-      "weight": 6
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
-      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
-      "weight": 6
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
-      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
-      "weight": 6
-    },
-    {
-      "source": "-Users-jung-wankim-Project-hugh-soft-article21",
-      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
-      "weight": 6
-    },
-    {
-      "source": "-Users-jung-wankim",
-      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
-      "weight": 5
-    },
-    {
-      "source": "-Users-jung-wankim",
-      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
-      "weight": 5
+      "shared_tools": "Skill,EnterPlanMode,ExitPlanMode,TeamCreate,SendMessage,ListMcpResourcesTool,mcp__claude_ai_Supabase__get_project,mcp__claude_ai_Supabase__execute_sql,mcp__claude_ai_Supabase__list_edge_functions,mcp__claude_ai_Supabase__list_projects,mcp__claude_ai_Supabase__list_tables,TaskStop,Agent,mcp__claude_ai_Supabase__apply_migration,TeamDelete,mcp__claude_ai_Supabase__list_migrations,CronCreate,CronDelete",
+      "weight": 18
     },
     {
       "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
-      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
-      "weight": 5
+      "target": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
     },
     {
-      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-Claude-why-crying",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
       "target": "-Users-jung-wankim-Project-bs-hanyang",
-      "weight": 5
+      "shared_tools": "EnterPlanMode,ExitPlanMode,Task,mcp__claude_ai_Supabase__search_docs,mcp__claude_ai_Supabase__get_project,mcp__claude_ai_Supabase__execute_sql,mcp__claude_ai_Supabase__list_edge_functions,mcp__claude_ai_Supabase__get_edge_function,mcp__claude_ai_Supabase__deploy_edge_function,mcp__claude_ai_Supabase__list_projects,mcp__claude_ai_Supabase__list_tables,mcp__claude_ai_Supabase__apply_migration,mcp__claude_ai_Supabase__list_migrations",
+      "weight": 13
     },
     {
-      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
-      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
-      "weight": 5
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "shared_tools": "mcp__claude_ai_Supabase__execute_sql,Agent,mcp__claude_ai_Supabase__apply_migration",
+      "weight": 3
     },
     {
-      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
-      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
-      "weight": 5
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
     },
     {
-      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
-      "target": "-Users-jung-wankim-Project-mbti-univercity",
-      "weight": 5
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
-      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
-      "weight": 5
-    },
-    {
-      "source": "-Users-jung-wankim-Project-bs-hanyang",
-      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
-      "weight": 5
-    },
-    {
-      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
-      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
-      "weight": 5
-    },
-    {
-      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
-      "target": "-Users-jung-wankim-Project-mbti-univercity",
-      "weight": 5
-    },
-    {
-      "source": "-Users-jung-wankim-Project-bs-hanyang-KFM",
-      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
-      "weight": 5
-    },
-    {
-      "source": "-Users-jung-wankim-Project-hugh-soft-article21",
-      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
-      "weight": 5
-    },
-    {
-      "source": "-Users-jung-wankim-Project-hugh-soft-article21",
-      "target": "-Users-jung-wankim-Project-mbti-univercity",
-      "weight": 5
-    },
-    {
-      "source": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
-      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
-      "weight": 5
-    },
-    {
-      "source": "-Users-jung-wankim",
-      "target": "-Users-jung-wankim-Project-Claude-trader-hugh",
-      "weight": 4
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "shared_tools": "Skill,Task",
+      "weight": 2
     },
     {
       "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
       "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "shared_tools": "Skill,mcp__claude_ai_Supabase__execute_sql,mcp__claude_ai_Supabase__list_projects,Agent",
       "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "shared_tools": "Skill,ExitPlanMode,TeamCreate,SendMessage,Task,Agent,TeamDelete",
+      "weight": 7
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "shared_tools": "Skill,EnterPlanMode,ExitPlanMode,Task,Agent,CronCreate,CronDelete",
+      "weight": 7
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "shared_tools": "Skill,TeamCreate,SendMessage,Task,Agent,TeamDelete",
+      "weight": 6
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "shared_tools": "Skill,TeamCreate,Task,ListMcpResourcesTool,Agent",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "shared_tools": "Skill,Task,mcp__claude_ai_Supabase__execute_sql,mcp__claude_ai_Supabase__list_projects,mcp__claude_ai_Supabase__list_organizations,mcp__claude_ai_Supabase__apply_migration",
+      "weight": 6
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "shared_tools": "Skill,TaskStop,Agent",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "shared_tools": "Skill,mcp__claude_ai_Supabase__list_projects,Agent",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "Skill,EnterPlanMode,ExitPlanMode,Task,mcp__claude_ai_Supabase__get_project,mcp__claude_ai_Supabase__execute_sql,mcp__claude_ai_Supabase__list_projects,mcp__claude_ai_Supabase__list_organizations,mcp__claude_ai_Supabase__apply_migration",
+      "weight": 9
+    },
+    {
+      "source": "-Users-jung-wankim--cokacdir-workspace-yyotu2d0",
+      "target": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "shared_tools": "mcp__plugin_episodic-memory_episodic-memory__search,mcp__plugin_claude-mem_claude-mem-search__search",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim--cokacdir-workspace-yyotu2d0",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "shared_tools": "mcp__plugin_episodic-memory_episodic-memory__search,mcp__plugin_claude-mem_claude-mem-search__search",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-app",
+      "target": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "shared_tools": "mcp__plugin_episodic-memory_episodic-memory__search,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-app",
+      "target": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "shared_tools": "mcp__plugin_episodic-memory_episodic-memory__search,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-app",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "shared_tools": "mcp__plugin_episodic-memory_episodic-memory__search,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "shared_tools": "WebFetch,Skill,Agent",
+      "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "shared_tools": "Skill,Task",
+      "weight": 2
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-cc-sync",
       "target": "-Users-jung-wankim-Project-Claude-temp",
+      "shared_tools": "Skill,mcp__plugin_memory-bank_memory-bank__search,mcp__plugin_memory-bank_memory-bank__search_facts,CronCreate",
       "weight": 4
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-cc-sync",
-      "target": "-Users-jung-wankim-Project-Claude-why-crying",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
-      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
-      "target": "-Users-jung-wankim-Project-bs-hanyang",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
-      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
-      "target": "-Users-jung-wankim-Project-mbti-univercity",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-temp",
       "target": "-Users-jung-wankim-Project-Claude-trader-hugh",
-      "weight": 4
+      "shared_tools": "WebSearch,WebFetch,mcp__claude_ai_Supabase__list_projects,Skill,Agent,mcp__plugin_episodic-memory_episodic-memory__search,mcp__plugin_memory-bank_memory-bank__search,mcp__plugin_memory-bank_memory-bank__search_facts,CronCreate,CronDelete",
+      "weight": 10
     },
     {
-      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
       "target": "-Users-jung-wankim-Project-Claude-why-crying",
+      "shared_tools": "WebSearch,WebFetch,Skill,Agent",
       "weight": 4
     },
     {
-      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
-      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-why-crying",
-      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-why-crying",
-      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-why-crying",
-      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-bs-hanyang",
-      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-bs-hanyang",
-      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-bs-hanyang",
-      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
-      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
-      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
-      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-bs-hanyang-KFM",
-      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-hugh-soft-article21",
-      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
-      "target": "-Users-jung-wankim-Project-mbti-univercity",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
-      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
-      "target": "-Users-jung-wankim-Project-mbti-univercity",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
-      "target": "-Users-jung-wankim-Project-mbti-univercity",
-      "weight": 4
-    },
-    {
-      "source": "-Users-jung-wankim",
-      "target": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
-      "weight": 3
-    },
-    {
-      "source": "-Users-jung-wankim",
-      "target": "-Users-jung-wankim-Project-Claude-claude-config-editor",
-      "weight": 3
-    },
-    {
-      "source": "-Users-jung-wankim",
-      "target": "-Users-jung-wankim-Project-Claude-why-crying",
-      "weight": 3
-    },
-    {
-      "source": "-Users-jung-wankim",
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
       "target": "-Users-jung-wankim-Project-bs-hanyang",
-      "weight": 3
+      "shared_tools": "WebSearch,WebFetch,mcp__claude_ai_Supabase__list_projects,Task,mcp__plugin_episodic-memory_episodic-memory__search",
+      "weight": 5
     },
     {
-      "source": "-Users-jung-wankim",
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "shared_tools": "Skill,Task",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
       "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
-      "weight": 3
-    },
-    {
-      "source": "-Users-jung-wankim",
-      "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
-      "weight": 3
-    },
-    {
-      "source": "-Users-jung-wankim",
-      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
-      "weight": 3
-    },
-    {
-      "source": "-Users-jung-wankim",
-      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
-      "weight": 3
-    },
-    {
-      "source": "-Users-jung-wankim",
-      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
-      "weight": 3
-    },
-    {
-      "source": "-Users-jung-wankim",
-      "target": "-Users-jung-wankim-Project-mbti-univercity",
-      "weight": 3
-    },
-    {
-      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
-      "target": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
-      "weight": 3
-    },
-    {
-      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
-      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
-      "weight": 3
-    },
-    {
-      "source": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
-      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
-      "weight": 3
-    },
-    {
-      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
-      "target": "-Users-jung-wankim-Project-Claude-claude-config-editor",
-      "weight": 3
+      "shared_tools": "WebSearch,WebFetch,mcp__claude_ai_Supabase__list_projects,Skill,Agent",
+      "weight": 5
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-cc-sync",
       "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "shared_tools": "Skill,Task,Agent",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-cc-sync",
       "target": "-Users-jung-wankim-Project-hugh-soft",
+      "shared_tools": "WebSearch,WebFetch,Skill",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "shared_tools": "WebFetch,Skill,Task,Agent,mcp__plugin_claude-mem_claude-mem-search__search,CronCreate,CronDelete",
+      "weight": 7
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "shared_tools": "WebSearch,WebFetch,Skill,Task,Agent,mcp__plugin_claude-mem_claude-mem-search__search,mcp__plugin_memory-bank_memory-bank__search,mcp__plugin_memory-bank_memory-bank__search_facts",
+      "weight": 8
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "shared_tools": "WebSearch,WebFetch,Skill,Task,Agent,mcp__plugin_episodic-memory_episodic-memory__search,mcp__plugin_claude-mem_claude-mem-search__search",
+      "weight": 7
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-hugh-soft-match-system",
+      "shared_tools": "WebSearch,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "shared_tools": "WebSearch,WebFetch,mcp__claude_ai_Supabase__list_projects,Skill,Task",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "shared_tools": "WebFetch,mcp__claude_ai_Supabase__list_projects,Skill,Agent",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
       "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "shared_tools": "WebFetch,Skill,Agent",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "WebSearch,WebFetch,mcp__claude_ai_Supabase__list_projects,Skill,Task",
+      "weight": 5
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
       "target": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "shared_tools": "Agent,WebFetch,Skill",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "target": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
       "target": "-Users-jung-wankim-Project-Claude-why-crying",
+      "shared_tools": "Agent,WebFetch,Skill",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
       "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "shared_tools": "Agent,WebFetch,Skill",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "target": "-Users-jung-wankim-Project-hugh-soft",
+      "shared_tools": "WebFetch,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
       "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "shared_tools": "Agent,WebFetch,Skill",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
       "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "shared_tools": "Agent,WebFetch,Skill",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
       "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "shared_tools": "Agent,WebFetch,Skill",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "target": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "shared_tools": "WebFetch,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
       "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "shared_tools": "Agent,WebFetch,Skill",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
       "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "shared_tools": "Agent,WebFetch,Skill",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "WebFetch,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "target": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "shared_tools": "Skill,TeamCreate,SendMessage,mcp__plugin_superpowers-chrome_chrome__use_browser,EnterPlanMode,ExitPlanMode",
+      "weight": 6
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "target": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "shared_tools": "Skill,TaskGet",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "target": "-Users-jung-wankim-Project-bs-hanyang",
+      "shared_tools": "Task,mcp__plugin_superpowers-chrome_chrome__use_browser,EnterPlanMode,ExitPlanMode",
+      "weight": 4
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-insights-ui",
       "target": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "shared_tools": "Skill,Task,mcp__plugin_superpowers-chrome_chrome__use_browser",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "shared_tools": "Skill,TeamCreate,Task,SendMessage,mcp__plugin_superpowers-chrome_chrome__use_browser,ExitPlanMode",
+      "weight": 6
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "shared_tools": "Skill,Task,mcp__plugin_superpowers-chrome_chrome__use_browser,EnterPlanMode,ExitPlanMode",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "shared_tools": "Skill,TeamCreate,Task,SendMessage,mcp__plugin_superpowers-chrome_chrome__use_browser,TaskGet",
+      "weight": 6
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "shared_tools": "Skill,TeamCreate,Task,TaskGet",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
       "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "shared_tools": "Skill,Task,mcp__plugin_superpowers-chrome_chrome__use_browser",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "Skill,Task,EnterPlanMode,ExitPlanMode",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-temp",
+      "target": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "shared_tools": "mcp__plugin_memory-bank_memory-bank__search_facts,mcp__plugin_memory-bank_memory-bank__search,CronCreate,Skill",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-temp",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "shared_tools": "CronCreate,Skill",
+      "weight": 2
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-temp",
       "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "shared_tools": "mcp__plugin_memory-bank_memory-bank__search_facts,mcp__plugin_memory-bank_memory-bank__search,Skill",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-Claude-why-crying",
+      "shared_tools": "Skill,Agent,WebSearch,WebFetch",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-bs-hanyang",
+      "shared_tools": "mcp__plugin_episodic-memory_episodic-memory__search,EnterPlanMode,ExitPlanMode,mcp__claude_ai_Supabase__list_projects,mcp__claude_ai_Supabase__apply_migration,mcp__claude_ai_Supabase__execute_sql,mcp__plugin_superpowers-chrome_chrome__use_browser,WebSearch,WebFetch,mcp__claude_ai_Supabase__list_migrations,mcp__claude_ai_Supabase__list_edge_functions,mcp__claude_ai_Supabase__get_project,mcp__claude_ai_Supabase__list_tables",
+      "weight": 13
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
       "target": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "shared_tools": "Agent,mcp__claude_ai_Supabase__apply_migration,mcp__claude_ai_Supabase__execute_sql",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "shared_tools": "Skill,mcp__plugin_superpowers-chrome_chrome__use_browser",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "shared_tools": "Skill,Agent,mcp__claude_ai_Supabase__list_projects,mcp__claude_ai_Supabase__execute_sql,WebSearch,WebFetch",
+      "weight": 6
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "shared_tools": "Skill,Agent,TeamCreate,SendMessage,TeamDelete,ExitPlanMode,mcp__plugin_superpowers-chrome_chrome__use_browser",
+      "weight": 7
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
       "target": "-Users-jung-wankim-Project-hugh-soft",
+      "shared_tools": "Skill,WebSearch,WebFetch",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "shared_tools": "Skill,Agent,EnterPlanMode,ExitPlanMode,mcp__plugin_superpowers-chrome_chrome__use_browser,WebFetch,CronCreate,CronDelete",
+      "weight": 8
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "shared_tools": "Skill,Agent,TeamCreate,SendMessage,TeamDelete,mcp__plugin_superpowers-chrome_chrome__use_browser,WebSearch,WebFetch,mcp__plugin_memory-bank_memory-bank__search_facts,mcp__plugin_memory-bank_memory-bank__search",
+      "weight": 10
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "shared_tools": "Skill,mcp__plugin_episodic-memory_episodic-memory__search,Agent,ListMcpResourcesTool,TeamCreate,WebSearch,WebFetch",
+      "weight": 7
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-hugh-soft-match-system",
+      "shared_tools": "Agent,WebSearch",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "shared_tools": "Skill,mcp__claude_ai_Supabase__list_projects,mcp__claude_ai_Supabase__apply_migration,mcp__claude_ai_Supabase__execute_sql,mcp__plugin_superpowers-chrome_chrome__use_browser,WebSearch,WebFetch",
+      "weight": 7
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
       "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "shared_tools": "Skill,Agent,TaskStop",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "shared_tools": "Skill,Agent,mcp__claude_ai_Supabase__list_projects,WebFetch",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
       "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "shared_tools": "Skill,Agent,WebFetch",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "Skill,EnterPlanMode,ExitPlanMode,mcp__claude_ai_Supabase__list_projects,mcp__claude_ai_Supabase__apply_migration,mcp__claude_ai_Supabase__execute_sql,WebSearch,WebFetch,mcp__claude_ai_Supabase__get_project",
+      "weight": 9
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "target": "-Users-jung-wankim-Project-Claude-why-crying",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
       "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "shared_tools": "Skill,Agent,TaskGet",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
       "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "shared_tools": "Skill,Agent,TaskGet",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "target": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-why-crying",
+      "target": "-Users-jung-wankim-Project-bs-hanyang",
+      "shared_tools": "WebSearch,WebFetch",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-why-crying",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-why-crying",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "shared_tools": "Skill,Agent,WebSearch,WebFetch",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-why-crying",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-why-crying",
       "target": "-Users-jung-wankim-Project-hugh-soft",
+      "shared_tools": "Skill,WebSearch,WebFetch",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-why-crying",
       "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "shared_tools": "Skill,Agent,WebFetch",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-why-crying",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "shared_tools": "Skill,Agent,WebSearch,WebFetch",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-why-crying",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "shared_tools": "Skill,Agent,WebSearch,WebFetch",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-why-crying",
+      "target": "-Users-jung-wankim-Project-hugh-soft-match-system",
+      "shared_tools": "Agent,WebSearch",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-why-crying",
+      "target": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-why-crying",
       "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "shared_tools": "Skill,WebSearch,WebFetch",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-Claude-why-crying",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-why-crying",
       "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "shared_tools": "Skill,Agent,WebFetch",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-why-crying",
       "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "shared_tools": "Skill,Agent,WebFetch",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-Claude-why-crying",
       "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "Skill,WebSearch,WebFetch",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-PawChat",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "shared_tools": "Skill,TodoWrite",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "shared_tools": "mcp__claude_ai_Supabase__apply_migration,mcp__claude_ai_Supabase__execute_sql",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "shared_tools": "Task,mcp__plugin_superpowers-chrome_chrome__use_browser",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "shared_tools": "mcp__claude_ai_Supabase__list_projects,mcp__claude_ai_Supabase__execute_sql,WebFetch,WebSearch",
+      "weight": 4
     },
     {
       "source": "-Users-jung-wankim-Project-bs-hanyang",
       "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "shared_tools": "Task,ExitPlanMode,mcp__plugin_superpowers-chrome_chrome__use_browser",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang",
+      "target": "-Users-jung-wankim-Project-hugh-soft",
+      "shared_tools": "WebFetch,WebSearch",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "shared_tools": "EnterPlanMode,Task,ExitPlanMode,mcp__plugin_superpowers-chrome_chrome__use_browser,WebFetch",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "shared_tools": "Task,mcp__plugin_superpowers-chrome_chrome__use_browser,WebFetch,WebSearch",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "shared_tools": "Task,mcp__plugin_episodic-memory_episodic-memory__search,WebFetch,WebSearch",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "shared_tools": "Task,mcp__plugin_superpowers-chrome_chrome__use_browser,mcp__claude_ai_Supabase__list_projects,mcp__claude_ai_Supabase__apply_migration,mcp__claude_ai_Supabase__get_logs,mcp__claude_ai_Supabase__execute_sql,mcp__claude_ai_Supabase__get_cost,WebFetch,WebSearch",
+      "weight": 9
     },
     {
       "source": "-Users-jung-wankim-Project-bs-hanyang",
       "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "shared_tools": "mcp__claude_ai_Supabase__get_publishable_keys,mcp__claude_ai_Supabase__get_project_url,mcp__claude_ai_Supabase__get_cost",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "shared_tools": "mcp__claude_ai_Supabase__list_projects,WebFetch",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "EnterPlanMode,Task,ExitPlanMode,mcp__claude_ai_Supabase__get_publishable_keys,mcp__claude_ai_Supabase__list_projects,mcp__claude_ai_Supabase__apply_migration,mcp__claude_ai_Supabase__get_project_url,mcp__claude_ai_Supabase__execute_sql,mcp__claude_ai_Supabase__get_cost,mcp__claude_ai_Supabase__confirm_cost,mcp__claude_ai_Supabase__create_project,mcp__claude_ai_Supabase__get_project,WebFetch,WebSearch",
+      "weight": 14
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "shared_tools": "Agent,mcp__claude_ai_Supabase__execute_sql",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "shared_tools": "mcp__claude_ai_Supabase__apply_migration,mcp__claude_ai_Supabase__execute_sql",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "mcp__claude_ai_Supabase__apply_migration,mcp__claude_ai_Supabase__execute_sql",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "target": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
     },
     {
       "source": "-Users-jung-wankim-Project-bs-hanyang-HANY",
       "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "shared_tools": "Skill,Task,mcp__plugin_superpowers-chrome_chrome__use_browser",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-bs-hanyang-HANY",
       "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "shared_tools": "Skill,Task,mcp__plugin_superpowers-chrome_chrome__use_browser",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-bs-hanyang-HANY",
       "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "shared_tools": "Skill,Task,mcp__plugin_superpowers-chrome_chrome__use_browser",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "shared_tools": "Skill,Task",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY",
       "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "shared_tools": "Skill,Task,mcp__plugin_superpowers-chrome_chrome__use_browser",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "Skill,Task",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "target": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
     },
     {
       "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
       "target": "-Users-jung-wankim-Project-hugh-soft",
+      "shared_tools": "WebFetch,Skill,WebSearch",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
       "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "shared_tools": "WebFetch,Agent,Skill",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "shared_tools": "WebFetch,Agent,Skill,WebSearch",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "shared_tools": "WebFetch,Agent,Skill,WebSearch",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "target": "-Users-jung-wankim-Project-hugh-soft-match-system",
+      "shared_tools": "Agent,WebSearch",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "target": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "shared_tools": "WebFetch,mcp__claude_ai_Supabase__list_projects,mcp__claude_ai_Supabase__execute_sql,Skill,WebSearch",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "shared_tools": "WebFetch,Agent,mcp__claude_ai_Supabase__list_projects,Skill",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
       "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "shared_tools": "WebFetch,Agent,Skill",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "WebFetch,mcp__claude_ai_Supabase__list_projects,mcp__claude_ai_Supabase__execute_sql,Skill,WebSearch",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "shared_tools": "mcp__plugin_superpowers-chrome_chrome__use_browser,Task,ExitPlanMode,Skill,Agent",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "shared_tools": "mcp__plugin_superpowers-chrome_chrome__use_browser,Task,Skill,TeamCreate,SendMessage,TeamDelete,Agent",
+      "weight": 7
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "shared_tools": "Task,Skill,TeamCreate,Agent",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "target": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
     },
     {
       "source": "-Users-jung-wankim-Project-bs-hanyang-KFM",
       "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "shared_tools": "mcp__plugin_superpowers-chrome_chrome__use_browser,Task,Skill",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-bs-hanyang-KFM",
       "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "Task,ExitPlanMode,Skill",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-hugh-soft",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "shared_tools": "WebFetch,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft",
       "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "shared_tools": "WebSearch,WebFetch,Skill",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-hugh-soft",
       "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "shared_tools": "WebSearch,WebFetch,Skill",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-hugh-soft",
       "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "shared_tools": "WebSearch,WebFetch,Skill",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-hugh-soft",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "shared_tools": "WebFetch,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "shared_tools": "WebFetch,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft",
       "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "WebSearch,WebFetch,Skill",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "shared_tools": "Skill,Task,Agent,WebFetch,mcp__plugin_claude-mem_claude-mem-search__search,mcp__plugin_superpowers-chrome_chrome__use_browser",
+      "weight": 6
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "shared_tools": "Skill,Task,Agent,WebFetch,mcp__plugin_claude-mem_claude-mem-search__search",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "target": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "shared_tools": "Skill,Task,WebFetch,mcp__plugin_superpowers-chrome_chrome__use_browser",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21",
       "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "shared_tools": "Skill,Agent,WebFetch",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-hugh-soft-article21",
       "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "shared_tools": "Skill,Agent,WebFetch",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "Skill,EnterPlanMode,Task,ExitPlanMode,WebFetch",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "target": "-Users-jung-wankim-Project-hugh-soft-article21-admin-admin-v2",
+      "shared_tools": "Agent,TodoWrite",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "target": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "shared_tools": "Skill,Task,mcp__plugin_claude-mem_claude-mem-search__search,TeamCreate,WebFetch,TaskGet,WebSearch,Agent",
+      "weight": 8
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "target": "-Users-jung-wankim-Project-hugh-soft-match-system",
+      "shared_tools": "WebSearch,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "target": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "shared_tools": "Skill,mcp__plugin_superpowers-chrome_chrome__use_browser,Task,WebFetch,WebSearch",
+      "weight": 5
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
     },
     {
       "source": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
       "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "shared_tools": "Skill,WebFetch,Agent",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
       "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "shared_tools": "Skill,WebFetch,Agent",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "Skill,Task,WebFetch,WebSearch",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "target": "-Users-jung-wankim-Project-hugh-soft-match-system",
+      "shared_tools": "WebSearch,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "target": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "target": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "shared_tools": "WebSearch,WebFetch,Task,Skill",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
     },
     {
       "source": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
       "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "shared_tools": "WebFetch,Skill,Agent",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
       "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "shared_tools": "WebFetch,Skill,Agent",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "WebSearch,WebFetch,Task,Skill",
+      "weight": 4
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "shared_tools": "Agent,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "shared_tools": "mcp__claude_ai_Supabase__get_cost,Skill",
+      "weight": 2
     },
     {
       "source": "-Users-jung-wankim-Project-hugh-soft-running-web",
       "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "shared_tools": "mcp__claude_ai_Supabase__list_projects,WebFetch,Skill",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "shared_tools": "WebFetch,Skill",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "WebSearch,Task,mcp__claude_ai_Supabase__list_organizations,mcp__claude_ai_Supabase__get_cost,mcp__claude_ai_Supabase__list_projects,mcp__claude_ai_Supabase__apply_migration,WebFetch,Skill,mcp__claude_ai_Supabase__execute_sql",
+      "weight": 9
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "shared_tools": "Skill,Agent",
+      "weight": 2
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "Skill,mcp__claude_ai_Supabase__get_cost,mcp__claude_ai_Supabase__get_project_url,mcp__claude_ai_Supabase__get_publishable_keys",
+      "weight": 4
     },
     {
       "source": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
       "target": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "shared_tools": "Agent,Skill,WebFetch",
       "weight": 3
     },
     {
       "source": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
       "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "Skill,WebFetch,mcp__claude_ai_Supabase__list_projects",
       "weight": 3
+    },
+    {
+      "source": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "target": "-Users-jung-wankim-Project-mbti-univercity",
+      "shared_tools": "Skill,WebFetch",
+      "weight": 2
+    }
+  ],
+  "timeline": [
+    {
+      "project": "-Users-jung-wankim",
+      "month": "2026-01",
+      "cnt": 6
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "month": "2026-01",
+      "cnt": 1330
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "month": "2026-01",
+      "cnt": 48
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft",
+      "month": "2026-01",
+      "cnt": 32
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "month": "2026-01",
+      "cnt": 213
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "month": "2026-01",
+      "cnt": 320
+    },
+    {
+      "project": "-Users-jung-wankim",
+      "month": "2026-02",
+      "cnt": 247
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "month": "2026-02",
+      "cnt": 8588
+    },
+    {
+      "project": "-Users-jung-wankim--cokacdir-workspace-yyotu2d0",
+      "month": "2026-02",
+      "cnt": 94
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "month": "2026-02",
+      "cnt": 224
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-insights-ui",
+      "month": "2026-02",
+      "cnt": 109
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "month": "2026-02",
+      "cnt": 122
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "month": "2026-02",
+      "cnt": 40
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "month": "2026-02",
+      "cnt": 68
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "month": "2026-02",
+      "cnt": 20
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "month": "2026-02",
+      "cnt": 225
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "month": "2026-02",
+      "cnt": 100
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-match-system",
+      "month": "2026-02",
+      "cnt": 6
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "month": "2026-02",
+      "cnt": 120
+    },
+    {
+      "project": "-Users-jung-wankim-Project-mbti-univercity",
+      "month": "2026-02",
+      "cnt": 59
+    },
+    {
+      "project": "-",
+      "month": "2026-03",
+      "cnt": 9
+    },
+    {
+      "project": "-Users-jung-wankim",
+      "month": "2026-03",
+      "cnt": 89
+    },
+    {
+      "project": "-Users-jung-wankim--claude-plugins-marketplaces-thedotmack",
+      "month": "2026-03",
+      "cnt": 20254
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-ai-token-monitor",
+      "month": "2026-03",
+      "cnt": 75
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-app",
+      "month": "2026-03",
+      "cnt": 75
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync",
+      "month": "2026-03",
+      "cnt": 494
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-cc-sync-plugins-marketplaces-memory-bank-dev",
+      "month": "2026-03",
+      "cnt": 17
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-claude-config-editor",
+      "month": "2026-03",
+      "cnt": 71
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-deer-flow",
+      "month": "2026-03",
+      "cnt": 11
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-episodic-memory",
+      "month": "2026-03",
+      "cnt": 69
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-memory-bank",
+      "month": "2026-03",
+      "cnt": 83
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-temp",
+      "month": "2026-03",
+      "cnt": 81
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh",
+      "month": "2026-03",
+      "cnt": 631
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-trader-hugh-algorithm",
+      "month": "2026-03",
+      "cnt": 213
+    },
+    {
+      "project": "-Users-jung-wankim-Project-Claude-why-crying",
+      "month": "2026-03",
+      "cnt": 101
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang",
+      "month": "2026-03",
+      "cnt": 28
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-BisFramework",
+      "month": "2026-03",
+      "cnt": 29
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-ETL",
+      "month": "2026-03",
+      "cnt": 66
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY",
+      "month": "2026-03",
+      "cnt": 9
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-6",
+      "month": "2026-03",
+      "cnt": 50
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-Private",
+      "month": "2026-03",
+      "cnt": 31
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-gatekeeper",
+      "month": "2026-03",
+      "cnt": 111
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-HANY-kpi",
+      "month": "2026-03",
+      "cnt": 63
+    },
+    {
+      "project": "-Users-jung-wankim-Project-bs-hanyang-KFM",
+      "month": "2026-03",
+      "cnt": 14
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft",
+      "month": "2026-03",
+      "cnt": 20
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21",
+      "month": "2026-03",
+      "cnt": 192
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin",
+      "month": "2026-03",
+      "cnt": 265
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-article21-admin-admin-v2",
+      "month": "2026-03",
+      "cnt": 72
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-artricle-docs",
+      "month": "2026-03",
+      "cnt": 362
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-match-system",
+      "month": "2026-03",
+      "cnt": 110
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-ontology",
+      "month": "2026-03",
+      "cnt": 30
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-running-web",
+      "month": "2026-03",
+      "cnt": 140
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot",
+      "month": "2026-03",
+      "cnt": 122
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-autoresearch",
+      "month": "2026-03",
+      "cnt": 35
+    },
+    {
+      "project": "-Users-jung-wankim-Project-hugh-soft-studio-bot-rcli",
+      "month": "2026-03",
+      "cnt": 16
+    }
+  ],
+  "allTools": [
+    {
+      "tool_name": "Bash",
+      "project_count": 40,
+      "total_uses": 66592
+    },
+    {
+      "tool_name": "Read",
+      "project_count": 38,
+      "total_uses": 24051
+    },
+    {
+      "tool_name": "Edit",
+      "project_count": 29,
+      "total_uses": 14409
+    },
+    {
+      "tool_name": "TaskUpdate",
+      "project_count": 26,
+      "total_uses": 9463
+    },
+    {
+      "tool_name": "Grep",
+      "project_count": 26,
+      "total_uses": 7655
+    },
+    {
+      "tool_name": "TaskOutput",
+      "project_count": 14,
+      "total_uses": 7403
+    },
+    {
+      "tool_name": "Write",
+      "project_count": 32,
+      "total_uses": 7130
+    },
+    {
+      "tool_name": "TaskCreate",
+      "project_count": 26,
+      "total_uses": 4800
+    },
+    {
+      "tool_name": "ToolSearch",
+      "project_count": 28,
+      "total_uses": 3786
+    },
+    {
+      "tool_name": "Agent",
+      "project_count": 24,
+      "total_uses": 3504
+    },
+    {
+      "tool_name": "Glob",
+      "project_count": 37,
+      "total_uses": 3037
+    },
+    {
+      "tool_name": "Skill",
+      "project_count": 24,
+      "total_uses": 1483
+    },
+    {
+      "tool_name": "WebFetch",
+      "project_count": 15,
+      "total_uses": 1191
+    },
+    {
+      "tool_name": "AskUserQuestion",
+      "project_count": 10,
+      "total_uses": 820
+    },
+    {
+      "tool_name": "WebSearch",
+      "project_count": 11,
+      "total_uses": 627
+    },
+    {
+      "tool_name": "mcp__claude_ai_Supabase__execute_sql",
+      "project_count": 7,
+      "total_uses": 600
+    },
+    {
+      "tool_name": "Task",
+      "project_count": 12,
+      "total_uses": 518
+    },
+    {
+      "tool_name": "mcp__plugin_superpowers-chrome_chrome__use_browser",
+      "project_count": 8,
+      "total_uses": 454
+    },
+    {
+      "tool_name": "TaskList",
+      "project_count": 11,
+      "total_uses": 350
+    },
+    {
+      "tool_name": "ReadMcpResourceTool",
+      "project_count": 1,
+      "total_uses": 291
+    },
+    {
+      "tool_name": "CronCreate",
+      "project_count": 5,
+      "total_uses": 214
+    },
+    {
+      "tool_name": "ExitPlanMode",
+      "project_count": 7,
+      "total_uses": 212
+    },
+    {
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__search_observations",
+      "project_count": 1,
+      "total_uses": 190
+    },
+    {
+      "tool_name": "mcp__plugin_memory-bank_memory-bank__search",
+      "project_count": 4,
+      "total_uses": 163
+    },
+    {
+      "tool_name": "mcp__claude_ai_Supabase__list_projects",
+      "project_count": 8,
+      "total_uses": 156
+    },
+    {
+      "tool_name": "mcp__plugin_memory-bank_memory-bank__search_facts",
+      "project_count": 4,
+      "total_uses": 131
+    },
+    {
+      "tool_name": "TaskStop",
+      "project_count": 3,
+      "total_uses": 127
+    },
+    {
+      "tool_name": "SendMessage",
+      "project_count": 5,
+      "total_uses": 104
+    },
+    {
+      "tool_name": "CronDelete",
+      "project_count": 4,
+      "total_uses": 88
+    },
+    {
+      "tool_name": "mcp__claude_ai_Supabase__apply_migration",
+      "project_count": 6,
+      "total_uses": 77
+    },
+    {
+      "tool_name": "ListMcpResourcesTool",
+      "project_count": 3,
+      "total_uses": 76
+    },
+    {
+      "tool_name": "mcp__plugin_episodic-memory_episodic-memory__search",
+      "project_count": 7,
+      "total_uses": 76
+    },
+    {
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__search",
+      "project_count": 6,
+      "total_uses": 70
+    },
+    {
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__search_user_prompts",
+      "project_count": 1,
+      "total_uses": 70
+    },
+    {
+      "tool_name": "mcp__claude_ai_Supabase__get_project",
+      "project_count": 4,
+      "total_uses": 66
+    },
+    {
+      "tool_name": "mcp__claude_ai_Supabase__list_edge_functions",
+      "project_count": 3,
+      "total_uses": 62
+    },
+    {
+      "tool_name": "mcp__claude_ai_Supabase__list_migrations",
+      "project_count": 3,
+      "total_uses": 57
+    },
+    {
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__find_by_type",
+      "project_count": 1,
+      "total_uses": 40
+    },
+    {
+      "tool_name": "EnterPlanMode",
+      "project_count": 6,
+      "total_uses": 39
+    },
+    {
+      "tool_name": "TeamCreate",
+      "project_count": 6,
+      "total_uses": 37
+    },
+    {
+      "tool_name": "CronList",
+      "project_count": 2,
+      "total_uses": 36
+    },
+    {
+      "tool_name": "mcp__claude_ai_Supabase__list_tables",
+      "project_count": 3,
+      "total_uses": 36
+    },
+    {
+      "tool_name": "TodoWrite",
+      "project_count": 3,
+      "total_uses": 34
+    },
+    {
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__search_sessions",
+      "project_count": 2,
+      "total_uses": 31
+    },
+    {
+      "tool_name": "mcp__claude_ai_Supabase__get_publishable_keys",
+      "project_count": 3,
+      "total_uses": 28
+    },
+    {
+      "tool_name": "mcp__claude_ai_Supabase__get_cost",
+      "project_count": 4,
+      "total_uses": 26
+    },
+    {
+      "tool_name": "mcp__claude_ai_Supabase__list_organizations",
+      "project_count": 3,
+      "total_uses": 25
+    },
+    {
+      "tool_name": "TaskGet",
+      "project_count": 4,
+      "total_uses": 24
+    },
+    {
+      "tool_name": "mcp__claude_ai_Supabase__get_project_url",
+      "project_count": 3,
+      "total_uses": 23
+    },
+    {
+      "tool_name": "TeamDelete",
+      "project_count": 4,
+      "total_uses": 22
+    },
+    {
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__find_by_concept",
+      "project_count": 1,
+      "total_uses": 20
+    },
+    {
+      "tool_name": "mcp__claude_ai_Supabase__get_logs",
+      "project_count": 2,
+      "total_uses": 15
+    },
+    {
+      "tool_name": "EnterWorktree",
+      "project_count": 1,
+      "total_uses": 13
+    },
+    {
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__get_recent_context",
+      "project_count": 2,
+      "total_uses": 12
+    },
+    {
+      "tool_name": "mcp__claude_ai_Supabase__search_docs",
+      "project_count": 2,
+      "total_uses": 11
+    },
+    {
+      "tool_name": "ExitWorktree",
+      "project_count": 1,
+      "total_uses": 10
+    },
+    {
+      "tool_name": "mcp__claude_ai_Supabase__get_edge_function",
+      "project_count": 2,
+      "total_uses": 10
+    },
+    {
+      "tool_name": "mcp__pencil__get_screenshot",
+      "project_count": 1,
+      "total_uses": 10
+    },
+    {
+      "tool_name": "mcp__plugin_claude-mem_claude-mem-search__decisions",
+      "project_count": 1,
+      "total_uses": 10
+    },
+    {
+      "tool_name": "mcp__claude_ai_Supabase__deploy_edge_function",
+      "project_count": 2,
+      "total_uses": 6
+    },
+    {
+      "tool_name": "mcp__plugin_memory-bank_memory-bank__read",
+      "project_count": 1,
+      "total_uses": 6
+    },
+    {
+      "tool_name": "mcp__claude_ai_Supabase__confirm_cost",
+      "project_count": 2,
+      "total_uses": 5
+    },
+    {
+      "tool_name": "mcp__claude_ai_Supabase__create_project",
+      "project_count": 2,
+      "total_uses": 5
+    },
+    {
+      "tool_name": "mcp__pencil__batch_get",
+      "project_count": 1,
+      "total_uses": 5
+    },
+    {
+      "tool_name": "mcp__claude_ai_Supabase__get_organization",
+      "project_count": 1,
+      "total_uses": 4
+    },
+    {
+      "tool_name": "mcp__github__search_issues",
+      "project_count": 1,
+      "total_uses": 3
+    },
+    {
+      "tool_name": "mcp__plugin_episodic-memory_episodic-memory__read",
+      "project_count": 1,
+      "total_uses": 3
+    },
+    {
+      "tool_name": "mcp__claude_ai_Supabase__pause_project",
+      "project_count": 1,
+      "total_uses": 1
+    },
+    {
+      "tool_name": "mcp__pencil__get_editor_state",
+      "project_count": 1,
+      "total_uses": 1
+    },
+    {
+      "tool_name": "mcp__pencil__snapshot_layout",
+      "project_count": 1,
+      "total_uses": 1
     }
   ]
 }
 ;
+var DOMAINS={"Claude Ecosystem":{color:"#d2a8ff",match:/claude|cc-sync|memory-bank|episodic|config-editor|insights|superpowers/i},"Article21":{color:"#f0883e",match:/article|artricle|docs/i},"Trading & Finance":{color:"#3fb950",match:/trader|algorithm|token|monitor/i},"Construction MIS":{color:"#58a6ff",match:/bs-hanyang|HANY|KFM|gatekeeper/i},"Hugh Soft":{color:"#56d4dd",match:/hugh-soft|running|match|studio/i},"Marketplace":{color:"#f85149",match:/thedotmack|marketplace/i},"Side Projects":{color:"#d29922",match:/mbti|why-crying|fit5x5|deer/i}};
+var TOOL_CATEGORIES={"Supabase":{match:/Supabase/i,color:"#3fb950"},"MCP Memory":{match:/memory-bank|episodic-memory|claude-mem/i,color:"#d2a8ff"},"Orchestration":{match:/Agent|Task$|Team|SendMessage/i,color:"#58a6ff"},"Scheduling":{match:/Cron|Schedule/i,color:"#f0883e"},"Browser":{match:/chrome|WebFetch|WebSearch|browser/i,color:"#56d4dd"},"Planning":{match:/Plan|Worktree/i,color:"#d29922"},"Design":{match:/pencil|Figma/i,color:"#f85149"}};
+var REL={INFLUENCES:{color:"#58a6ff",dash:[]},SUPPORTS:{color:"#3fb950",dash:[6,3]},SUPERSEDES:{color:"#f0883e",dash:[2,4]},CONTRADICTS:{color:"#f85149",dash:[8,4,2,4]},SHARES:{color:"#30363d",dash:[3,3]}};
+function classify(n){for(var d in DOMAINS)if(DOMAINS[d].match.test(n))return{domain:d,color:DOMAINS[d].color};return{domain:"Other",color:"#484f58"}}
+function classifyTool(n){for(var c in TOOL_CATEGORIES)if(TOOL_CATEGORIES[c].match.test(n))return{category:c,color:TOOL_CATEGORIES[c].color};return null}
+function rgba(h,a){return'rgba('+parseInt(h.slice(1,3),16)+','+parseInt(h.slice(3,5),16)+','+parseInt(h.slice(5,7),16)+','+a+')'}
 
-// ===== DOMAIN CATEGORIZATION =====
-const domainRules = [
-  { match: /claude|cc-sync|memory-bank|episodic|config-editor|insights/i, domain: "Claude Ecosystem", color: "#d2a8ff" },
-  { match: /article|artricle|docs/i, domain: "Article21", color: "#f0883e" },
-  { match: /trader|algorithm|token/i, domain: "Trading", color: "#3fb950" },
-  { match: /bs-hanyang|HANY|KFM|gatekeeper/i, domain: "Construction MIS", color: "#58a6ff" },
-  { match: /hugh-soft|running|match|studio/i, domain: "Hugh Soft", color: "#56d4dd" },
-  { match: /thedotmack|marketplace/i, domain: "Marketplace", color: "#f85149" },
-  { match: /mbti|why-crying|fit5x5/i, domain: "Side Projects", color: "#d29922" },
-];
+var LAYER_Y={ontology:120,project:0,global:-120};
+var N=[],E=[],NM=new Map(),nid=0;
 
-function classifyProject(name) {
-  for (const rule of domainRules) {
-    if (rule.match.test(name)) return { domain: rule.domain, color: rule.color };
-  }
-  return { domain: "Other", color: "#8b949e" };
+// ONTOLOGY LAYER
+var domN={};
+for(var dn in DOMAINS){var id='d'+(nid++);var nd={id:id,type:'domain',name:dn,color:DOMAINS[dn].color,size:10,layer:'ontology',x:0,y:0,z:0,vx:0,vy:0,vz:0,data:{}};N.push(nd);NM.set(id,nd);domN[dn]=nd}
+var catN={};
+for(var cn in TOOL_CATEGORIES){var id='c'+(nid++);var nd={id:id,type:'category',name:cn,color:TOOL_CATEGORIES[cn].color,size:5,layer:'ontology',x:0,y:0,z:0,vx:0,vy:0,vz:0,data:{}};N.push(nd);NM.set(id,nd);catN[cn]=nd}
+
+// PROJECT LAYER
+var projNodes=[];
+for(var i=0;i<RAW.projects.length;i++){var p=RAW.projects[i];
+var short=p.project.replace(/-Users-jung-wankim[-]?/g,'').replace(/^Project-/,'').replace(/-/g,'/')||'home';
+var cl=classify(p.project);
+var tools=RAW.toolUsage.filter(function(t){return t.project===p.project});
+var spec=tools.filter(function(t){return['Bash','Read','Edit','Write','Grep','Glob','TaskUpdate','TaskCreate','ToolSearch','TaskOutput','TaskList','AskUserQuestion'].indexOf(t.tool_name)===-1});
+var tNames=spec.map(function(t){return t.tool_name.replace(/mcp__[^_]+_[^_]+__/,'')});
+var cats=[];spec.forEach(function(t){var c=classifyTool(t.tool_name);if(c&&cats.indexOf(c.category)===-1)cats.push(c.category)});
+var sz=Math.max(4,Math.min(16,Math.log2(p.exchanges)*2));
+var id='p'+(nid++);
+var nd={id:id,type:'project',name:short,color:cl.color,size:sz,layer:'project',domain:cl.domain,x:0,y:0,z:0,vx:0,vy:0,vz:0,data:{exchanges:p.exchanges,sessions:p.sessions,branches:p.branches,tools:tNames,categories:cats,raw:p.project,first:p.first_seen,last:p.last_seen}};
+N.push(nd);NM.set(p.project,nd);projNodes.push(nd);
+if(domN[cl.domain])E.push({source:nd,target:domN[cl.domain],type:'INFLUENCES',weight:2});
+cats.forEach(function(c){if(catN[c])E.push({source:nd,target:catN[c],type:'SUPPORTS',weight:1})});
 }
 
-// ===== BUILD GRAPH =====
-const nodes = [];
-const edges = [];
-const nodeMap = new Map();
+// GLOBAL/USER SCOPE LAYER
+var GF=[{name:"Korean response",cat:"preference"},{name:"Auto-commit on success",cat:"preference"},{name:"Telegram notifications",cat:"pattern"},{name:"Task-based workflow",cat:"pattern"},{name:"ESM module system",cat:"decision"},{name:"Supabase + RLS",cat:"decision"},{name:"Vitest for testing",cat:"decision"},{name:"portless dev server",cat:"constraint"},{name:"No localStorage",cat:"constraint"},{name:"Tailwind CSS first",cat:"preference"}];
+for(var i=0;i<GF.length;i++){var gp=GF[i];var id='g'+(nid++);var col=gp.cat==='preference'?'#d2a8ff':gp.cat==='decision'?'#3fb950':gp.cat==='pattern'?'#58a6ff':'#f0883e';
+var nd={id:id,type:'global_fact',name:gp.name,color:col,size:4,layer:'global',x:0,y:0,z:0,vx:0,vy:0,vz:0,data:{category:gp.cat}};N.push(nd);NM.set(id,nd)}
 
-for (const p of GRAPH_DATA.projects) {
-  const shortName = p.project.replace(/-Users-jung-wankim[-]?/g, '').replace(/^Project-/, '').replace(/-/g, '/') || 'home';
-  const { domain, color } = classifyProject(p.project);
-  const tools = GRAPH_DATA.toolUsage.filter(t => t.project === p.project).map(t => t.tool_name.replace(/mcp__[^_]+_[^_]+__/, ''));
-  const size = Math.max(3, Math.min(18, Math.log2(p.exchanges) * 2.5));
-  const node = { id: p.project, name: shortName, domain, color, size, exchanges: p.exchanges, tools, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
-  nodes.push(node);
-  nodeMap.set(p.project, node);
-}
+// CROSS-PROJECT EDGES
+for(var i=0;i<RAW.connections.length;i++){var c=RAW.connections[i];var s=NM.get(c.source),t=NM.get(c.target);if(s&&t)E.push({source:s,target:t,type:'SHARES',weight:Math.min(c.weight,12)})}
 
-for (const c of GRAPH_DATA.connections) {
-  if (nodeMap.has(c.source) && nodeMap.has(c.target)) {
-    edges.push({ source: nodeMap.get(c.source), target: nodeMap.get(c.target), weight: c.weight });
-  }
-}
+// GLOBAL→PROJECT SUPPORTS
+var gNodes=N.filter(function(n){return n.layer==='global'});
+for(var i=0;i<gNodes.length;i++){var cnt=2+Math.floor(Math.random()*3);var sh=projNodes.slice().sort(function(){return Math.random()-.5});for(var j=0;j<Math.min(cnt,sh.length);j++)E.push({source:gNodes[i],target:sh[j],type:'SUPPORTS',weight:1})}
 
-// Stats
-document.getElementById('s-nodes').textContent = nodes.length;
-document.getElementById('s-edges').textContent = edges.length;
-document.getElementById('s-exchanges').textContent = GRAPH_DATA.projects.reduce(function(s, p) { return s + p.exchanges; }, 0).toLocaleString();
+// INTER-DOMAIN ONTOLOGY
+var dArr=Object.values(domN);
+for(var i=0;i<dArr.length;i++)for(var j=i+1;j<dArr.length;j++)if(Math.random()<.35)E.push({source:dArr[i],target:dArr[j],type:Math.random()<.5?'INFLUENCES':'SUPPORTS',weight:1});
 
-// Legend (safe DOM manipulation)
-const domains = [...new Set(nodes.map(function(n) { return n.domain; }))].sort();
-const legendEl = document.getElementById('legend');
-for (const d of domains) {
-  const color = nodes.find(function(n) { return n.domain === d; })?.color || '#8b949e';
-  const item = document.createElement('div');
-  item.className = 'legend-item';
-  const dot = document.createElement('div');
-  dot.className = 'legend-dot';
-  dot.style.background = color;
-  item.appendChild(dot);
-  item.appendChild(document.createTextNode(d));
-  legendEl.appendChild(item);
-}
+// STATS
+document.getElementById('sN').textContent=N.length;
+document.getElementById('sE').textContent=E.length;
+document.getElementById('sD').textContent=Object.keys(DOMAINS).length+1;
+document.getElementById('sX').textContent=RAW.projects.reduce(function(s,p){return s+p.exchanges},0).toLocaleString();
 
-// ===== FORCE SIMULATION =====
-for (const n of nodes) {
-  const theta = Math.random() * Math.PI * 2;
-  const phi = Math.acos(2 * Math.random() - 1);
-  const r = 80 + Math.random() * 40;
-  n.x = r * Math.sin(phi) * Math.cos(theta);
-  n.y = r * Math.sin(phi) * Math.sin(theta);
-  n.z = r * Math.cos(phi);
-}
+// LEGEND
+var lgEl=document.getElementById('legend');
+for(var dn in DOMAINS){var el=document.createElement('div');el.className='lg';var d=document.createElement('div');d.className='lg-d';d.style.background=DOMAINS[dn].color;el.appendChild(d);el.appendChild(document.createTextNode(dn));lgEl.appendChild(el)}
+var oel=document.createElement('div');oel.className='lg';var od=document.createElement('div');od.className='lg-d';od.style.background='#484f58';oel.appendChild(od);oel.appendChild(document.createTextNode('Other'));lgEl.appendChild(oel);
 
-function simulate(iterations) {
-  for (let iter = 0; iter < iterations; iter++) {
-    const alpha = 0.3 * (1 - iter / iterations);
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        const dx = nodes[j].x - nodes[i].x;
-        const dy = nodes[j].y - nodes[i].y;
-        const dz = nodes[j].z - nodes[i].z;
-        const dist = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1;
-        const force = 800 / (dist * dist) * alpha;
-        nodes[i].vx -= dx / dist * force; nodes[i].vy -= dy / dist * force; nodes[i].vz -= dz / dist * force;
-        nodes[j].vx += dx / dist * force; nodes[j].vy += dy / dist * force; nodes[j].vz += dz / dist * force;
-      }
-    }
-    for (const e of edges) {
-      const dx = e.target.x - e.source.x;
-      const dy = e.target.y - e.source.y;
-      const dz = e.target.z - e.source.z;
-      const dist = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1;
-      const force = (dist - 40) * 0.02 * alpha * e.weight;
-      e.source.vx += dx/dist*force; e.source.vy += dy/dist*force; e.source.vz += dz/dist*force;
-      e.target.vx -= dx/dist*force; e.target.vy -= dy/dist*force; e.target.vz -= dz/dist*force;
-    }
-    for (const n of nodes) {
-      n.vx -= n.x * 0.005 * alpha; n.vy -= n.y * 0.005 * alpha; n.vz -= n.z * 0.005 * alpha;
-      n.x += n.vx; n.y += n.vy; n.z += n.vz;
-      n.vx *= 0.6; n.vy *= 0.6; n.vz *= 0.6;
-    }
-  }
-}
-simulate(200);
+// RELATION LEGEND
+var rlEl=document.getElementById('rel-legend');
+for(var rn in REL){var el=document.createElement('div');el.className='rl';var ln=document.createElement('div');ln.className='rl-line';ln.style.borderTopColor=REL[rn].color;ln.style.borderTopStyle=REL[rn].dash.length>2?'dotted':REL[rn].dash.length>0?'dashed':'solid';el.appendChild(ln);el.appendChild(document.createTextNode(rn));rlEl.appendChild(el)}
 
-// ===== 3D RENDERING =====
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
-let W, H;
-function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
-resize();
-window.addEventListener('resize', resize);
+// LAYER CONTROLS
+var lyEl=document.getElementById('layers');
+var lyDefs=[{key:'ontology',label:'Ontology Layer',sub:'Domains · Categories',color:'#d2a8ff'},{key:'project',label:'Project Layer',sub:'Clusters · Relations',color:'#58a6ff'},{key:'global',label:'User Scope',sub:'Global Facts · Prefs',color:'#3fb950'}];
+var actLy={ontology:true,project:true,global:true};
+lyDefs.forEach(function(ld){var btn=document.createElement('div');btn.className='layer-btn active';var dot=document.createElement('span');dot.style.cssText='display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:'+ld.color;btn.appendChild(dot);btn.appendChild(document.createTextNode(ld.label));var sub=document.createElement('div');sub.style.cssText='font-size:9px;color:#484f58;margin-top:2px';sub.textContent=ld.sub;btn.appendChild(sub);btn.addEventListener('click',function(){actLy[ld.key]=!actLy[ld.key];btn.classList.toggle('active',actLy[ld.key])});lyEl.appendChild(btn)});
 
-let rotX = -0.3, rotY = 0.5, zoom = 3.5;
-let dragging = false, lastMX = 0, lastMY = 0;
-let autoRotate = true;
-let mouseX = -1, mouseY = -1;
+// FORCE LAYOUT
+for(var i=0;i<N.length;i++){var th=Math.random()*Math.PI*2,r=40+Math.random()*60;N[i].x=r*Math.cos(th)+(Math.random()-.5)*20;N[i].z=r*Math.sin(th)+(Math.random()-.5)*20;N[i].y=LAYER_Y[N[i].layer]+(Math.random()-.5)*30}
+for(var iter=0;iter<300;iter++){var alpha=.4*(1-iter/300);
+for(var i=0;i<N.length;i++)for(var j=i+1;j<N.length;j++){if(N[i].layer!==N[j].layer)continue;var dx=N[j].x-N[i].x,dz=N[j].z-N[i].z,dist=Math.sqrt(dx*dx+dz*dz)||1,f=600/(dist*dist)*alpha;N[i].vx-=dx/dist*f;N[i].vz-=dz/dist*f;N[j].vx+=dx/dist*f;N[j].vz+=dz/dist*f}
+for(var i=0;i<E.length;i++){var e=E[i];if(e.source.layer!==e.target.layer)continue;var dx=e.target.x-e.source.x,dz=e.target.z-e.source.z,dist=Math.sqrt(dx*dx+dz*dz)||1,f=(dist-30)*.015*alpha*Math.min(e.weight,5);e.source.vx+=dx/dist*f;e.source.vz+=dz/dist*f;e.target.vx-=dx/dist*f;e.target.vz-=dz/dist*f}
+for(var i=0;i<N.length;i++){var n=N[i];if(n.type==='project'&&n.domain&&domN[n.domain]){var dn2=domN[n.domain];n.vx+=(dn2.x-n.x)*.003*alpha;n.vz+=(dn2.z-n.z)*.003*alpha}
+n.vx-=n.x*.003*alpha;n.vz-=n.z*.003*alpha;n.vy=(LAYER_Y[n.layer]-n.y)*.1;n.x+=n.vx;n.y+=n.vy;n.z+=n.vz;n.vx*=.55;n.vy*=.55;n.vz*=.55}}
 
-canvas.addEventListener('mousedown', function(e) { dragging = true; lastMX = e.clientX; lastMY = e.clientY; autoRotate = false; });
-canvas.addEventListener('mousemove', function(e) {
-  mouseX = e.clientX; mouseY = e.clientY;
-  if (dragging) {
-    rotY += (e.clientX - lastMX) * 0.005;
-    rotX += (e.clientY - lastMY) * 0.005;
-    rotX = Math.max(-Math.PI/2, Math.min(Math.PI/2, rotX));
-    lastMX = e.clientX; lastMY = e.clientY;
-  }
-});
-canvas.addEventListener('mouseup', function() { dragging = false; });
-canvas.addEventListener('mouseleave', function() { dragging = false; mouseX = -1; mouseY = -1; });
-canvas.addEventListener('wheel', function(e) { zoom *= e.deltaY > 0 ? 0.95 : 1.05; zoom = Math.max(1, Math.min(10, zoom)); e.preventDefault(); }, { passive: false });
+// RENDERER
+var cv=document.getElementById('c'),cx=cv.getContext('2d'),W,H;
+function resize(){W=cv.width=innerWidth;H=cv.height=innerHeight}resize();addEventListener('resize',resize);
+var rX=-.35,rY=.6,zm=3.2,drag=false,lx=0,ly=0,ar=true,mx=-1,my=-1;
+cv.onmousedown=function(e){drag=true;lx=e.clientX;ly=e.clientY;ar=false};
+cv.onmousemove=function(e){mx=e.clientX;my=e.clientY;if(drag){rY+=(e.clientX-lx)*.004;rX+=(e.clientY-ly)*.004;rX=Math.max(-1.2,Math.min(1.2,rX));lx=e.clientX;ly=e.clientY}};
+cv.onmouseup=function(){drag=false};cv.onmouseleave=function(){drag=false;mx=-1;my=-1};
+cv.addEventListener('wheel',function(e){zm*=e.deltaY>0?.94:1.06;zm=Math.max(1,Math.min(12,zm));e.preventDefault()},{passive:false});
+cv.addEventListener('touchstart',function(e){if(e.touches.length===1){drag=true;lx=e.touches[0].clientX;ly=e.touches[0].clientY;ar=false}},{passive:true});
+cv.addEventListener('touchmove',function(e){if(drag&&e.touches.length===1){var t=e.touches[0];rY+=(t.clientX-lx)*.004;rX+=(t.clientY-ly)*.004;rX=Math.max(-1.2,Math.min(1.2,rX));lx=t.clientX;ly=t.clientY}},{passive:true});
+cv.addEventListener('touchend',function(){drag=false});
 
-function project(x, y, z) {
-  let x1 = x * Math.cos(rotY) - z * Math.sin(rotY);
-  let z1 = x * Math.sin(rotY) + z * Math.cos(rotY);
-  let y1 = y * Math.cos(rotX) - z1 * Math.sin(rotX);
-  let z2 = y * Math.sin(rotX) + z1 * Math.cos(rotX);
-  const perspective = 600;
-  const scale = perspective / (perspective + z2) * zoom;
-  return { sx: W/2 + x1 * scale, sy: H/2 + y1 * scale, scale: scale, z: z2 };
-}
+function pj(x,y,z){var x1=x*Math.cos(rY)-z*Math.sin(rY),z1=x*Math.sin(rY)+z*Math.cos(rY),y1=y*Math.cos(rX)-z1*Math.sin(rX),z2=y*Math.sin(rX)+z1*Math.cos(rX),p=600,s=p/(p+z2)*zm;return{sx:W/2+x1*s,sy:H/2+y1*s,s:s,z:z2}}
 
-function hexToRgba(hex, alpha) {
-  const r = parseInt(hex.slice(1,3), 16);
-  const g = parseInt(hex.slice(3,5), 16);
-  const b = parseInt(hex.slice(5,7), 16);
-  return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
-}
+function render(){
+if(ar)rY+=.0015;
+cx.clearRect(0,0,W,H);
+var g=cx.createRadialGradient(W/2,H/2,0,W/2,H/2,W*.55);g.addColorStop(0,'#12161f');g.addColorStop(1,'#0a0e14');cx.fillStyle=g;cx.fillRect(0,0,W,H);
 
-function render() {
-  if (autoRotate) rotY += 0.002;
-  ctx.clearRect(0, 0, W, H);
+// LAYER PLANES
+var lyKeys=['ontology','project','global'];
+for(var li=0;li<lyKeys.length;li++){var lk=lyKeys[li];if(!actLy[lk])continue;
+var cp=pj(0,LAYER_Y[lk],0),rr=180*cp.s;
+var col=lk==='ontology'?'#d2a8ff':lk==='project'?'#58a6ff':'#3fb950';
+cx.beginPath();cx.ellipse(cp.sx,cp.sy,rr,rr*.15*Math.abs(Math.cos(rX)),0,0,Math.PI*2);cx.strokeStyle=rgba(col,.08);cx.lineWidth=1;cx.stroke();
+var lp=pj(-100,LAYER_Y[lk],-90);cx.fillStyle=rgba(col,.25);cx.font='10px "SF Mono",Menlo,monospace';cx.textAlign='left';
+var lbls={ontology:'ONTOLOGY LAYER',project:'PROJECT LAYER',global:'USER SCOPE (GLOBAL)'};cx.fillText(lbls[lk],lp.sx,lp.sy)}
 
-  // Background
-  const grad = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, W*0.6);
-  grad.addColorStop(0, '#161b22');
-  grad.addColorStop(1, '#0d1117');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, W, H);
+var vN=N.filter(function(n){return actLy[n.layer]});
+var vE=E.filter(function(e){return actLy[e.source.layer]&&actLy[e.target.layer]});
+var pN=vN.map(function(n){var p=pj(n.x,n.y,n.z);return{id:n.id,type:n.type,name:n.name,color:n.color,size:n.size,layer:n.layer,domain:n.domain,data:n.data,sx:p.sx,sy:p.sy,s:p.s,z:p.z}});
+pN.sort(function(a,b){return a.z-b.z});
 
-  // Project nodes
-  const projected = nodes.map(function(n) {
-    const p = project(n.x, n.y, n.z);
-    return Object.assign({}, n, p);
-  });
-  projected.sort(function(a, b) { return a.z - b.z; });
+// EDGES
+for(var i=0;i<vE.length;i++){var e=vE[i],s=pj(e.source.x,e.source.y,e.source.z),t=pj(e.target.x,e.target.y,e.target.z);
+var rs=REL[e.type]||REL.SHARES;var cl=e.source.layer!==e.target.layer;var ba=cl?.06:.12;
+var a=Math.max(.02,Math.min(.3,ba-(s.z+t.z)/2*.0003))*Math.min(e.weight/5,1);
+cx.beginPath();cx.moveTo(s.sx,s.sy);cx.lineTo(t.sx,t.sy);cx.strokeStyle=rgba(rs.color,a);cx.lineWidth=Math.max(.3,(cl?.5:1)*Math.min(e.weight*.2,2)*s.s);cx.setLineDash(rs.dash);cx.stroke();cx.setLineDash([])}
 
-  // Edges
-  for (const e of edges) {
-    const s = project(e.source.x, e.source.y, e.source.z);
-    const t = project(e.target.x, e.target.y, e.target.z);
-    const avgZ = (s.z + t.z) / 2;
-    const alpha = Math.max(0.04, Math.min(0.25, 0.15 - avgZ * 0.0005)) * (e.weight / 10);
-    ctx.beginPath();
-    ctx.moveTo(s.sx, s.sy);
-    ctx.lineTo(t.sx, t.sy);
-    ctx.strokeStyle = hexToRgba('#58a6ff', alpha);
-    ctx.lineWidth = Math.max(0.5, e.weight * 0.15 * s.scale);
-    ctx.stroke();
-  }
+// NODES
+var hov=null,mnd=35;
+for(var i=0;i<pN.length;i++){var n=pN[i],r=n.size*n.s*.35,a=Math.max(.2,Math.min(1,.85-n.z*.0015));
+if(n.type==='domain'){cx.save();cx.translate(n.sx,n.sy);cx.rotate(Math.PI/4);var ds=r*1.2;cx.fillStyle=rgba(n.color,.15*a);cx.strokeStyle=rgba(n.color,.6*a);cx.lineWidth=1.5;cx.fillRect(-ds,-ds,ds*2,ds*2);cx.strokeRect(-ds,-ds,ds*2,ds*2);cx.restore()}
+else if(n.type==='category'){cx.beginPath();for(var k=0;k<6;k++){var ag=Math.PI/3*k-Math.PI/6,px=n.sx+r*Math.cos(ag),py=n.sy+r*Math.sin(ag);k===0?cx.moveTo(px,py):cx.lineTo(px,py)}cx.closePath();cx.fillStyle=rgba(n.color,.2*a);cx.strokeStyle=rgba(n.color,.5*a);cx.lineWidth=1;cx.fill();cx.stroke()}
+else if(n.type==='global_fact'){cx.beginPath();cx.arc(n.sx,n.sy,r,0,Math.PI*2);cx.strokeStyle=rgba(n.color,.6*a);cx.lineWidth=1.5;cx.stroke();cx.beginPath();cx.arc(n.sx,n.sy,r*.4,0,Math.PI*2);cx.fillStyle=rgba(n.color,.8*a);cx.fill()}
+else{var gw=cx.createRadialGradient(n.sx,n.sy,0,n.sx,n.sy,r*2.5);gw.addColorStop(0,rgba(n.color,.12*a));gw.addColorStop(1,'transparent');cx.fillStyle=gw;cx.fillRect(n.sx-r*3,n.sy-r*3,r*6,r*6);cx.beginPath();cx.arc(n.sx,n.sy,r,0,Math.PI*2);cx.fillStyle=rgba(n.color,.85*a);cx.fill();cx.strokeStyle=rgba(n.color,.4*a);cx.lineWidth=.8;cx.stroke()}
+if(r>2.5){cx.fillStyle=rgba('#e6edf3',Math.min(.75,r/8)*a);cx.font=(n.type==='domain'?'bold ':'')+Math.max(8,Math.min(13,r*1.1))+'px -apple-system,sans-serif';cx.textAlign='center';var lb=n.name.length>20?n.name.slice(0,18)+'..':n.name;cx.fillText(lb,n.sx,n.sy+r+(n.type==='domain'?18:13))}
+if(mx>=0){var dx2=mx-n.sx,dy2=my-n.sy,dd=Math.sqrt(dx2*dx2+dy2*dy2);if(dd<Math.max(r+10,mnd)){mnd=dd;hov=n}}}
 
-  // Find hovered node
-  let hoveredNode = null;
-  let minDist = 30;
-
-  // Nodes
-  for (const n of projected) {
-    const r = n.size * n.scale * 0.4;
-    const alpha = Math.max(0.3, Math.min(1, 0.8 - n.z * 0.002));
-
-    // Glow
-    const glowGrad = ctx.createRadialGradient(n.sx, n.sy, 0, n.sx, n.sy, r * 3);
-    glowGrad.addColorStop(0, hexToRgba(n.color, 0.15 * alpha));
-    glowGrad.addColorStop(1, 'transparent');
-    ctx.fillStyle = glowGrad;
-    ctx.fillRect(n.sx - r*3, n.sy - r*3, r*6, r*6);
-
-    // Circle
-    ctx.beginPath();
-    ctx.arc(n.sx, n.sy, r, 0, Math.PI * 2);
-    ctx.fillStyle = hexToRgba(n.color, 0.9 * alpha);
-    ctx.fill();
-    ctx.strokeStyle = hexToRgba(n.color, 0.5 * alpha);
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    // Label
-    if (r > 3) {
-      ctx.fillStyle = hexToRgba('#e6edf3', 0.7 * alpha);
-      ctx.font = Math.max(9, r * 1.2) + 'px -apple-system, sans-serif';
-      ctx.textAlign = 'center';
-      const label = n.name.length > 22 ? n.name.slice(0, 20) + '..' : n.name;
-      ctx.fillText(label, n.sx, n.sy + r + 14);
-    }
-
-    // Hover
-    if (mouseX >= 0) {
-      const dx = mouseX - n.sx;
-      const dy = mouseY - n.sy;
-      const d = Math.sqrt(dx*dx + dy*dy);
-      if (d < Math.max(r + 8, minDist)) { minDist = d; hoveredNode = n; }
-    }
-  }
-
-  // Tooltip (safe DOM methods)
-  const tt = document.getElementById('tooltip');
-  if (hoveredNode && !dragging) {
-    tt.style.display = 'block';
-    tt.style.left = Math.min(mouseX + 16, W - 360) + 'px';
-    tt.style.top = Math.min(mouseY + 16, H - 200) + 'px';
-
-    const ttName = document.getElementById('tt-name');
-    ttName.textContent = hoveredNode.name;
-    ttName.style.color = hoveredNode.color;
-
-    const ttMeta = document.getElementById('tt-meta');
-    ttMeta.textContent = '';
-    const domainLine = document.createElement('div');
-    domainLine.textContent = 'Domain: ' + hoveredNode.domain;
-    domainLine.style.color = hoveredNode.color;
-    const exchLine = document.createElement('div');
-    exchLine.textContent = 'Exchanges: ' + hoveredNode.exchanges.toLocaleString();
-    const connLine = document.createElement('div');
-    const connCount = edges.filter(function(e) { return e.source.id === hoveredNode.id || e.target.id === hoveredNode.id; }).length;
-    connLine.textContent = 'Connections: ' + connCount;
-    ttMeta.appendChild(domainLine);
-    ttMeta.appendChild(exchLine);
-    ttMeta.appendChild(connLine);
-
-    const ttTools = document.getElementById('tt-tools');
-    ttTools.textContent = '';
-    hoveredNode.tools.slice(0, 8).forEach(function(t) {
-      const tag = document.createElement('span');
-      tag.className = 'tt-tag';
-      tag.textContent = t;
-      ttTools.appendChild(tag);
-    });
-  } else {
-    tt.style.display = 'none';
-  }
-
-  requestAnimationFrame(render);
-}
+// TOOLTIP
+var tt=document.getElementById('tooltip');
+if(hov&&!drag){tt.style.display='block';tt.style.left=Math.min(mx+16,W-380)+'px';tt.style.top=Math.min(my+16,H-250)+'px';
+document.getElementById('ttDot').style.background=hov.color;
+var tn=document.getElementById('ttName');tn.textContent=hov.name;tn.style.color=hov.color;
+var ts=document.getElementById('ttScope');var ll=hov.layer==='global'?'USER':hov.layer==='project'?'PROJECT':'ONTOLOGY';ts.textContent=ll;ts.style.background=rgba(hov.color,.15);ts.style.color=hov.color;
+var tb=document.getElementById('ttBody');tb.textContent='';
+if(hov.type==='project'){['Domain: '+(hov.domain||'?'),'Exchanges: '+(hov.data.exchanges||0).toLocaleString(),'Sessions: '+(hov.data.sessions||'?'),'Branches: '+(hov.data.branches||'?')].forEach(function(l){var d=document.createElement('div');d.textContent=l;tb.appendChild(d)});if(hov.data.first){var d=document.createElement('div');d.textContent='Active: '+hov.data.first.slice(0,10)+' ~ '+(hov.data.last||'').slice(0,10);tb.appendChild(d)}}
+else if(hov.type==='domain'){tb.textContent=projNodes.filter(function(n){return n.domain===hov.name}).length+' projects'}
+else if(hov.type==='global_fact'){tb.textContent='Category: '+(hov.data.category||'?')}
+else if(hov.type==='category'){tb.textContent='Ontology tool category'}
+var tts=document.getElementById('ttToolsSec'),tte=document.getElementById('ttTools');tte.textContent='';
+if(hov.data.tools&&hov.data.tools.length>0){tts.style.display='block';hov.data.tools.slice(0,10).forEach(function(t){var tg=document.createElement('span');tg.className='tt-tag';tg.textContent=t;tg.style.background=rgba('#58a6ff',.1);tg.style.color='#58a6ff';tte.appendChild(tg)});
+if(hov.data.categories)hov.data.categories.forEach(function(c){var ci=TOOL_CATEGORIES[c];var tg=document.createElement('span');tg.className='tt-tag';tg.textContent=c;tg.style.background=rgba(ci?ci.color:'#8b949e',.15);tg.style.color=ci?ci.color:'#8b949e';tte.appendChild(tg)})}else{tts.style.display='none'}
+var trs=document.getElementById('ttRelsSec'),tre=document.getElementById('ttRels');tre.textContent='';
+var rels=vE.filter(function(e){return e.source.id===hov.id||e.target.id===hov.id});
+if(rels.length>0){trs.style.display='block';var sh2=0;for(var ri=0;ri<rels.length&&sh2<6;ri++){var rl=rels[ri],oth=rl.source.id===hov.id?rl.target:rl.source,rs2=REL[rl.type]||REL.SHARES;var rw=document.createElement('div');rw.className='tt-rel';var bg=document.createElement('span');bg.className='tt-rel-type';bg.textContent=rl.type;bg.style.background=rgba(rs2.color,.2);bg.style.color=rs2.color;rw.appendChild(bg);rw.appendChild(document.createTextNode(' '+oth.name));tre.appendChild(rw);sh2++}
+if(rels.length>6){var mr=document.createElement('div');mr.style.cssText='font-size:10px;color:#484f58;margin-top:3px';mr.textContent='+'+(rels.length-6)+' more';tre.appendChild(mr)}}else{trs.style.display='none'}
+}else{tt.style.display='none'}
+requestAnimationFrame(render)}
 render();
 </script>
 </body>
