@@ -270,6 +270,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           openWorldHint: false,
         },
       },
+      {
+        name: 'trace_fact',
+        description: 'Trace a fact back to its source conversations. Shows the original exchanges that led to a knowledge graph fact, providing full provenance and context.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', minLength: 2, description: 'Search query to find the fact to trace' },
+            project: { type: 'string', description: 'Project path to scope the search (optional)' },
+            limit: { type: 'number', minimum: 1, maximum: 10, default: 3, description: 'Max facts to trace' },
+          },
+          required: ['query'],
+          additionalProperties: false,
+        },
+        annotations: {
+          title: 'Trace Fact Provenance',
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
     ],
   };
 });
@@ -555,6 +576,86 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [{ type: 'text', text: handleError(error) }],
           isError: true,
         };
+      }
+    }
+
+    if (name === 'trace_fact') {
+      const params = z.object({
+        query: z.string().min(2),
+        project: z.string().optional(),
+        limit: z.number().int().min(1).max(10).default(3),
+      }).strict().parse(args);
+
+      const currentProject = params.project || process.cwd();
+
+      await initEmbeddings();
+      const db = initDatabase();
+
+      try {
+        const queryEmbedding = await generateEmbedding(params.query);
+        const results = searchSimilarFacts(db, queryEmbedding, currentProject, params.limit, 0.5);
+
+        if (results.length === 0) {
+          return { content: [{ type: 'text', text: 'No matching facts found to trace.' }] };
+        }
+
+        let output = `# Fact Provenance Trace\n\nQuery: "${params.query}"\n\n`;
+
+        for (const { fact, distance } of results) {
+          const similarity = (1 - distance * distance / 2).toFixed(3);
+          output += `## ${fact.fact}\n`;
+          output += `- Category: ${fact.category} | Scope: ${fact.scope_type}\n`;
+          output += `- Similarity: ${similarity} | Confirmed: ${fact.consolidated_count}x\n`;
+          output += `- Created: ${fact.created_at}\n`;
+
+          // Trace back to source exchanges
+          if (fact.source_exchange_ids && fact.source_exchange_ids.length > 0) {
+            output += `\n### Source Conversations\n\n`;
+            for (const exchangeId of fact.source_exchange_ids) {
+              const exchange = db.prepare(
+                'SELECT id, project, timestamp, user_message, archive_path, line_start, line_end FROM exchanges WHERE id = ?'
+              ).get(exchangeId) as Record<string, unknown> | undefined;
+
+              if (exchange) {
+                const userMsg = (exchange['user_message'] as string).substring(0, 200).replace(/\s+/g, ' ');
+                output += `- **[${exchange['project']}, ${(exchange['timestamp'] as string).slice(0, 10)}]**\n`;
+                output += `  "${userMsg}..."\n`;
+                output += `  Lines ${exchange['line_start']}-${exchange['line_end']} in ${exchange['archive_path']}\n\n`;
+              }
+            }
+          } else {
+            output += `\n_Source exchanges not available._\n\n`;
+          }
+
+          // Show ontology context
+          const revisions = getRevisions(db, fact.id);
+          if (revisions.length > 0) {
+            output += `### Revision History\n\n`;
+            for (const rev of revisions) {
+              output += `- ${rev.created_at.slice(0, 10)}: "${rev.previous_fact}" → "${rev.new_fact}" (${rev.reason})\n`;
+            }
+            output += '\n';
+          }
+
+          // Show graph relations
+          const related = getRelatedFacts(db, fact.id, 1);
+          if (related.length > 0) {
+            output += `### Related Facts (1-hop)\n\n`;
+            for (const { fact: relFact, relation } of related) {
+              output += `- **[${relation.relation_type}]** ${relFact.fact}\n`;
+            }
+            output += '\n';
+          }
+        }
+
+        return { content: [{ type: 'text', text: output }] };
+      } catch (error) {
+        return {
+          content: [{ type: 'text', text: handleError(error) }],
+          isError: true,
+        };
+      } finally {
+        db.close();
       }
     }
 
