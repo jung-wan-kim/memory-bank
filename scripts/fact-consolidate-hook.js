@@ -11,6 +11,7 @@
 import { initDatabase } from '../dist/db.js';
 import { consolidateFacts } from '../dist/consolidator.js';
 import { getTopFacts } from '../dist/fact-db.js';
+import { getLastSessionContext, formatSessionContinuity } from '../dist/session-continuity.js';
 
 async function main() {
   const project = process.env.CWD || process.env.PROJECT_DIR || process.cwd();
@@ -37,6 +38,17 @@ async function main() {
     }
 
     db.close();
+
+    // 3. Inject last session context (for continuity)
+    try {
+      const lastSession = getLastSessionContext(project);
+      if (lastSession) {
+        console.log('');
+        console.log(formatSessionContinuity(lastSession));
+      }
+    } catch {
+      // Non-fatal: session continuity is best-effort
+    }
   } catch (error) {
     console.error('fact-consolidate: Error:', error instanceof Error ? error.message : error);
     // Don't block session start on consolidation failure
