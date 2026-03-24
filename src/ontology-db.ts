@@ -160,12 +160,18 @@ export function createRelation(
  * Results are sorted by relevance descending.
  * Facts below minRelevance are pruned.
  */
+/**
+ * @param scopeProject - If provided, only return facts from this project or global scope.
+ *                       Prevents cross-project noise in graph traversal.
+ *                       Pass null/undefined to allow cross-project traversal (e.g., explore_graph).
+ */
 export function getRelatedFacts(
   db: Database.Database,
   factId: string,
   hops: number = 1,
   decay: number = 0.6,
   minRelevance: number = 0.2,
+  scopeProject?: string | null,
 ): Array<{ fact: Fact; relation: OntologyRelation; relevance: number; hop: number }> {
   const visited = new Set<string>([factId]);
   const results: Array<{ fact: Fact; relation: OntologyRelation; relevance: number; hop: number }> = [];
@@ -193,11 +199,15 @@ export function getRelatedFacts(
       for (const row of outgoing) {
         const targetId = row['target_fact_id'] as string;
         if (visited.has(targetId)) continue;
-        visited.add(targetId);
-        nextFrontier.push(targetId);
 
         const relation = rowToRelation(row);
         const fact = rowToFact(row);
+
+        // Scope filter: skip facts from other projects (unless scopeProject is null)
+        if (scopeProject && fact.scope_type === 'project' && fact.scope_project !== scopeProject) continue;
+
+        visited.add(targetId);
+        nextFrontier.push(targetId);
 
         // Relation type weight: SUPPORTS/INFLUENCES stronger than CONTRADICTS/SUPERSEDES
         const typeWeight = (relation.relation_type === 'SUPPORTS' || relation.relation_type === 'INFLUENCES') ? 1.0 : 0.7;
@@ -222,11 +232,15 @@ export function getRelatedFacts(
       for (const row of incoming) {
         const sourceId = row['source_fact_id'] as string;
         if (visited.has(sourceId)) continue;
-        visited.add(sourceId);
-        nextFrontier.push(sourceId);
 
         const relation = rowToRelation(row);
         const fact = rowToFact(row);
+
+        // Scope filter: skip facts from other projects
+        if (scopeProject && fact.scope_type === 'project' && fact.scope_project !== scopeProject) continue;
+
+        visited.add(sourceId);
+        nextFrontier.push(sourceId);
 
         const typeWeight = (relation.relation_type === 'SUPPORTS' || relation.relation_type === 'INFLUENCES') ? 1.0 : 0.7;
         const relevance = hopRelevance * typeWeight;

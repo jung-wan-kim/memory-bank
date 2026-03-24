@@ -46,7 +46,7 @@ async function main() {
     const expandedFacts = [...results.map(r => ({ fact: r.fact, note: '' }))];
 
     for (const { fact } of results.slice(0, 3)) {
-      const related = getRelatedFacts(db, fact.id, 1);
+      const related = getRelatedFacts(db, fact.id, 1, 0.6, 0.2, project);
       for (const { fact: relFact, relation } of related) {
         if (!seenIds.has(relFact.id) && expandedFacts.length < MAX_CONTEXT_FACTS) {
           seenIds.add(relFact.id);
