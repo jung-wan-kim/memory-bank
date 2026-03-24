@@ -4889,10 +4889,13 @@ n.vx-=n.x*.002*al;n.vz-=n.z*.002*al;n.vy=(LY[n.ly]-n.y)*.12;n.x+=n.vx;n.y+=n.vy;
 // RENDERER
 var cv=document.getElementById('c'),cx=cv.getContext('2d'),W,H;
 function rsz(){W=cv.width=innerWidth;H=cv.height=innerHeight}rsz();addEventListener('resize',rsz);
-var rX=-.32,rY=.5,zm=3.6,drg=false,lx=0,ly2=0,ar=true,mx=-1,my=-1,frame=0;
+var rX=-.25,rY=0,zm=3.6,drg=false,lx=0,ly2=0,ar=true,mx=-1,my=-1,frame=0;
+var camBaseZm=3.6,camT=0;
 cv.onmousedown=function(e){drg=true;lx=e.clientX;ly2=e.clientY;ar=false;document.body.classList.add('dragging')};
 cv.onmousemove=function(e){mx=e.clientX;my=e.clientY;if(drg){rY+=(e.clientX-lx)*.003;rX+=(e.clientY-ly2)*.003;rX=Math.max(-1.1,Math.min(1.1,rX));lx=e.clientX;ly2=e.clientY}};
-cv.onmouseup=function(){drg=false;document.body.classList.remove('dragging')};
+cv.onmouseup=function(){drg=false;document.body.classList.remove('dragging');
+// Resume auto orbit after 3s idle
+clearTimeout(window._arTimer);window._arTimer=setTimeout(function(){ar=true;camT=rY/(Math.PI*2);camBaseZm=zm},3000)};
 cv.onmouseleave=function(){drg=false;mx=-1;my=-1;document.body.classList.remove('dragging')};
 cv.addEventListener('wheel',function(e){zm*=e.deltaY>0?.93:1.07;zm=Math.max(1.5,Math.min(12,zm));e.preventDefault()},{passive:false});
 cv.addEventListener('touchstart',function(e){if(e.touches.length===1){drg=true;lx=e.touches[0].clientX;ly2=e.touches[0].clientY;ar=false}},{passive:true});
@@ -4903,7 +4906,15 @@ function pj(x,y,z){var x1=x*Math.cos(rY)-z*Math.sin(rY),z1=x*Math.sin(rY)+z*Math
 
 function render(){
 frame++;
-if(ar)rY+=.001;
+if(ar){
+camT+=.0008;
+// Slow orbit: full rotation ~130s
+rY=camT*Math.PI*2;
+// Gentle pitch oscillation: look slightly down then up (see all 3 layers)
+rX=-.2+Math.sin(camT*Math.PI*2*.37)*.18;
+// Breathing zoom: slowly in/out
+zm=camBaseZm+Math.sin(camT*Math.PI*2*.23)*.4;
+}
 
 // Trail effect: semi-transparent overlay instead of full clear
 cx.fillStyle='rgba(5,8,13,0.28)';cx.fillRect(0,0,W,H);
