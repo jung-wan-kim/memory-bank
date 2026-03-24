@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memory Bank - Knowledge Graph</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface2: #21262d;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --purple: #d2a8ff;
+    --orange: #f0883e;
+    --red: #f85149;
+    --yellow: #d29922;
+    --cyan: #56d4dd;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+
+  .hero {
+    text-align: center;
+    padding: 80px 24px 60px;
+    background: radial-gradient(ellipse at 50% 0%, rgba(88,166,255,0.12) 0%, transparent 70%);
+    position: relative;
+  }
+
+  .hero::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 10%;
+    right: 10%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--border), transparent);
+  }
+
+  .tag {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    color: var(--accent);
+    font-family: 'SF Mono', Menlo, monospace;
+    margin-bottom: 16px;
+  }
+
+  .hero h1 {
+    font-size: clamp(36px, 6vw, 64px);
+    font-weight: 700;
+    letter-spacing: -1px;
+    margin-bottom: 8px;
+  }
+
+  .hero h1 span { color: var(--purple); }
+
+  .hero h2 {
+    font-size: clamp(18px, 3vw, 28px);
+    font-weight: 400;
+    color: var(--accent);
+    margin-bottom: 24px;
+  }
+
+  .hero p {
+    font-size: 16px;
+    color: var(--muted);
+    max-width: 600px;
+    margin: 0 auto;
+  }
+
+  .stats-bar {
+    display: flex;
+    justify-content: center;
+    gap: 48px;
+    padding: 32px 24px;
+    flex-wrap: wrap;
+  }
+
+  .stat {
+    text-align: center;
+  }
+
+  .stat-value {
+    font-size: 36px;
+    font-weight: 700;
+    font-family: 'SF Mono', Menlo, monospace;
+  }
+
+  .stat-label {
+    font-size: 13px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-top: 4px;
+  }
+
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  .section {
+    padding: 64px 0;
+  }
+
+  .section-title {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 3px;
+    color: var(--accent);
+    margin-bottom: 8px;
+    font-family: 'SF Mono', Menlo, monospace;
+  }
+
+  .section h3 {
+    font-size: 32px;
+    font-weight: 600;
+    margin-bottom: 40px;
+    letter-spacing: -0.5px;
+  }
+
+  /* Architecture Diagram */
+  .arch-diagram {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 40px;
+    margin-bottom: 48px;
+    overflow-x: auto;
+  }
+
+  .arch-flow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    min-width: 600px;
+  }
+
+  .arch-node {
+    padding: 16px 24px;
+    border-radius: 12px;
+    font-size: 14px;
+    font-weight: 600;
+    text-align: center;
+    min-width: 120px;
+    border: 1px solid;
+  }
+
+  .arch-arrow {
+    font-size: 20px;
+    color: var(--muted);
+  }
+
+  .node-conversation { background: rgba(88,166,255,0.08); border-color: rgba(88,166,255,0.25); color: var(--accent); }
+  .node-facts { background: rgba(63,185,80,0.08); border-color: rgba(63,185,80,0.25); color: var(--green); }
+  .node-ontology { background: rgba(210,168,255,0.08); border-color: rgba(210,168,255,0.25); color: var(--purple); }
+  .node-graph { background: rgba(240,136,62,0.08); border-color: rgba(240,136,62,0.25); color: var(--orange); }
+  .node-tools { background: rgba(86,212,221,0.08); border-color: rgba(86,212,221,0.25); color: var(--cyan); }
+
+  /* Tools Grid */
+  .tools-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 20px;
+  }
+
+  .tool-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px;
+    transition: border-color 0.2s, transform 0.2s;
+  }
+
+  .tool-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+  }
+
+  .tool-badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    margin-bottom: 12px;
+  }
+
+  .badge-new { background: rgba(63,185,80,0.15); color: var(--green); }
+  .badge-enhanced { background: rgba(210,168,255,0.15); color: var(--purple); }
+
+  .tool-name {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    font-family: 'SF Mono', Menlo, monospace;
+    color: var(--text);
+  }
+
+  .tool-desc {
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  /* Scenarios */
+  .scenario-list {
+    display: grid;
+    gap: 16px;
+  }
+
+  .scenario {
+    display: flex;
+    gap: 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    align-items: flex-start;
+  }
+
+  .scenario-icon {
+    font-size: 28px;
+    min-width: 40px;
+    text-align: center;
+    padding-top: 2px;
+  }
+
+  .scenario h4 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .scenario p {
+    font-size: 14px;
+    color: var(--muted);
+  }
+
+  /* Results Table */
+  .results-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .results-table th {
+    background: var(--surface2);
+    padding: 14px 20px;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .results-table td {
+    padding: 14px 20px;
+    font-size: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .results-table tr:last-child td { border-bottom: none; }
+
+  .results-table td:first-child {
+    font-family: 'SF Mono', Menlo, monospace;
+    color: var(--accent);
+    font-size: 13px;
+  }
+
+  .keep-badge {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(63,185,80,0.15);
+    color: var(--green);
+  }
+
+  .footer {
+    text-align: center;
+    padding: 48px 24px;
+    color: var(--muted);
+    font-size: 14px;
+    border-top: 1px solid var(--border);
+    margin-top: 40px;
+  }
+
+  .footer a { color: var(--accent); text-decoration: none; }
+  .footer a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="tag">claude code plugin</div>
+  <h1><span>Memory</span> Bank</h1>
+  <h2>Knowledge Graph System</h2>
+  <p>대화 내용을 단순 검색이 아닌 RAG + 온톨로지 기반 지식그래프로 구축하여, 프로젝트 간 지식 전이와 멀티홉 탐색을 지원합니다.</p>
+</div>
+
+<div class="stats-bar">
+  <div class="stat">
+    <div class="stat-value" style="color:var(--accent)">9</div>
+    <div class="stat-label">MCP Tools</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value" style="color:var(--green)">+4</div>
+    <div class="stat-label">New Tools</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value" style="color:var(--purple)">3-hop</div>
+    <div class="stat-label">Graph Depth</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value" style="color:var(--orange)">115</div>
+    <div class="stat-label">Tests Pass</div>
+  </div>
+  <div class="stat">
+    <div class="stat-value" style="color:var(--cyan)">6/6</div>
+    <div class="stat-label">Experiments Keep</div>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- Architecture -->
+  <div class="section">
+    <div class="section-title">Architecture</div>
+    <h3>Knowledge Graph Pipeline</h3>
+    <div class="arch-diagram">
+      <div class="arch-flow">
+        <div class="arch-node node-conversation">Conversations<br><small>JSONL files</small></div>
+        <div class="arch-arrow">&rarr;</div>
+        <div class="arch-node node-facts">Fact Extraction<br><small>LLM (Haiku)</small></div>
+        <div class="arch-arrow">&rarr;</div>
+        <div class="arch-node node-ontology">Ontology Classification<br><small>Domain &rarr; Category</small></div>
+        <div class="arch-arrow">&rarr;</div>
+        <div class="arch-node node-graph">Relation Detection<br><small>INFLUENCES / SUPPORTS / ...</small></div>
+        <div class="arch-arrow">&rarr;</div>
+        <div class="arch-node node-tools">MCP Tools<br><small>9 tools available</small></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tools -->
+  <div class="section">
+    <div class="section-title">MCP Tools</div>
+    <h3>Knowledge Graph Tools</h3>
+    <div class="tools-grid">
+      <div class="tool-card">
+        <span class="tool-badge badge-enhanced">Enhanced</span>
+        <div class="tool-name">search</div>
+        <div class="tool-desc">대화 검색 결과에 관련 지식 컨텍스트(facts, ontology, relations)를 자동으로 부착하여 RAG 기반 응답 지원</div>
+      </div>
+      <div class="tool-card">
+        <span class="tool-badge badge-enhanced">Enhanced</span>
+        <div class="tool-name">search_facts</div>
+        <div class="tool-desc">Fact 검색 시 온톨로지 분류(Domain/Category)와 1-hop 관계 그래프를 자동으로 포함하여 표시</div>
+      </div>
+      <div class="tool-card">
+        <span class="tool-badge badge-new">New</span>
+        <div class="tool-name">trace_fact</div>
+        <div class="tool-desc">지식그래프의 fact가 어떤 대화에서 추출되었는지 역추적. Revision history와 그래프 관계 포함</div>
+      </div>
+      <div class="tool-card">
+        <span class="tool-badge badge-new">New</span>
+        <div class="tool-name">graph_stats</div>
+        <div class="tool-desc">지식그래프 현황 통계: 전체 facts, domains, categories, relations 카운트 및 분포</div>
+      </div>
+      <div class="tool-card">
+        <span class="tool-badge badge-new">New</span>
+        <div class="tool-name">cross_project_insights</div>
+        <div class="tool-desc">다른 프로젝트의 유사한 기술 결정을 조회. 프로젝트 간 지식 전이로 반복 실수 방지</div>
+      </div>
+      <div class="tool-card">
+        <span class="tool-badge badge-new">New</span>
+        <div class="tool-name">explore_graph</div>
+        <div class="tool-desc">시드 fact에서 최대 3-hop 깊이까지 연결된 지식을 탐색. 간접 관련 결정까지 발견</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Use Cases -->
+  <div class="section">
+    <div class="section-title">Use Cases</div>
+    <h3>활용 시나리오</h3>
+    <div class="scenario-list">
+      <div class="scenario">
+        <div class="scenario-icon">&#x1F680;</div>
+        <div>
+          <h4>새 프로젝트 시작</h4>
+          <p><code>cross_project_insights</code>로 기존 프로젝트에서 유사한 기술 스택 결정, 아키텍처 패턴을 참고하여 빠르게 부트스트랩</p>
+        </div>
+      </div>
+      <div class="scenario">
+        <div class="scenario-icon">&#x1F3D7;</div>
+        <div>
+          <h4>아키텍처 결정</h4>
+          <p><code>explore_graph</code>로 과거 결정의 연쇄 영향(A&rarr;B&rarr;C)을 파악하고, 새 결정이 기존 지식과 어떻게 연결되는지 확인</p>
+        </div>
+      </div>
+      <div class="scenario">
+        <div class="scenario-icon">&#x1F50D;</div>
+        <div>
+          <h4>문맥 있는 검색</h4>
+          <p><code>search</code>가 자동으로 관련 facts와 ontology 컨텍스트를 부착하여, 단순 키워드 매칭이 아닌 지식 기반 답변 제공</p>
+        </div>
+      </div>
+      <div class="scenario">
+        <div class="scenario-icon">&#x1F4DC;</div>
+        <div>
+          <h4>결정 근거 추적</h4>
+          <p><code>trace_fact</code>로 "왜 이렇게 결정했는지" 원본 대화를 복원하고, revision history로 결정의 진화 과정 확인</p>
+        </div>
+      </div>
+      <div class="scenario">
+        <div class="scenario-icon">&#x1F4CA;</div>
+        <div>
+          <h4>지식 관리</h4>
+          <p><code>graph_stats</code>로 축적된 지식의 규모, 도메인 분포, 관계 유형을 모니터링하여 지식 체계의 건강도 파악</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Experiment Results -->
+  <div class="section">
+    <div class="section-title">Autoresearch</div>
+    <h3>실험 결과 (6/6 KEEP)</h3>
+    <table class="results-table">
+      <thead>
+        <tr>
+          <th>Commit</th>
+          <th>Tests</th>
+          <th>Status</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>baseline</td>
+          <td>109</td>
+          <td><span class="keep-badge">KEEP</span></td>
+          <td>기존 지식그래프 인프라 (ontology + relations + avatar)</td>
+        </tr>
+        <tr>
+          <td>1ee17ad</td>
+          <td>115</td>
+          <td><span class="keep-badge">KEEP</span></td>
+          <td>RAG Search + Knowledge Context enrichment</td>
+        </tr>
+        <tr>
+          <td>2f30cd4</td>
+          <td>115</td>
+          <td><span class="keep-badge">KEEP</span></td>
+          <td>trace_fact &mdash; Fact&rarr;Exchange 역추적</td>
+        </tr>
+        <tr>
+          <td>15aca58</td>
+          <td>115</td>
+          <td><span class="keep-badge">KEEP</span></td>
+          <td>graph_stats &mdash; 지식그래프 통계</td>
+        </tr>
+        <tr>
+          <td>4ce3dad</td>
+          <td>115</td>
+          <td><span class="keep-badge">KEEP</span></td>
+          <td>cross_project_insights &mdash; 프로젝트 간 지식 전이</td>
+        </tr>
+        <tr>
+          <td>ff845cc</td>
+          <td>115</td>
+          <td><span class="keep-badge">KEEP</span></td>
+          <td>explore_graph &mdash; 멀티홉 그래프 탐색 (3-hop)</td>
+        </tr>
+        <tr>
+          <td>b209e41</td>
+          <td>115</td>
+          <td><span class="keep-badge">KEEP</span></td>
+          <td>search_facts 온톨로지 + 관계 enrichment</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<div class="footer">
+  <p><strong>Memory Bank</strong> &mdash; Knowledge Graph System &mdash; <a href="https://github.com/jung-wan-kim/memory-bank">GitHub</a></p>
+  <p style="margin-top:8px">2026-03-24 &middot; 671 lines added &middot; 6 experiments &middot; 115 tests passing</p>
+</div>
+
+</body>
+</html>
