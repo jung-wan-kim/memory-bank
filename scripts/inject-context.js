@@ -15,6 +15,7 @@ import { initDatabase } from '../dist/db.js';
 import { searchSimilarFacts } from '../dist/fact-db.js';
 import { generateEmbedding, initEmbeddings } from '../dist/embeddings.js';
 import { getRelatedFacts } from '../dist/ontology-db.js';
+import { detectRepeat, formatRepeatContext } from '../dist/repeat-detector.js';
 
 const TOP_K = 5;
 const SIMILARITY_THRESHOLD = 0.75;
@@ -65,6 +66,18 @@ async function main() {
     for (const { fact, note } of expandedFacts) {
       const dateStr = fact.created_at.slice(0, 10);
       lines.push(`- ${note ? note + ' ' : ''}[${fact.category}] ${fact.fact} (${dateStr})`);
+    }
+
+    // Detect repeated prompts
+    try {
+      const repeats = await detectRepeat(userPrompt, project, 2, 0.85);
+      const repeatCtx = formatRepeatContext(repeats);
+      if (repeatCtx) {
+        lines.push('');
+        lines.push(repeatCtx);
+      }
+    } catch {
+      // Repeat detection is best-effort
     }
 
     process.stdout.write(lines.join('\n') + '\n');
