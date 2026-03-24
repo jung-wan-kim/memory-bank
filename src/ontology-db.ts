@@ -149,17 +149,33 @@ export function createRelation(
   };
 }
 
+/**
+ * Get related facts with relevance decay.
+ *
+ * Each hop reduces relevance by the decay factor:
+ * - hop 0 (direct): relevance = 1.0
+ * - hop 1: relevance = decay (default 0.6)
+ * - hop 2: relevance = decay^2 (default 0.36)
+ *
+ * Results are sorted by relevance descending.
+ * Facts below minRelevance are pruned.
+ */
 export function getRelatedFacts(
   db: Database.Database,
   factId: string,
   hops: number = 1,
-): Array<{ fact: Fact; relation: OntologyRelation }> {
+  decay: number = 0.6,
+  minRelevance: number = 0.2,
+): Array<{ fact: Fact; relation: OntologyRelation; relevance: number; hop: number }> {
   const visited = new Set<string>([factId]);
-  const results: Array<{ fact: Fact; relation: OntologyRelation }> = [];
+  const results: Array<{ fact: Fact; relation: OntologyRelation; relevance: number; hop: number }> = [];
 
   let frontier = [factId];
 
   for (let hop = 0; hop < hops; hop++) {
+    const hopRelevance = Math.pow(decay, hop);
+    if (hopRelevance < minRelevance) break; // Prune entire hop if too weak
+
     const nextFrontier: string[] = [];
 
     for (const currentId of frontier) {
@@ -182,7 +198,14 @@ export function getRelatedFacts(
 
         const relation = rowToRelation(row);
         const fact = rowToFact(row);
-        results.push({ fact, relation });
+
+        // Relation type weight: SUPPORTS/INFLUENCES stronger than CONTRADICTS/SUPERSEDES
+        const typeWeight = (relation.relation_type === 'SUPPORTS' || relation.relation_type === 'INFLUENCES') ? 1.0 : 0.7;
+        const relevance = hopRelevance * typeWeight;
+
+        if (relevance >= minRelevance) {
+          results.push({ fact, relation, relevance, hop: hop + 1 });
+        }
       }
 
       // Incoming relations (target ← source)
@@ -204,13 +227,22 @@ export function getRelatedFacts(
 
         const relation = rowToRelation(row);
         const fact = rowToFact(row);
-        results.push({ fact, relation });
+
+        const typeWeight = (relation.relation_type === 'SUPPORTS' || relation.relation_type === 'INFLUENCES') ? 1.0 : 0.7;
+        const relevance = hopRelevance * typeWeight;
+
+        if (relevance >= minRelevance) {
+          results.push({ fact, relation, relevance, hop: hop + 1 });
+        }
       }
     }
 
     frontier = nextFrontier;
     if (frontier.length === 0) break;
   }
+
+  // Sort by relevance descending
+  results.sort((a, b) => b.relevance - a.relevance);
 
   return results;
 }
