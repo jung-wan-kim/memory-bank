@@ -18,6 +18,8 @@ import {
   searchMultipleConcepts,
   formatResults,
   formatMultiConceptResults,
+  getKnowledgeContext,
+  formatKnowledgeContext,
   SearchOptions,
 } from './search.js';
 import { formatConversationAsMarkdown } from './show.js';
@@ -333,6 +335,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           );
         } else {
           resultText = await formatResults(results);
+
+          // Append knowledge graph context for markdown format
+          try {
+            const knowledgeCtx = await getKnowledgeContext(params.query, null, 3);
+            resultText += formatKnowledgeContext(knowledgeCtx);
+          } catch {
+            // Knowledge context is best-effort, don't fail the search
+          }
         }
       }
 

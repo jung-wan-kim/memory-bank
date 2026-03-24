@@ -1,6 +1,8 @@
 import { initDatabase } from './db.js';
 import { initEmbeddings, generateEmbedding } from './embeddings.js';
-import { SearchResult, ConversationExchange, MultiConceptResult } from './types.js';
+import { searchSimilarFacts } from './fact-db.js';
+import { getRelatedFacts, listDomains, listCategories } from './ontology-db.js';
+import { SearchResult, ConversationExchange, MultiConceptResult, Fact } from './types.js';
 import fs from 'fs';
 import readline from 'readline';
 
@@ -298,6 +300,99 @@ export async function searchMultipleConcepts(
 
   // Apply limit
   return multiConceptResults.slice(0, limit);
+}
+
+// === Knowledge Graph Enhanced Search ===
+
+export interface KnowledgeContext {
+  facts: Array<{
+    fact: string;
+    category: string;
+    domain: string;
+    categoryName: string;
+    similarity: number;
+    relatedFacts: Array<{
+      fact: string;
+      relationType: string;
+    }>;
+  }>;
+}
+
+/**
+ * Enrich search results with knowledge graph context.
+ * Finds related facts from the ontology and expands via graph traversal.
+ */
+export async function getKnowledgeContext(
+  query: string,
+  project?: string | null,
+  limit: number = 5,
+): Promise<KnowledgeContext> {
+  await initEmbeddings();
+  const db = initDatabase();
+
+  try {
+    const queryEmbedding = await generateEmbedding(query);
+    const factResults = searchSimilarFacts(db, queryEmbedding, project ?? null, limit, 0.6);
+
+    if (factResults.length === 0) {
+      return { facts: [] };
+    }
+
+    // Build domain/category lookup
+    const domains = listDomains(db);
+    const categories = listCategories(db);
+    const domainMap = new Map(domains.map(d => [d.id, d.name]));
+    const categoryMap = new Map(categories.map(c => [c.id, { name: c.name, domainId: c.domain_id }]));
+
+    const enrichedFacts: KnowledgeContext['facts'] = [];
+
+    for (const { fact, distance } of factResults) {
+      const similarity = parseFloat((1 - (distance * distance) / 2).toFixed(3));
+      const catInfo = fact.ontology_category_id
+        ? categoryMap.get(fact.ontology_category_id)
+        : undefined;
+      const domainName = catInfo ? (domainMap.get(catInfo.domainId) ?? 'Unclassified') : 'Unclassified';
+      const catName = catInfo ? catInfo.name : 'Unclassified';
+
+      // Expand via 1-hop graph traversal
+      const related = getRelatedFacts(db, fact.id, 1);
+      const relatedFacts = related.map(({ fact: relFact, relation }) => ({
+        fact: relFact.fact,
+        relationType: relation.relation_type,
+      }));
+
+      enrichedFacts.push({
+        fact: fact.fact,
+        category: fact.category,
+        domain: domainName,
+        categoryName: catName,
+        similarity,
+        relatedFacts,
+      });
+    }
+
+    return { facts: enrichedFacts };
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Format knowledge context as a readable section appended to search results.
+ */
+export function formatKnowledgeContext(context: KnowledgeContext): string {
+  if (context.facts.length === 0) return '';
+
+  let output = '\n---\n**Related Knowledge (from past decisions):**\n\n';
+
+  for (const fact of context.facts) {
+    output += `- **[${fact.domain}/${fact.categoryName}]** ${fact.fact} _(${fact.category}, ${Math.round(fact.similarity * 100)}% relevant)_\n`;
+    for (const rel of fact.relatedFacts) {
+      output += `  - ${rel.relationType}: ${rel.fact}\n`;
+    }
+  }
+
+  return output;
 }
 
 export async function formatMultiConceptResults(
