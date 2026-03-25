@@ -112,9 +112,62 @@ const apiHandlers = {
   }
 };
 
+// Graph 3D data API
+apiHandlers['/api/graph-data'] = () => {
+  const projects = query(`
+    SELECT project, COUNT(*) as exchanges, COUNT(DISTINCT session_id) as sessions,
+           MIN(timestamp) as first_seen, MAX(timestamp) as last_seen,
+           COUNT(DISTINCT git_branch) as branches
+    FROM exchanges GROUP BY project ORDER BY exchanges DESC
+  `);
+  const toolUsage = query(`
+    SELECT e.project, tc.tool_name, COUNT(*) as cnt
+    FROM tool_calls tc JOIN exchanges e ON tc.exchange_id = e.id
+    GROUP BY e.project, tc.tool_name ORDER BY cnt DESC
+  `);
+  const connections = query(`
+    SELECT DISTINCT e1.project as source, e2.project as target, COUNT(*) as strength
+    FROM exchanges e1 JOIN exchanges e2 ON e1.session_id = e2.session_id AND e1.project < e2.project
+    GROUP BY e1.project, e2.project HAVING strength > 2
+  `);
+  const allTools = query(`
+    SELECT tool_name, COUNT(*) as cnt FROM tool_calls GROUP BY tool_name ORDER BY cnt DESC LIMIT 50
+  `);
+  let facts = [];
+  try { facts = query(`SELECT id, fact, category, scope_type, scope_project FROM facts WHERE is_active = 1 LIMIT 200`); } catch(e) {}
+  let domains = [];
+  try { domains = query(`SELECT id, name, description FROM ontology_domains`); } catch(e) {}
+  let relations = [];
+  try { relations = query(`SELECT source_fact_id, relation_type, target_fact_id FROM ontology_relations LIMIT 500`); } catch(e) {}
+  return { projects, toolUsage, connections, timeline: [], allTools, facts, domains, relations };
+};
+
+// Serve graph-3d.html with live data injected server-side
+function serveGraph3D(res) {
+  const fs = require('fs');
+  const graphPath = path.join(PLUGIN_ROOT, 'docs', 'graph-3d.html');
+  if (fs.existsSync(graphPath)) {
+    let html = fs.readFileSync(graphPath, 'utf-8');
+    // Replace hardcoded var R={...} data with live DB data
+    const liveData = apiHandlers['/api/graph-data']();
+    html = html.replace(
+      /var R=\{[\s\S]*?\n(?=var DOM=)/,
+      `var R=${JSON.stringify(liveData)};\n`
+    );
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(html);
+  } else {
+    res.writeHead(404); res.end('graph-3d.html not found');
+  }
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://localhost');
-  if (url.pathname === '/' || url.pathname === '/index.html') {
+  if (url.pathname === '/' || url.pathname === '/graph') {
+    serveGraph3D(res);
+    return;
+  }
+  if (url.pathname === '/dashboard') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(getHTML());
     return;
