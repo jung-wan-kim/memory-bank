@@ -112,6 +112,59 @@ const apiHandlers = {
   }
 };
 
+// Project detail API
+apiHandlers['/api/project-detail'] = (params) => {
+  const project = params.get('project');
+  if (!project) return { error: 'project required' };
+
+  const info = queryOne(`
+    SELECT COUNT(*) as exchanges, COUNT(DISTINCT session_id) as sessions,
+           MIN(timestamp) as first_seen, MAX(timestamp) as last_seen,
+           COUNT(DISTINCT git_branch) as branches
+    FROM exchanges WHERE project = ?
+  `, [project]);
+
+  const toolUsage = query(`
+    SELECT tc.tool_name, COUNT(*) as cnt
+    FROM tool_calls tc JOIN exchanges e ON tc.exchange_id = e.id
+    WHERE e.project = ?
+    GROUP BY tc.tool_name ORDER BY cnt DESC LIMIT 20
+  `, [project]);
+
+  const activity = query(`
+    SELECT date(timestamp) as day, COUNT(*) as cnt
+    FROM exchanges WHERE project = ?
+    GROUP BY date(timestamp) ORDER BY day DESC LIMIT 60
+  `, [project]);
+
+  const recentPrompts = query(`
+    SELECT user_message, timestamp FROM exchanges
+    WHERE project = ? AND length(user_message) > 5 AND length(user_message) < 2000
+      AND user_message NOT LIKE '%<system-reminder>%'
+      AND user_message NOT LIKE '%<command-%'
+      AND user_message NOT LIKE '%<local-command-%'
+      AND user_message NOT LIKE 'Warmup%'
+    ORDER BY timestamp DESC LIMIT 10
+  `, [project]);
+
+  let facts = [];
+  try {
+    facts = query(`
+      SELECT fact, category, scope_type FROM facts
+      WHERE is_active = 1 AND (scope_project = ? OR scope_type = 'global')
+      ORDER BY consolidated_count DESC LIMIT 20
+    `, [project]);
+  } catch(e) {}
+
+  const sessions = query(`
+    SELECT session_id, MIN(timestamp) as started, MAX(timestamp) as ended, COUNT(*) as exchanges
+    FROM exchanges WHERE project = ? AND session_id IS NOT NULL
+    GROUP BY session_id ORDER BY started DESC LIMIT 15
+  `, [project]);
+
+  return { project, info, toolUsage, activity, recentPrompts, facts, sessions };
+};
+
 // Graph 3D data API
 apiHandlers['/api/graph-data'] = () => {
   const projects = query(`
