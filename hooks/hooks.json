@@ -11,6 +11,11 @@
           },
           {
             "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/sync-import-hook.js",
+            "async": true
+          },
+          {
+            "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/fact-consolidate-hook.js",
             "async": true
           }
@@ -24,6 +29,11 @@
           {
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/fact-extract-hook.js",
+            "async": true
+          },
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/sync-export-hook.js",
             "async": true
           }
         ]
