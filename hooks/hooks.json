@@ -18,6 +18,11 @@
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/fact-consolidate-hook.js",
             "async": true
+          },
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/install-commands.sh",
+            "async": true
           }
         ]
       }
