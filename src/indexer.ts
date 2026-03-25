@@ -21,7 +21,7 @@ function getProjectsDir(): string {
 }
 
 // Process items in batches with limited concurrency
-async function processBatch<T, R>(
+export async function processBatch<T, R>(
   items: T[],
   processor: (item: T) => Promise<R>,
   concurrency: number
