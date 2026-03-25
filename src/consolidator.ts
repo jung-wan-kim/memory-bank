@@ -90,6 +90,9 @@ export function applyConsolidationResult(
   newFact: Fact,
   result: ConsolidationResult,
 ): void {
+  // Normalize merged_fact: treat empty/whitespace-only as absent
+  const mergedFact = result.merged_fact?.trim() || null;
+
   switch (result.relation) {
     case 'DUPLICATE':
       updateFact(db, existingFact.id, { consolidated_count_increment: true });
@@ -101,12 +104,12 @@ export function applyConsolidationResult(
       insertRevision(db, {
         fact_id: existingFact.id,
         previous_fact: existingFact.fact,
-        new_fact: result.merged_fact || newFact.fact,
+        new_fact: mergedFact || newFact.fact,
         reason: result.reason,
         source_exchange_id: null,
       });
-      if (result.merged_fact) {
-        updateFact(db, newFact.id, { fact: result.merged_fact });
+      if (mergedFact) {
+        updateFact(db, newFact.id, { fact: mergedFact });
       }
       break;
 
@@ -114,12 +117,12 @@ export function applyConsolidationResult(
       insertRevision(db, {
         fact_id: existingFact.id,
         previous_fact: existingFact.fact,
-        new_fact: result.merged_fact || newFact.fact,
+        new_fact: mergedFact || newFact.fact,
         reason: result.reason,
         source_exchange_id: null,
       });
       updateFact(db, existingFact.id, {
-        fact: result.merged_fact || newFact.fact,
+        fact: mergedFact || newFact.fact,
         consolidated_count_increment: true,
       });
       deactivateFact(db, newFact.id);
