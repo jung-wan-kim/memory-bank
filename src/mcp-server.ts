@@ -40,9 +40,9 @@ const SearchInputSchema = z
   .object({
     query: z
       .union([
-        z.string().min(2, 'Query must be at least 2 characters'),
+        z.string().min(2, 'Query must be at least 2 characters').max(10000, 'Query too long (max 10000 chars)'),
         z
-          .array(z.string().min(2))
+          .array(z.string().min(2).max(10000))
           .min(2, 'Must provide at least 2 concepts for multi-concept search')
           .max(5, 'Cannot search more than 5 concepts at once'),
       ])
@@ -98,8 +98,8 @@ const ShowConversationInputSchema = z
 
 const SearchFactsInputSchema = z
   .object({
-    query: z.string().min(2, 'Query must be at least 2 characters'),
-    project: z.string().optional(),
+    query: z.string().min(2, 'Query must be at least 2 characters').max(10000, 'Query too long (max 10000 chars)'),
+    project: z.string().max(500).optional(),
     category: z.enum(['decision', 'preference', 'pattern', 'knowledge', 'constraint']).optional(),
     include_revisions: z.boolean().default(false),
     limit: z.number().int().min(1).max(50).default(10),
@@ -118,8 +118,8 @@ type SearchOntologyInput = z.infer<typeof SearchOntologyInputSchema>;
 
 const AskAvatarInputSchema = z
   .object({
-    question: z.string().min(2, 'Question must be at least 2 characters').describe('Question to ask'),
-    project: z.string().optional().describe('Project path to scope the search'),
+    question: z.string().min(2, 'Question must be at least 2 characters').max(10000, 'Question too long (max 10000 chars)').describe('Question to ask'),
+    project: z.string().max(500).optional().describe('Project path to scope the search'),
   })
   .strict();
 
