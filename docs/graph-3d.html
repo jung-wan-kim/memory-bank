@@ -4995,7 +4995,7 @@ var cv=document.getElementById('c'),cx=cv.getContext('2d'),W,H;
 function rsz(){W=cv.width=innerWidth;H=cv.height=innerHeight}rsz();addEventListener('resize',rsz);
 var rX=-.15,rY=0,zm=2.8,drg=false,lx=0,ly2=0,ar=true,mx=-1,my=-1,frame=0;
 var camBaseZm=2.8,camT=0;
-var clickStart={x:0,y:0};
+var clickStart={x:0,y:0},hov=null;
 cv.onmousedown=function(e){drg=true;lx=e.clientX;ly2=e.clientY;clickStart={x:e.clientX,y:e.clientY};ar=false;document.body.classList.add('dragging')};
 var hovPause=false;
 cv.onmousemove=function(e){mx=e.clientX;my=e.clientY;if(drg){rY+=(e.clientX-lx)*.003;rX+=(e.clientY-ly2)*.003;rX=Math.max(-1.1,Math.min(1.1,rX));lx=e.clientX;ly2=e.clientY}};
@@ -5127,7 +5127,7 @@ cx.beginPath();cx.arc(fx2,fy2,dotR,0,Math.PI*2);
 cx.fillStyle=rgba(rs.c,dotA);cx.shadowColor=rs.c;cx.shadowBlur=dotR*10*dotFlick;cx.fill();cx.shadowBlur=0}}
 
 // NODES
-var hov=null,mnd=30;
+hov=null;var mnd=30;
 var pArr=vN.map(function(n){var p=pj(n.x,n.y,n.z);return{id:n.id,t:n.t,nm:n.nm,c:n.c,sz:n.sz,ly:n.ly,dom:n.dom,dt:n.dt,sx:p.sx,sy:p.sy,s:p.s,z:p.z}});
 pArr.sort(function(a,b){return a.z-b.z});
 
