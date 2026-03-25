@@ -18,3 +18,9 @@ c4269bb	tests	186	keep	벡터 인덱스 DELETE+INSERT 트랜잭션 래핑 (race 
 cf28040	tests	187	keep	미사용 import 제거 (Pipeline, Fact, getFactsByCategory)
 12f7a5d	tests	187	keep	consolidator: 빈 merged_fact 방어 로직 추가
 4b3a97c	tests	187	keep	미사용 params 변수 제거
+e5fd2a1	tests	194	keep	show.ts 엣지 케이스 테스트 - 빈 입력, 범위 초과, 시스템 메시지 스킵
+1139cc9	tests	201	keep	processBatch 유틸리티 export + 테스트 - 동시성, 순서, 에러 전파
+a6ac138	tests	207	keep	formatKnowledgeContext 테스트 - 도메인/카테고리 포맷, 관계 표시
+7f9eec7	tests	210	keep	fact-extractor 테스트 보강 - 빈 배열, 단일 교환, 특수 문자
+0d8bdb4	tests	212	keep	consolidator 방어 로직 테스트 - 빈 merged_fact 폴백
+1a819e7	tests	218	keep	parseJsonResponse 테스트 보강 - 빈 문자열, null, 배열 우선순위
