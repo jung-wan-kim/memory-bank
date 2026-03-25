@@ -22,6 +22,25 @@ describe('Fact Extractor', () => {
       // Each message truncated to 1000, so total should be much less than 2000
       expect(prompt).not.toContain('x'.repeat(1001));
     });
+
+    it('should handle empty exchanges array', () => {
+      const prompt = buildExtractionPrompt([]);
+      expect(prompt).toBe('');
+    });
+
+    it('should handle single exchange', () => {
+      const exchanges = [{ user_message: 'Q', assistant_message: 'A' }];
+      const prompt = buildExtractionPrompt(exchanges);
+      expect(prompt).toContain('Exchange 1');
+      expect(prompt).not.toContain('Exchange 2');
+    });
+
+    it('should handle special characters in messages', () => {
+      const exchanges = [{ user_message: '<script>alert("xss")</script>', assistant_message: '```json\n{"key": "value"}\n```' }];
+      const prompt = buildExtractionPrompt(exchanges);
+      expect(prompt).toContain('<script>');
+      expect(prompt).toContain('```json');
+    });
   });
 
   describe('confidence filtering logic', () => {
