@@ -44,14 +44,13 @@ export function insertFact(db: Database.Database, params: InsertFactParams): str
     now,
   );
 
-  // Insert into vector index
+  // Insert into vector index (atomic DELETE+INSERT via transaction)
   if (params.embedding) {
-    const delStmt = db.prepare('DELETE FROM vec_facts WHERE id = ?');
-    delStmt.run(id);
-    db.prepare('INSERT INTO vec_facts (id, embedding) VALUES (?, ?)').run(
-      id,
-      Buffer.from(new Float32Array(params.embedding).buffer),
-    );
+    const upsertVec = db.transaction((vecId: string, buf: Buffer) => {
+      db.prepare('DELETE FROM vec_facts WHERE id = ?').run(vecId);
+      db.prepare('INSERT INTO vec_facts (id, embedding) VALUES (?, ?)').run(vecId, buf);
+    });
+    upsertVec(id, Buffer.from(new Float32Array(params.embedding).buffer));
   }
 
   return id;
@@ -92,13 +91,13 @@ export function updateFact(db: Database.Database, id: string, params: UpdateFact
   values.push(id);
   db.prepare(`UPDATE facts SET ${updates.join(', ')} WHERE id = ?`).run(...values);
 
-  // Update vector index
+  // Update vector index (atomic DELETE+INSERT via transaction)
   if (params.embedding) {
-    db.prepare('DELETE FROM vec_facts WHERE id = ?').run(id);
-    db.prepare('INSERT INTO vec_facts (id, embedding) VALUES (?, ?)').run(
-      id,
-      Buffer.from(new Float32Array(params.embedding).buffer),
-    );
+    const upsertVec = db.transaction((vecId: string, buf: Buffer) => {
+      db.prepare('DELETE FROM vec_facts WHERE id = ?').run(vecId);
+      db.prepare('INSERT INTO vec_facts (id, embedding) VALUES (?, ?)').run(vecId, buf);
+    });
+    upsertVec(id, Buffer.from(new Float32Array(params.embedding).buffer));
   }
 }
 
