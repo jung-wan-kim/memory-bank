@@ -42,6 +42,7 @@ export function initDatabase() {
     sqliteVec.load(db);
     // Enable WAL mode for better concurrency
     db.pragma('journal_mode = WAL');
+    db.pragma('busy_timeout = 5000');
     // Create exchanges table
     db.exec(`
     CREATE TABLE IF NOT EXISTS exchanges (
@@ -100,6 +101,9 @@ export function initDatabase() {
   `);
     db.exec(`
     CREATE INDEX IF NOT EXISTS idx_sidechain ON exchanges(is_sidechain)
+  `);
+    db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_archive_path ON exchanges(archive_path)
   `);
     db.exec(`
     CREATE INDEX IF NOT EXISTS idx_git_branch ON exchanges(git_branch)
@@ -197,7 +201,7 @@ export function initDatabase() {
     db.exec(`CREATE INDEX IF NOT EXISTS idx_ontology_categories_domain ON ontology_categories(domain_id)`);
     return db;
 }
-export function insertExchange(db, exchange, embedding, toolNames) {
+export function insertExchange(db, exchange, embedding, _toolNames) {
     const now = Date.now();
     const stmt = db.prepare(`
     INSERT OR REPLACE INTO exchanges

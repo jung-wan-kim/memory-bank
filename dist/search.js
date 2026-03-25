@@ -1,5 +1,7 @@
 import { initDatabase } from './db.js';
 import { initEmbeddings, generateEmbedding } from './embeddings.js';
+import { searchSimilarFacts } from './fact-db.js';
+import { getRelatedFacts, listDomains, listCategories } from './ontology-db.js';
 import fs from 'fs';
 import readline from 'readline';
 function validateISODate(dateStr, paramName) {
@@ -22,71 +24,78 @@ export async function searchConversations(query, options = {}) {
         validateISODate(before, '--before');
     const db = initDatabase();
     let results = [];
-    // Build time filter clause
-    const timeFilter = [];
-    if (after)
-        timeFilter.push(`e.timestamp >= '${after}'`);
-    if (before)
-        timeFilter.push(`e.timestamp <= '${before}'`);
-    const timeClause = timeFilter.length > 0 ? `AND ${timeFilter.join(' AND ')}` : '';
-    if (mode === 'vector' || mode === 'both') {
-        // Vector similarity search
-        await initEmbeddings();
-        const queryEmbedding = await generateEmbedding(query);
-        const stmt = db.prepare(`
-      SELECT
-        e.id,
-        e.project,
-        e.timestamp,
-        e.user_message,
-        e.assistant_message,
-        e.archive_path,
-        e.line_start,
-        e.line_end,
-        vec.distance
-      FROM vec_exchanges AS vec
-      JOIN exchanges AS e ON vec.id = e.id
-      WHERE vec.embedding MATCH ?
-        AND k = ?
-        ${timeClause}
-      ORDER BY vec.distance ASC
-    `);
-        results = stmt.all(Buffer.from(new Float32Array(queryEmbedding).buffer), limit);
-    }
-    if (mode === 'text' || mode === 'both') {
-        // Text search
-        const textStmt = db.prepare(`
-      SELECT
-        e.id,
-        e.project,
-        e.timestamp,
-        e.user_message,
-        e.assistant_message,
-        e.archive_path,
-        e.line_start,
-        e.line_end,
-        0 as distance
-      FROM exchanges AS e
-      WHERE (e.user_message LIKE ? OR e.assistant_message LIKE ?)
-        ${timeClause}
-      ORDER BY e.timestamp DESC
-      LIMIT ?
-    `);
-        const textResults = textStmt.all(`%${query}%`, `%${query}%`, limit);
-        if (mode === 'both') {
-            // Merge and deduplicate by ID
-            const seenIds = new Set(results.map(r => r.id));
-            for (const textResult of textResults) {
-                if (!seenIds.has(textResult.id)) {
-                    results.push(textResult);
+    try {
+        // Build time filter clause
+        const timeFilter = [];
+        if (after)
+            timeFilter.push(`e.timestamp >= '${after}'`);
+        if (before)
+            timeFilter.push(`e.timestamp <= '${before}'`);
+        const timeClause = timeFilter.length > 0 ? `AND ${timeFilter.join(' AND ')}` : '';
+        if (mode === 'vector' || mode === 'both') {
+            // Vector similarity search
+            await initEmbeddings();
+            const queryEmbedding = await generateEmbedding(query);
+            const stmt = db.prepare(`
+        SELECT
+          e.id,
+          e.project,
+          e.timestamp,
+          e.user_message,
+          e.assistant_message,
+          e.archive_path,
+          e.line_start,
+          e.line_end,
+          vec.distance
+        FROM vec_exchanges AS vec
+        JOIN exchanges AS e ON vec.id = e.id
+        WHERE vec.embedding MATCH ?
+          AND k = ?
+          ${timeClause}
+        ORDER BY vec.distance ASC
+      `);
+            results = stmt.all(Buffer.from(new Float32Array(queryEmbedding).buffer), limit);
+        }
+        if (mode === 'text' || mode === 'both') {
+            // Escape LIKE metacharacters
+            const escapedQuery = query.replace(/%/g, '\\%').replace(/_/g, '\\_');
+            const likePattern = `%${escapedQuery}%`;
+            // Text search
+            const textStmt = db.prepare(`
+        SELECT
+          e.id,
+          e.project,
+          e.timestamp,
+          e.user_message,
+          e.assistant_message,
+          e.archive_path,
+          e.line_start,
+          e.line_end,
+          0 as distance
+        FROM exchanges AS e
+        WHERE (e.user_message LIKE ? ESCAPE '\\' OR e.assistant_message LIKE ? ESCAPE '\\')
+          ${timeClause}
+        ORDER BY e.timestamp DESC
+        LIMIT ?
+      `);
+            const textResults = textStmt.all(likePattern, likePattern, limit);
+            if (mode === 'both') {
+                // Merge and deduplicate by ID
+                const seenIds = new Set(results.map(r => r.id));
+                for (const textResult of textResults) {
+                    if (!seenIds.has(textResult.id)) {
+                        results.push(textResult);
+                    }
                 }
             }
-        }
-        else {
-            results = textResults;
+            else {
+                results = textResults;
+            }
         }
     }
-    db.close();
+    finally {
+        db.close();
+    }
     return results.map((row) => {
         const exchange = {
             id: row.id,
@@ -101,9 +110,10 @@ export async function searchConversations(query, options = {}) {
         // Try to load summary if available
         const summaryPath = row.archive_path.replace('.jsonl', '-summary.txt');
         let summary;
-        if (fs.existsSync(summaryPath)) {
+        try {
             summary = fs.readFileSync(summaryPath, 'utf-8').trim();
         }
+        catch { /* absent */ }
         // Create snippet (first 200 chars, collapse newlines)
         const snippetText = exchange.userMessage.substring(0, 200).replace(/\s+/g, ' ').trim();
         const snippet = snippetText + (exchange.userMessage.length > 200 ? '...' : '');
@@ -206,7 +216,7 @@ export async function searchMultipleConcepts(concepts, options = {}) {
     });
     // Find conversations that match ALL concepts
     const multiConceptResults = [];
-    for (const [archivePath, results] of conversationMap.entries()) {
+    for (const [, results] of conversationMap.entries()) {
         // Check if all concepts are represented
         const representedConcepts = new Set(results.map(r => r.conceptIndex));
         if (representedConcepts.size === concepts.length) {
@@ -230,6 +240,68 @@ export async function searchMultipleConcepts(concepts, options = {}) {
     multiConceptResults.sort((a, b) => b.averageSimilarity - a.averageSimilarity);
     // Apply limit
     return multiConceptResults.slice(0, limit);
+}
+/**
+ * Enrich search results with knowledge graph context.
+ * Finds related facts from the ontology and expands via graph traversal.
+ */
+export async function getKnowledgeContext(query, project, limit = 5) {
+    await initEmbeddings();
+    const db = initDatabase();
+    try {
+        const queryEmbedding = await generateEmbedding(query);
+        const factResults = searchSimilarFacts(db, queryEmbedding, project ?? null, limit, 0.6);
+        if (factResults.length === 0) {
+            return { facts: [] };
+        }
+        // Build domain/category lookup
+        const domains = listDomains(db);
+        const categories = listCategories(db);
+        const domainMap = new Map(domains.map(d => [d.id, d.name]));
+        const categoryMap = new Map(categories.map(c => [c.id, { name: c.name, domainId: c.domain_id }]));
+        const enrichedFacts = [];
+        for (const { fact, distance } of factResults) {
+            const similarity = parseFloat((1 - (distance * distance) / 2).toFixed(3));
+            const catInfo = fact.ontology_category_id
+                ? categoryMap.get(fact.ontology_category_id)
+                : undefined;
+            const domainName = catInfo ? (domainMap.get(catInfo.domainId) ?? 'Unclassified') : 'Unclassified';
+            const catName = catInfo ? catInfo.name : 'Unclassified';
+            // Expand via 1-hop graph traversal
+            const related = getRelatedFacts(db, fact.id, 1);
+            const relatedFacts = related.map(({ fact: relFact, relation }) => ({
+                fact: relFact.fact,
+                relationType: relation.relation_type,
+            }));
+            enrichedFacts.push({
+                fact: fact.fact,
+                category: fact.category,
+                domain: domainName,
+                categoryName: catName,
+                similarity,
+                relatedFacts,
+            });
+        }
+        return { facts: enrichedFacts };
+    }
+    finally {
+        db.close();
+    }
+}
+/**
+ * Format knowledge context as a readable section appended to search results.
+ */
+export function formatKnowledgeContext(context) {
+    if (context.facts.length === 0)
+        return '';
+    let output = '\n---\n**Related Knowledge (from past decisions):**\n\n';
+    for (const fact of context.facts) {
+        output += `- **[${fact.domain}/${fact.categoryName}]** ${fact.fact} _(${fact.category}, ${Math.round(fact.similarity * 100)}% relevant)_\n`;
+        for (const rel of fact.relatedFacts) {
+            output += `  - ${rel.relationType}: ${rel.fact}\n`;
+        }
+    }
+    return output;
 }
 export async function formatMultiConceptResults(results, concepts) {
     if (results.length === 0) {

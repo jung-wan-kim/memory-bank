@@ -24,12 +24,15 @@ export function parseJsonResponse(text) {
     const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/)
         || text.match(/(\[[\s\S]*\])/)
         || text.match(/(\{[\s\S]*\})/);
-    if (!jsonMatch)
+    if (!jsonMatch) {
+        console.error('parseJsonResponse: no JSON found in LLM response:', text.substring(0, 200));
         return null;
+    }
     try {
         return JSON.parse(jsonMatch[1]);
     }
-    catch {
+    catch (e) {
+        console.error('parseJsonResponse: invalid JSON:', e.message, jsonMatch[1].substring(0, 200));
         return null;
     }
 }

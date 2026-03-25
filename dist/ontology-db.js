@@ -76,11 +76,30 @@ export function createRelation(db, sourceFactId, relationType, targetFactId, rea
         created_at: now,
     };
 }
-export function getRelatedFacts(db, factId, hops = 1) {
+/**
+ * Get related facts with relevance decay.
+ *
+ * Each hop reduces relevance by the decay factor:
+ * - hop 0 (direct): relevance = 1.0
+ * - hop 1: relevance = decay (default 0.6)
+ * - hop 2: relevance = decay^2 (default 0.36)
+ *
+ * Results are sorted by relevance descending.
+ * Facts below minRelevance are pruned.
+ */
+/**
+ * @param scopeProject - If provided, only return facts from this project or global scope.
+ *                       Prevents cross-project noise in graph traversal.
+ *                       Pass null/undefined to allow cross-project traversal (e.g., explore_graph).
+ */
+export function getRelatedFacts(db, factId, hops = 1, decay = 0.6, minRelevance = 0.2, scopeProject) {
     const visited = new Set([factId]);
     const results = [];
     let frontier = [factId];
     for (let hop = 0; hop < hops; hop++) {
+        const hopRelevance = Math.pow(decay, hop);
+        if (hopRelevance < minRelevance)
+            break; // Prune entire hop if too weak
         const nextFrontier = [];
         for (const currentId of frontier) {
             // Outgoing relations (source → target)
@@ -95,11 +114,19 @@ export function getRelatedFacts(db, factId, hops = 1) {
                 const targetId = row['target_fact_id'];
                 if (visited.has(targetId))
                     continue;
-                visited.add(targetId);
-                nextFrontier.push(targetId);
                 const relation = rowToRelation(row);
                 const fact = rowToFact(row);
-                results.push({ fact, relation });
+                // Scope filter: skip facts from other projects (unless scopeProject is null)
+                if (scopeProject && fact.scope_type === 'project' && fact.scope_project !== scopeProject)
+                    continue;
+                visited.add(targetId);
+                nextFrontier.push(targetId);
+                // Relation type weight: SUPPORTS/INFLUENCES stronger than CONTRADICTS/SUPERSEDES
+                const typeWeight = (relation.relation_type === 'SUPPORTS' || relation.relation_type === 'INFLUENCES') ? 1.0 : 0.7;
+                const relevance = hopRelevance * typeWeight;
+                if (relevance >= minRelevance) {
+                    results.push({ fact, relation, relevance, hop: hop + 1 });
+                }
             }
             // Incoming relations (target ← source)
             const incoming = db
@@ -113,17 +140,26 @@ export function getRelatedFacts(db, factId, hops = 1) {
                 const sourceId = row['source_fact_id'];
                 if (visited.has(sourceId))
                     continue;
-                visited.add(sourceId);
-                nextFrontier.push(sourceId);
                 const relation = rowToRelation(row);
                 const fact = rowToFact(row);
-                results.push({ fact, relation });
+                // Scope filter: skip facts from other projects
+                if (scopeProject && fact.scope_type === 'project' && fact.scope_project !== scopeProject)
+                    continue;
+                visited.add(sourceId);
+                nextFrontier.push(sourceId);
+                const typeWeight = (relation.relation_type === 'SUPPORTS' || relation.relation_type === 'INFLUENCES') ? 1.0 : 0.7;
+                const relevance = hopRelevance * typeWeight;
+                if (relevance >= minRelevance) {
+                    results.push({ fact, relation, relevance, hop: hop + 1 });
+                }
             }
         }
         frontier = nextFrontier;
         if (frontier.length === 0)
             break;
     }
+    // Sort by relevance descending
+    results.sort((a, b) => b.relevance - a.relevance);
     return results;
 }
 export function getRelationsForFact(db, factId) {

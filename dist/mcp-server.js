@@ -3222,8 +3222,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path4) {
-      let input = path4;
+    function removeDotSegments(path5) {
+      let input = path5;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3422,8 +3422,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path4, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path4 && path4 !== "/" ? path4 : void 0;
+        const [path5, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path5 && path5 !== "/" ? path5 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -7276,8 +7276,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path4, errorMaps, issueData } = params;
-  const fullPath = [...path4, ...issueData.path || []];
+  const { data, path: path5, errorMaps, issueData } = params;
+  const fullPath = [...path5, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -7393,11 +7393,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path4, key) {
+  constructor(parent, value, path5, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path4;
+    this._path = path5;
     this._key = key;
   }
   get path() {
@@ -11035,10 +11035,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path4) {
-  if (!path4)
+function getElementAtPath(obj, path5) {
+  if (!path5)
     return obj;
-  return path4.reduce((acc, key) => acc?.[key], obj);
+  return path5.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -11358,11 +11358,11 @@ function aborted(x2, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path4, issues) {
+function prefixIssues(path5, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path4);
+    iss.path.unshift(path5);
     return iss;
   });
 }
@@ -17987,6 +17987,7 @@ function initDatabase() {
   const db = new Database(dbPath);
   sqliteVec.load(db);
   db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 5000");
   db.exec(`
     CREATE TABLE IF NOT EXISTS exchanges (
       id TEXT PRIMARY KEY,
@@ -18040,6 +18041,9 @@ function initDatabase() {
   `);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_sidechain ON exchanges(is_sidechain)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_archive_path ON exchanges(archive_path)
   `);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_git_branch ON exchanges(git_branch)
@@ -18161,6 +18165,199 @@ async function generateEmbedding(text) {
   return Array.from(output.data);
 }
 
+// src/fact-db.ts
+function getRevisions(db, factId) {
+  return db.prepare(
+    "SELECT * FROM fact_revisions WHERE fact_id = ? ORDER BY created_at DESC"
+  ).all(factId);
+}
+function searchSimilarFacts(db, embedding, project, limit = 5, threshold = 0.85) {
+  const vecResults = db.prepare(`
+    SELECT id, distance
+    FROM vec_facts
+    WHERE embedding MATCH ?
+    ORDER BY distance
+    LIMIT ?
+  `).all(Buffer.from(new Float32Array(embedding).buffer), limit * 2);
+  const results = [];
+  for (const vr of vecResults) {
+    const similarity = 1 - vr.distance * vr.distance / 2;
+    if (similarity < threshold) continue;
+    const row = db.prepare("SELECT * FROM facts WHERE id = ? AND is_active = 1").get(vr.id);
+    if (!row) continue;
+    const fact = rowToFact(row);
+    if (project && fact.scope_type === "project" && fact.scope_project !== project) continue;
+    results.push({ fact, distance: vr.distance });
+    if (results.length >= limit) break;
+  }
+  return results;
+}
+function searchAllFacts(db, embedding, limit = 10, threshold = 0.6) {
+  const vecResults = db.prepare(`
+    SELECT id, distance
+    FROM vec_facts
+    WHERE embedding MATCH ?
+    ORDER BY distance
+    LIMIT ?
+  `).all(Buffer.from(new Float32Array(embedding).buffer), limit * 2);
+  const results = [];
+  for (const vr of vecResults) {
+    const similarity = 1 - vr.distance * vr.distance / 2;
+    if (similarity < threshold) continue;
+    const row = db.prepare("SELECT * FROM facts WHERE id = ? AND is_active = 1").get(vr.id);
+    if (!row) continue;
+    results.push({ fact: rowToFact(row), distance: vr.distance });
+    if (results.length >= limit) break;
+  }
+  return results;
+}
+function rowToFact(row) {
+  const embeddingRaw = row["embedding"];
+  let embedding = null;
+  if (embeddingRaw instanceof Buffer) {
+    embedding = new Float32Array(embeddingRaw.buffer, embeddingRaw.byteOffset, embeddingRaw.byteLength / 4);
+  } else if (embeddingRaw instanceof Uint8Array) {
+    embedding = new Float32Array(embeddingRaw.buffer, embeddingRaw.byteOffset, embeddingRaw.byteLength / 4);
+  }
+  return {
+    id: row["id"],
+    fact: row["fact"],
+    category: row["category"],
+    scope_type: row["scope_type"],
+    scope_project: row["scope_project"] ?? null,
+    source_exchange_ids: row["source_exchange_ids"] ? JSON.parse(row["source_exchange_ids"]) : [],
+    embedding,
+    created_at: row["created_at"],
+    updated_at: row["updated_at"],
+    consolidated_count: row["consolidated_count"],
+    is_active: Boolean(row["is_active"]),
+    ontology_category_id: row["ontology_category_id"] ?? null
+  };
+}
+
+// src/ontology-db.ts
+function listDomains(db) {
+  return db.prepare(`SELECT * FROM ontology_domains ORDER BY name`).all();
+}
+function listCategories(db, domainId) {
+  if (domainId) {
+    return db.prepare(`SELECT * FROM ontology_categories WHERE domain_id = ? ORDER BY name`).all(domainId);
+  }
+  return db.prepare(`SELECT * FROM ontology_categories ORDER BY name`).all();
+}
+function getFactsByCategory(db, categoryId) {
+  return db.prepare(
+    `SELECT * FROM facts WHERE ontology_category_id = ? AND is_active = 1 ORDER BY consolidated_count DESC`
+  ).all(categoryId).map(rowToFact2);
+}
+function getRelatedFacts(db, factId, hops = 1, decay = 0.6, minRelevance = 0.2, scopeProject) {
+  const visited = /* @__PURE__ */ new Set([factId]);
+  const results = [];
+  let frontier = [factId];
+  for (let hop = 0; hop < hops; hop++) {
+    const hopRelevance = Math.pow(decay, hop);
+    if (hopRelevance < minRelevance) break;
+    const nextFrontier = [];
+    for (const currentId of frontier) {
+      const outgoing = db.prepare(
+        `SELECT r.*, f.*,
+                  r.id as rel_id, r.created_at as rel_created_at
+           FROM ontology_relations r
+           JOIN facts f ON r.target_fact_id = f.id
+           WHERE r.source_fact_id = ? AND f.is_active = 1`
+      ).all(currentId);
+      for (const row of outgoing) {
+        const targetId = row["target_fact_id"];
+        if (visited.has(targetId)) continue;
+        const relation = rowToRelation(row);
+        const fact = rowToFact2(row);
+        if (scopeProject && fact.scope_type === "project" && fact.scope_project !== scopeProject) continue;
+        visited.add(targetId);
+        nextFrontier.push(targetId);
+        const typeWeight = relation.relation_type === "SUPPORTS" || relation.relation_type === "INFLUENCES" ? 1 : 0.7;
+        const relevance = hopRelevance * typeWeight;
+        if (relevance >= minRelevance) {
+          results.push({ fact, relation, relevance, hop: hop + 1 });
+        }
+      }
+      const incoming = db.prepare(
+        `SELECT r.*, f.*,
+                  r.id as rel_id, r.created_at as rel_created_at
+           FROM ontology_relations r
+           JOIN facts f ON r.source_fact_id = f.id
+           WHERE r.target_fact_id = ? AND f.is_active = 1`
+      ).all(currentId);
+      for (const row of incoming) {
+        const sourceId = row["source_fact_id"];
+        if (visited.has(sourceId)) continue;
+        const relation = rowToRelation(row);
+        const fact = rowToFact2(row);
+        if (scopeProject && fact.scope_type === "project" && fact.scope_project !== scopeProject) continue;
+        visited.add(sourceId);
+        nextFrontier.push(sourceId);
+        const typeWeight = relation.relation_type === "SUPPORTS" || relation.relation_type === "INFLUENCES" ? 1 : 0.7;
+        const relevance = hopRelevance * typeWeight;
+        if (relevance >= minRelevance) {
+          results.push({ fact, relation, relevance, hop: hop + 1 });
+        }
+      }
+    }
+    frontier = nextFrontier;
+    if (frontier.length === 0) break;
+  }
+  results.sort((a, b2) => b2.relevance - a.relevance);
+  return results;
+}
+function getOntologyTree(db) {
+  const domains = listDomains(db);
+  const tree = [];
+  for (const domain of domains) {
+    const categories = listCategories(db, domain.id);
+    const domainEntry = {
+      domain,
+      categories: []
+    };
+    for (const category of categories) {
+      const facts = getFactsByCategory(db, category.id);
+      domainEntry.categories.push({ category, facts });
+    }
+    tree.push(domainEntry);
+  }
+  return tree;
+}
+function rowToFact2(row) {
+  const embeddingRaw = row["embedding"];
+  let embedding = null;
+  if (embeddingRaw instanceof Buffer) {
+    embedding = new Float32Array(embeddingRaw.buffer, embeddingRaw.byteOffset, embeddingRaw.byteLength / 4);
+  } else if (embeddingRaw instanceof Uint8Array) {
+    embedding = new Float32Array(embeddingRaw.buffer, embeddingRaw.byteOffset, embeddingRaw.byteLength / 4);
+  }
+  return {
+    id: row["id"],
+    fact: row["fact"],
+    category: row["category"],
+    scope_type: row["scope_type"],
+    scope_project: row["scope_project"] ?? null,
+    source_exchange_ids: row["source_exchange_ids"] ? JSON.parse(row["source_exchange_ids"]) : [],
+    embedding,
+    created_at: row["created_at"],
+    updated_at: row["updated_at"],
+    consolidated_count: row["consolidated_count"],
+    is_active: Boolean(row["is_active"])
+  };
+}
+function rowToRelation(row) {
+  return {
+    id: row["rel_id"] ?? row["id"],
+    source_fact_id: row["source_fact_id"],
+    relation_type: row["relation_type"],
+    target_fact_id: row["target_fact_id"],
+    reasoning: row["reasoning"] ?? null,
+    created_at: row["rel_created_at"] ?? row["created_at"]
+  };
+}
+
 // src/search.ts
 import fs3 from "fs";
 import readline from "readline";
@@ -18180,67 +18377,72 @@ async function searchConversations(query, options = {}) {
   if (before) validateISODate(before, "--before");
   const db = initDatabase();
   let results = [];
-  const timeFilter = [];
-  if (after) timeFilter.push(`e.timestamp >= '${after}'`);
-  if (before) timeFilter.push(`e.timestamp <= '${before}'`);
-  const timeClause = timeFilter.length > 0 ? `AND ${timeFilter.join(" AND ")}` : "";
-  if (mode === "vector" || mode === "both") {
-    await initEmbeddings();
-    const queryEmbedding = await generateEmbedding(query);
-    const stmt = db.prepare(`
-      SELECT
-        e.id,
-        e.project,
-        e.timestamp,
-        e.user_message,
-        e.assistant_message,
-        e.archive_path,
-        e.line_start,
-        e.line_end,
-        vec.distance
-      FROM vec_exchanges AS vec
-      JOIN exchanges AS e ON vec.id = e.id
-      WHERE vec.embedding MATCH ?
-        AND k = ?
-        ${timeClause}
-      ORDER BY vec.distance ASC
-    `);
-    results = stmt.all(
-      Buffer.from(new Float32Array(queryEmbedding).buffer),
-      limit
-    );
-  }
-  if (mode === "text" || mode === "both") {
-    const textStmt = db.prepare(`
-      SELECT
-        e.id,
-        e.project,
-        e.timestamp,
-        e.user_message,
-        e.assistant_message,
-        e.archive_path,
-        e.line_start,
-        e.line_end,
-        0 as distance
-      FROM exchanges AS e
-      WHERE (e.user_message LIKE ? OR e.assistant_message LIKE ?)
-        ${timeClause}
-      ORDER BY e.timestamp DESC
-      LIMIT ?
-    `);
-    const textResults = textStmt.all(`%${query}%`, `%${query}%`, limit);
-    if (mode === "both") {
-      const seenIds = new Set(results.map((r) => r.id));
-      for (const textResult of textResults) {
-        if (!seenIds.has(textResult.id)) {
-          results.push(textResult);
-        }
-      }
-    } else {
-      results = textResults;
+  try {
+    const timeFilter = [];
+    if (after) timeFilter.push(`e.timestamp >= '${after}'`);
+    if (before) timeFilter.push(`e.timestamp <= '${before}'`);
+    const timeClause = timeFilter.length > 0 ? `AND ${timeFilter.join(" AND ")}` : "";
+    if (mode === "vector" || mode === "both") {
+      await initEmbeddings();
+      const queryEmbedding = await generateEmbedding(query);
+      const stmt = db.prepare(`
+        SELECT
+          e.id,
+          e.project,
+          e.timestamp,
+          e.user_message,
+          e.assistant_message,
+          e.archive_path,
+          e.line_start,
+          e.line_end,
+          vec.distance
+        FROM vec_exchanges AS vec
+        JOIN exchanges AS e ON vec.id = e.id
+        WHERE vec.embedding MATCH ?
+          AND k = ?
+          ${timeClause}
+        ORDER BY vec.distance ASC
+      `);
+      results = stmt.all(
+        Buffer.from(new Float32Array(queryEmbedding).buffer),
+        limit
+      );
     }
+    if (mode === "text" || mode === "both") {
+      const escapedQuery = query.replace(/%/g, "\\%").replace(/_/g, "\\_");
+      const likePattern = `%${escapedQuery}%`;
+      const textStmt = db.prepare(`
+        SELECT
+          e.id,
+          e.project,
+          e.timestamp,
+          e.user_message,
+          e.assistant_message,
+          e.archive_path,
+          e.line_start,
+          e.line_end,
+          0 as distance
+        FROM exchanges AS e
+        WHERE (e.user_message LIKE ? ESCAPE '\\' OR e.assistant_message LIKE ? ESCAPE '\\')
+          ${timeClause}
+        ORDER BY e.timestamp DESC
+        LIMIT ?
+      `);
+      const textResults = textStmt.all(likePattern, likePattern, limit);
+      if (mode === "both") {
+        const seenIds = new Set(results.map((r) => r.id));
+        for (const textResult of textResults) {
+          if (!seenIds.has(textResult.id)) {
+            results.push(textResult);
+          }
+        }
+      } else {
+        results = textResults;
+      }
+    }
+  } finally {
+    db.close();
   }
-  db.close();
   return results.map((row) => {
     const exchange = {
       id: row.id,
@@ -18254,8 +18456,9 @@ async function searchConversations(query, options = {}) {
     };
     const summaryPath = row.archive_path.replace(".jsonl", "-summary.txt");
     let summary;
-    if (fs3.existsSync(summaryPath)) {
+    try {
       summary = fs3.readFileSync(summaryPath, "utf-8").trim();
+    } catch {
     }
     const snippetText = exchange.userMessage.substring(0, 200).replace(/\s+/g, " ").trim();
     const snippet = snippetText + (exchange.userMessage.length > 200 ? "..." : "");
@@ -18350,7 +18553,7 @@ async function searchMultipleConcepts(concepts, options = {}) {
     });
   });
   const multiConceptResults = [];
-  for (const [archivePath, results] of conversationMap.entries()) {
+  for (const [, results] of conversationMap.entries()) {
     const representedConcepts = new Set(results.map((r) => r.conceptIndex));
     if (representedConcepts.size === concepts.length) {
       const conceptSimilarities = concepts.map((_concept, index) => {
@@ -18369,6 +18572,57 @@ async function searchMultipleConcepts(concepts, options = {}) {
   }
   multiConceptResults.sort((a, b2) => b2.averageSimilarity - a.averageSimilarity);
   return multiConceptResults.slice(0, limit);
+}
+async function getKnowledgeContext(query, project, limit = 5) {
+  await initEmbeddings();
+  const db = initDatabase();
+  try {
+    const queryEmbedding = await generateEmbedding(query);
+    const factResults = searchSimilarFacts(db, queryEmbedding, project ?? null, limit, 0.6);
+    if (factResults.length === 0) {
+      return { facts: [] };
+    }
+    const domains = listDomains(db);
+    const categories = listCategories(db);
+    const domainMap = new Map(domains.map((d2) => [d2.id, d2.name]));
+    const categoryMap = new Map(categories.map((c) => [c.id, { name: c.name, domainId: c.domain_id }]));
+    const enrichedFacts = [];
+    for (const { fact, distance } of factResults) {
+      const similarity = parseFloat((1 - distance * distance / 2).toFixed(3));
+      const catInfo = fact.ontology_category_id ? categoryMap.get(fact.ontology_category_id) : void 0;
+      const domainName = catInfo ? domainMap.get(catInfo.domainId) ?? "Unclassified" : "Unclassified";
+      const catName = catInfo ? catInfo.name : "Unclassified";
+      const related = getRelatedFacts(db, fact.id, 1);
+      const relatedFacts = related.map(({ fact: relFact, relation }) => ({
+        fact: relFact.fact,
+        relationType: relation.relation_type
+      }));
+      enrichedFacts.push({
+        fact: fact.fact,
+        category: fact.category,
+        domain: domainName,
+        categoryName: catName,
+        similarity,
+        relatedFacts
+      });
+    }
+    return { facts: enrichedFacts };
+  } finally {
+    db.close();
+  }
+}
+function formatKnowledgeContext(context) {
+  if (context.facts.length === 0) return "";
+  let output = "\n---\n**Related Knowledge (from past decisions):**\n\n";
+  for (const fact of context.facts) {
+    output += `- **[${fact.domain}/${fact.categoryName}]** ${fact.fact} _(${fact.category}, ${Math.round(fact.similarity * 100)}% relevant)_
+`;
+    for (const rel of fact.relatedFacts) {
+      output += `  - ${rel.relationType}: ${rel.fact}
+`;
+    }
+  }
+  return output;
 }
 async function formatMultiConceptResults(results, concepts) {
   if (results.length === 0) {
@@ -19565,13 +19819,23 @@ var Ut = b.parse;
 var Kt = x.lex;
 
 // src/show.ts
+function parseJsonlMessages(lines) {
+  const messages = [];
+  for (const line of lines) {
+    try {
+      messages.push(JSON.parse(line));
+    } catch {
+    }
+  }
+  return messages;
+}
 function formatConversationAsMarkdown(jsonl, startLine, endLine) {
   const allLines = jsonl.trim().split("\n").filter((line) => line.trim());
   const lines = startLine !== void 0 || endLine !== void 0 ? allLines.slice(
     startLine !== void 0 ? startLine - 1 : 0,
     endLine !== void 0 ? endLine : void 0
   ) : allLines;
-  const allMessages = lines.map((line) => JSON.parse(line));
+  const allMessages = parseJsonlMessages(lines);
   const messages = allMessages.filter((msg) => {
     if (msg.type !== "user" && msg.type !== "assistant") return false;
     if (!msg.timestamp) return false;
@@ -19765,167 +20029,6 @@ ${JSON.stringify(value, null, 2)}
     output += "---\n\n";
   }
   return output;
-}
-
-// src/fact-db.ts
-function getRevisions(db, factId) {
-  return db.prepare(
-    "SELECT * FROM fact_revisions WHERE fact_id = ? ORDER BY created_at DESC"
-  ).all(factId);
-}
-function searchSimilarFacts(db, embedding, project, limit = 5, threshold = 0.85) {
-  const vecResults = db.prepare(`
-    SELECT id, distance
-    FROM vec_facts
-    WHERE embedding MATCH ?
-    ORDER BY distance
-    LIMIT ?
-  `).all(Buffer.from(new Float32Array(embedding).buffer), limit * 2);
-  const results = [];
-  for (const vr of vecResults) {
-    const similarity = 1 - vr.distance * vr.distance / 2;
-    if (similarity < threshold) continue;
-    const row = db.prepare("SELECT * FROM facts WHERE id = ? AND is_active = 1").get(vr.id);
-    if (!row) continue;
-    const fact = rowToFact(row);
-    if (project && fact.scope_type === "project" && fact.scope_project !== project) continue;
-    results.push({ fact, distance: vr.distance });
-    if (results.length >= limit) break;
-  }
-  return results;
-}
-function rowToFact(row) {
-  const embeddingRaw = row["embedding"];
-  let embedding = null;
-  if (embeddingRaw instanceof Buffer) {
-    embedding = new Float32Array(embeddingRaw.buffer, embeddingRaw.byteOffset, embeddingRaw.byteLength / 4);
-  } else if (embeddingRaw instanceof Uint8Array) {
-    embedding = new Float32Array(embeddingRaw.buffer, embeddingRaw.byteOffset, embeddingRaw.byteLength / 4);
-  }
-  return {
-    id: row["id"],
-    fact: row["fact"],
-    category: row["category"],
-    scope_type: row["scope_type"],
-    scope_project: row["scope_project"] ?? null,
-    source_exchange_ids: row["source_exchange_ids"] ? JSON.parse(row["source_exchange_ids"]) : [],
-    embedding,
-    created_at: row["created_at"],
-    updated_at: row["updated_at"],
-    consolidated_count: row["consolidated_count"],
-    is_active: Boolean(row["is_active"]),
-    ontology_category_id: row["ontology_category_id"] ?? null
-  };
-}
-
-// src/ontology-db.ts
-function listDomains(db) {
-  return db.prepare(`SELECT * FROM ontology_domains ORDER BY name`).all();
-}
-function listCategories(db, domainId) {
-  if (domainId) {
-    return db.prepare(`SELECT * FROM ontology_categories WHERE domain_id = ? ORDER BY name`).all(domainId);
-  }
-  return db.prepare(`SELECT * FROM ontology_categories ORDER BY name`).all();
-}
-function getFactsByCategory(db, categoryId) {
-  return db.prepare(
-    `SELECT * FROM facts WHERE ontology_category_id = ? AND is_active = 1 ORDER BY consolidated_count DESC`
-  ).all(categoryId).map(rowToFact2);
-}
-function getRelatedFacts(db, factId, hops = 1) {
-  const visited = /* @__PURE__ */ new Set([factId]);
-  const results = [];
-  let frontier = [factId];
-  for (let hop = 0; hop < hops; hop++) {
-    const nextFrontier = [];
-    for (const currentId of frontier) {
-      const outgoing = db.prepare(
-        `SELECT r.*, f.*,
-                  r.id as rel_id, r.created_at as rel_created_at
-           FROM ontology_relations r
-           JOIN facts f ON r.target_fact_id = f.id
-           WHERE r.source_fact_id = ? AND f.is_active = 1`
-      ).all(currentId);
-      for (const row of outgoing) {
-        const targetId = row["target_fact_id"];
-        if (visited.has(targetId)) continue;
-        visited.add(targetId);
-        nextFrontier.push(targetId);
-        const relation = rowToRelation(row);
-        const fact = rowToFact2(row);
-        results.push({ fact, relation });
-      }
-      const incoming = db.prepare(
-        `SELECT r.*, f.*,
-                  r.id as rel_id, r.created_at as rel_created_at
-           FROM ontology_relations r
-           JOIN facts f ON r.source_fact_id = f.id
-           WHERE r.target_fact_id = ? AND f.is_active = 1`
-      ).all(currentId);
-      for (const row of incoming) {
-        const sourceId = row["source_fact_id"];
-        if (visited.has(sourceId)) continue;
-        visited.add(sourceId);
-        nextFrontier.push(sourceId);
-        const relation = rowToRelation(row);
-        const fact = rowToFact2(row);
-        results.push({ fact, relation });
-      }
-    }
-    frontier = nextFrontier;
-    if (frontier.length === 0) break;
-  }
-  return results;
-}
-function getOntologyTree(db) {
-  const domains = listDomains(db);
-  const tree = [];
-  for (const domain of domains) {
-    const categories = listCategories(db, domain.id);
-    const domainEntry = {
-      domain,
-      categories: []
-    };
-    for (const category of categories) {
-      const facts = getFactsByCategory(db, category.id);
-      domainEntry.categories.push({ category, facts });
-    }
-    tree.push(domainEntry);
-  }
-  return tree;
-}
-function rowToFact2(row) {
-  const embeddingRaw = row["embedding"];
-  let embedding = null;
-  if (embeddingRaw instanceof Buffer) {
-    embedding = new Float32Array(embeddingRaw.buffer, embeddingRaw.byteOffset, embeddingRaw.byteLength / 4);
-  } else if (embeddingRaw instanceof Uint8Array) {
-    embedding = new Float32Array(embeddingRaw.buffer, embeddingRaw.byteOffset, embeddingRaw.byteLength / 4);
-  }
-  return {
-    id: row["id"],
-    fact: row["fact"],
-    category: row["category"],
-    scope_type: row["scope_type"],
-    scope_project: row["scope_project"] ?? null,
-    source_exchange_ids: row["source_exchange_ids"] ? JSON.parse(row["source_exchange_ids"]) : [],
-    embedding,
-    created_at: row["created_at"],
-    updated_at: row["updated_at"],
-    consolidated_count: row["consolidated_count"],
-    is_active: Boolean(row["is_active"])
-  };
-}
-function rowToRelation(row) {
-  return {
-    id: row["rel_id"] ?? row["id"],
-    source_fact_id: row["source_fact_id"],
-    relation_type: row["relation_type"],
-    target_fact_id: row["target_fact_id"],
-    reasoning: row["reasoning"] ?? null,
-    created_at: row["rel_created_at"] ?? row["created_at"]
-  };
 }
 
 // node_modules/@anthropic-ai/sdk/internal/tslib.mjs
@@ -21262,12 +21365,12 @@ function encodeURIPath(str) {
   return str.replace(/[^A-Za-z0-9\-._~!$&'()*+,;=:@]+/g, encodeURIComponent);
 }
 var EMPTY = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.create(null));
-var createPathTagFunction = (pathEncoder = encodeURIPath) => function path4(statics, ...params) {
+var createPathTagFunction = (pathEncoder = encodeURIPath) => function path5(statics, ...params) {
   if (statics.length === 1)
     return statics[0];
   let postPath = false;
   const invalidSegments = [];
-  const path5 = statics.reduce((previousValue, currentValue, index) => {
+  const path6 = statics.reduce((previousValue, currentValue, index) => {
     if (/[?#]/.test(currentValue)) {
       postPath = true;
     }
@@ -21284,7 +21387,7 @@ var createPathTagFunction = (pathEncoder = encodeURIPath) => function path4(stat
     }
     return previousValue + currentValue + (index === params.length ? "" : encoded);
   }, "");
-  const pathOnly = path5.split(/[?#]/, 1)[0];
+  const pathOnly = path6.split(/[?#]/, 1)[0];
   const invalidSegmentPattern = /(?<=^|\/)(?:\.|%2e){1,2}(?=\/|$)/gi;
   let match;
   while ((match = invalidSegmentPattern.exec(pathOnly)) !== null) {
@@ -21305,10 +21408,10 @@ var createPathTagFunction = (pathEncoder = encodeURIPath) => function path4(stat
     }, "");
     throw new AnthropicError(`Path parameters result in path with invalid segments:
 ${invalidSegments.map((e) => e.error).join("\n")}
-${path5}
+${path6}
 ${underline}`);
   }
-  return path5;
+  return path6;
 };
 var path3 = /* @__PURE__ */ createPathTagFunction(encodeURIPath);
 
@@ -24419,9 +24522,9 @@ var BaseAnthropic = class {
   makeStatusError(status, error2, message, headers) {
     return APIError.generate(status, error2, message, headers);
   }
-  buildURL(path4, query, defaultBaseURL) {
+  buildURL(path5, query, defaultBaseURL) {
     const baseURL = !__classPrivateFieldGet(this, _BaseAnthropic_instances, "m", _BaseAnthropic_baseURLOverridden).call(this) && defaultBaseURL || this.baseURL;
-    const url = isAbsoluteURL(path4) ? new URL(path4) : new URL(baseURL + (baseURL.endsWith("/") && path4.startsWith("/") ? path4.slice(1) : path4));
+    const url = isAbsoluteURL(path5) ? new URL(path5) : new URL(baseURL + (baseURL.endsWith("/") && path5.startsWith("/") ? path5.slice(1) : path5));
     const defaultQuery = this.defaultQuery();
     if (!isEmptyObj(defaultQuery)) {
       query = { ...defaultQuery, ...query };
@@ -24452,24 +24555,24 @@ var BaseAnthropic = class {
    */
   async prepareRequest(request, { url, options }) {
   }
-  get(path4, opts) {
-    return this.methodRequest("get", path4, opts);
+  get(path5, opts) {
+    return this.methodRequest("get", path5, opts);
   }
-  post(path4, opts) {
-    return this.methodRequest("post", path4, opts);
+  post(path5, opts) {
+    return this.methodRequest("post", path5, opts);
   }
-  patch(path4, opts) {
-    return this.methodRequest("patch", path4, opts);
+  patch(path5, opts) {
+    return this.methodRequest("patch", path5, opts);
   }
-  put(path4, opts) {
-    return this.methodRequest("put", path4, opts);
+  put(path5, opts) {
+    return this.methodRequest("put", path5, opts);
   }
-  delete(path4, opts) {
-    return this.methodRequest("delete", path4, opts);
+  delete(path5, opts) {
+    return this.methodRequest("delete", path5, opts);
   }
-  methodRequest(method, path4, opts) {
+  methodRequest(method, path5, opts) {
     return this.request(Promise.resolve(opts).then((opts2) => {
-      return { method, path: path4, ...opts2 };
+      return { method, path: path5, ...opts2 };
     }));
   }
   request(options, remainingRetries = null) {
@@ -24573,8 +24676,8 @@ var BaseAnthropic = class {
     }));
     return { response, options, controller, requestLogID, retryOfRequestLogID, startTime };
   }
-  getAPIList(path4, Page2, opts) {
-    return this.requestAPIList(Page2, opts && "then" in opts ? opts.then((opts2) => ({ method: "get", path: path4, ...opts2 })) : { method: "get", path: path4, ...opts });
+  getAPIList(path5, Page2, opts) {
+    return this.requestAPIList(Page2, opts && "then" in opts ? opts.then((opts2) => ({ method: "get", path: path5, ...opts2 })) : { method: "get", path: path5, ...opts });
   }
   requestAPIList(Page2, options) {
     const request = this.makeRequest(options, null, void 0);
@@ -24662,8 +24765,8 @@ var BaseAnthropic = class {
   }
   async buildRequest(inputOptions, { retryCount = 0 } = {}) {
     const options = { ...inputOptions };
-    const { method, path: path4, query, defaultBaseURL } = options;
-    const url = this.buildURL(path4, query, defaultBaseURL);
+    const { method, path: path5, query, defaultBaseURL } = options;
+    const url = this.buildURL(path5, query, defaultBaseURL);
     if ("timeout" in options)
       validatePositiveInteger("timeout", options.timeout);
     options.timeout = options.timeout ?? this.timeout;
@@ -24795,10 +24898,14 @@ async function callHaiku(systemPrompt, userMessage, maxTokens = 2048) {
 }
 function parseJsonResponse(text) {
   const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/(\[[\s\S]*\])/) || text.match(/(\{[\s\S]*\})/);
-  if (!jsonMatch) return null;
+  if (!jsonMatch) {
+    console.error("parseJsonResponse: no JSON found in LLM response:", text.substring(0, 200));
+    return null;
+  }
   try {
     return JSON.parse(jsonMatch[1]);
-  } catch {
+  } catch (e) {
+    console.error("parseJsonResponse: invalid JSON:", e.message, jsonMatch[1].substring(0, 200));
     return null;
   }
 }
@@ -24912,6 +25019,7 @@ async function askAvatar(db, question, project) {
 
 // src/mcp-server.ts
 import fs4 from "fs";
+import path4 from "path";
 var SearchModeEnum = external_exports.enum(["vector", "text", "both"]);
 var ResponseFormatEnum = external_exports.enum(["markdown", "json"]);
 var SearchInputSchema = external_exports.object({
@@ -25088,6 +25196,87 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           idempotentHint: false,
           openWorldHint: false
         }
+      },
+      {
+        name: "trace_fact",
+        description: "Trace a fact back to its source conversations. Shows the original exchanges that led to a knowledge graph fact, providing full provenance and context.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", minLength: 2, description: "Search query to find the fact to trace" },
+            project: { type: "string", description: "Project path to scope the search (optional)" },
+            limit: { type: "number", minimum: 1, maximum: 10, default: 3, description: "Max facts to trace" }
+          },
+          required: ["query"],
+          additionalProperties: false
+        },
+        annotations: {
+          title: "Trace Fact Provenance",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "graph_stats",
+        description: "Get knowledge graph statistics: total facts, domains, categories, relations, and top domains by fact count. Useful for understanding what knowledge has been accumulated.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            project: { type: "string", description: "Project path to scope stats (optional, default: all)" }
+          },
+          additionalProperties: false
+        },
+        annotations: {
+          title: "Knowledge Graph Stats",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "cross_project_insights",
+        description: "Find similar decisions and patterns from OTHER projects. Useful for knowledge transfer \u2014 see how similar problems were solved in different projects.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", minLength: 2, description: "Topic or decision to find cross-project insights for" },
+            current_project: { type: "string", description: "Current project path (results from this project are excluded)" },
+            limit: { type: "number", minimum: 1, maximum: 20, default: 5, description: "Max results" }
+          },
+          required: ["query"],
+          additionalProperties: false
+        },
+        annotations: {
+          title: "Cross-Project Insights",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "explore_graph",
+        description: "Explore the knowledge graph starting from a fact or topic. Performs multi-hop traversal to discover indirectly connected knowledge, patterns, and decision chains.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", minLength: 2, description: "Starting topic or fact to explore from" },
+            hops: { type: "number", minimum: 1, maximum: 3, default: 2, description: "Graph traversal depth (1-3 hops)" },
+            project: { type: "string", description: "Project scope (optional)" }
+          },
+          required: ["query"],
+          additionalProperties: false
+        },
+        annotations: {
+          title: "Explore Knowledge Graph",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       }
     ]
   };
@@ -25142,6 +25331,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           );
         } else {
           resultText = await formatResults(results);
+          try {
+            const knowledgeCtx = await getKnowledgeContext(params.query, null, 3);
+            resultText += formatKnowledgeContext(knowledgeCtx);
+          } catch {
+          }
         }
       }
       return {
@@ -25155,10 +25349,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     if (name === "read") {
       const params = ShowConversationInputSchema.parse(args);
-      if (!fs4.existsSync(params.path)) {
-        throw new Error(`File not found: ${params.path}`);
+      const resolvedPath = path4.resolve(params.path);
+      if (!resolvedPath.endsWith(".jsonl")) {
+        throw new Error(`Invalid file type: only .jsonl files are supported`);
       }
-      const jsonlContent = fs4.readFileSync(params.path, "utf-8");
+      if (!fs4.existsSync(resolvedPath)) {
+        throw new Error(`File not found: ${resolvedPath}`);
+      }
+      const jsonlContent = fs4.readFileSync(resolvedPath, "utf-8");
       const markdownContent = formatConversationAsMarkdown(
         jsonlContent,
         params.startLine,
@@ -25176,9 +25374,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === "search_facts") {
       const params = SearchFactsInputSchema.parse(args);
       const currentProject = params.project || process.cwd();
+      await initEmbeddings();
+      const db = initDatabase();
       try {
-        await initEmbeddings();
-        const db = initDatabase();
         const queryEmbedding = await generateEmbedding(params.query);
         const results = searchSimilarFacts(db, queryEmbedding, currentProject, params.limit);
         const filtered = params.category ? results.filter((r) => r.fact.category === params.category) : results;
@@ -25192,13 +25390,22 @@ Results: ${filtered.length}
         if (filtered.length === 0) {
           output += "_No matching facts found._\n";
         }
+        const allDomains = listDomains(db);
+        const allCategories = listCategories(db);
+        const domainMap = new Map(allDomains.map((d2) => [d2.id, d2.name]));
+        const catMap = new Map(allCategories.map((c) => [c.id, { name: c.name, domainId: c.domain_id }]));
         for (const { fact, distance } of filtered) {
           const similarity = (1 - distance * distance / 2).toFixed(3);
+          const catInfo = fact.ontology_category_id ? catMap.get(fact.ontology_category_id) : void 0;
+          const domainName = catInfo ? domainMap.get(catInfo.domainId) ?? "" : "";
+          const catName = catInfo ? catInfo.name : "";
           output += `## [${fact.category}] ${fact.fact}
 `;
           output += `- Scope: ${fact.scope_type}${fact.scope_project ? ` (${fact.scope_project})` : ""}
 `;
           output += `- Confirmed: ${fact.consolidated_count}x | Similarity: ${similarity}
+`;
+          if (domainName) output += `- Ontology: ${domainName}/${catName}
 `;
           output += `- Created: ${fact.created_at}
 `;
@@ -25212,9 +25419,17 @@ Results: ${filtered.length}
               }
             }
           }
+          const related = getRelatedFacts(db, fact.id, 1);
+          if (related.length > 0) {
+            output += `- Related:
+`;
+            for (const { fact: relFact, relation } of related) {
+              output += `  - [${relation.relation_type}] ${relFact.fact}
+`;
+            }
+          }
           output += "\n";
         }
-        db.close();
         return {
           content: [{ type: "text", text: output }]
         };
@@ -25223,6 +25438,8 @@ Results: ${filtered.length}
           content: [{ type: "text", text: handleError(error2) }],
           isError: true
         };
+      } finally {
+        db.close();
       }
     }
     if (name === "search_ontology") {
@@ -25337,6 +25554,287 @@ Results: ${filtered.length}
           content: [{ type: "text", text: handleError(error2) }],
           isError: true
         };
+      }
+    }
+    if (name === "trace_fact") {
+      const params = external_exports.object({
+        query: external_exports.string().min(2),
+        project: external_exports.string().optional(),
+        limit: external_exports.number().int().min(1).max(10).default(3)
+      }).strict().parse(args);
+      const currentProject = params.project || process.cwd();
+      await initEmbeddings();
+      const db = initDatabase();
+      try {
+        const queryEmbedding = await generateEmbedding(params.query);
+        const results = searchSimilarFacts(db, queryEmbedding, currentProject, params.limit, 0.5);
+        if (results.length === 0) {
+          return { content: [{ type: "text", text: "No matching facts found to trace." }] };
+        }
+        let output = `# Fact Provenance Trace
+
+Query: "${params.query}"
+
+`;
+        for (const { fact, distance } of results) {
+          const similarity = (1 - distance * distance / 2).toFixed(3);
+          output += `## ${fact.fact}
+`;
+          output += `- Category: ${fact.category} | Scope: ${fact.scope_type}
+`;
+          output += `- Similarity: ${similarity} | Confirmed: ${fact.consolidated_count}x
+`;
+          output += `- Created: ${fact.created_at}
+`;
+          if (fact.source_exchange_ids && fact.source_exchange_ids.length > 0) {
+            output += `
+### Source Conversations
+
+`;
+            for (const exchangeId of fact.source_exchange_ids) {
+              const exchange = db.prepare(
+                "SELECT id, project, timestamp, user_message, archive_path, line_start, line_end FROM exchanges WHERE id = ?"
+              ).get(exchangeId);
+              if (exchange) {
+                const userMsg = exchange["user_message"].substring(0, 200).replace(/\s+/g, " ");
+                output += `- **[${exchange["project"]}, ${exchange["timestamp"].slice(0, 10)}]**
+`;
+                output += `  "${userMsg}..."
+`;
+                output += `  Lines ${exchange["line_start"]}-${exchange["line_end"]} in ${exchange["archive_path"]}
+
+`;
+              }
+            }
+          } else {
+            output += `
+_Source exchanges not available._
+
+`;
+          }
+          const revisions = getRevisions(db, fact.id);
+          if (revisions.length > 0) {
+            output += `### Revision History
+
+`;
+            for (const rev of revisions) {
+              output += `- ${rev.created_at.slice(0, 10)}: "${rev.previous_fact}" \u2192 "${rev.new_fact}" (${rev.reason})
+`;
+            }
+            output += "\n";
+          }
+          const related = getRelatedFacts(db, fact.id, 1);
+          if (related.length > 0) {
+            output += `### Related Facts (1-hop)
+
+`;
+            for (const { fact: relFact, relation } of related) {
+              output += `- **[${relation.relation_type}]** ${relFact.fact}
+`;
+            }
+            output += "\n";
+          }
+        }
+        return { content: [{ type: "text", text: output }] };
+      } catch (error2) {
+        return {
+          content: [{ type: "text", text: handleError(error2) }],
+          isError: true
+        };
+      } finally {
+        db.close();
+      }
+    }
+    if (name === "graph_stats") {
+      const params = external_exports.object({
+        project: external_exports.string().optional()
+      }).strict().parse(args);
+      const db = initDatabase();
+      try {
+        const totalFacts = db.prepare("SELECT COUNT(*) as count FROM facts WHERE is_active = 1").get().count;
+        const totalDomains = db.prepare("SELECT COUNT(*) as count FROM ontology_domains").get().count;
+        const totalCategories = db.prepare("SELECT COUNT(*) as count FROM ontology_categories").get().count;
+        const totalRelations = db.prepare("SELECT COUNT(*) as count FROM ontology_relations").get().count;
+        const totalRevisions = db.prepare("SELECT COUNT(*) as count FROM fact_revisions").get().count;
+        const categoryBreakdown = db.prepare(
+          "SELECT category, COUNT(*) as count FROM facts WHERE is_active = 1 GROUP BY category ORDER BY count DESC"
+        ).all();
+        const topDomains = db.prepare(`
+          SELECT d.name, COUNT(f.id) as fact_count
+          FROM ontology_domains d
+          JOIN ontology_categories c ON c.domain_id = d.id
+          JOIN facts f ON f.ontology_category_id = c.id AND f.is_active = 1
+          GROUP BY d.id ORDER BY fact_count DESC LIMIT 10
+        `).all();
+        const relationBreakdown = db.prepare(
+          "SELECT relation_type, COUNT(*) as count FROM ontology_relations GROUP BY relation_type ORDER BY count DESC"
+        ).all();
+        let output = `# Knowledge Graph Statistics
+
+`;
+        output += `| Metric | Count |
+|--------|-------|
+`;
+        output += `| Active Facts | ${totalFacts} |
+`;
+        output += `| Domains | ${totalDomains} |
+`;
+        output += `| Categories | ${totalCategories} |
+`;
+        output += `| Relations | ${totalRelations} |
+`;
+        output += `| Revisions | ${totalRevisions} |
+
+`;
+        if (categoryBreakdown.length > 0) {
+          output += `## Fact Categories
+
+`;
+          for (const { category, count } of categoryBreakdown) output += `- ${category}: ${count}
+`;
+          output += "\n";
+        }
+        if (topDomains.length > 0) {
+          output += `## Top Domains
+
+`;
+          for (const { name: dn, fact_count } of topDomains) output += `- ${dn}: ${fact_count} facts
+`;
+          output += "\n";
+        }
+        if (relationBreakdown.length > 0) {
+          output += `## Relation Types
+
+`;
+          for (const { relation_type, count } of relationBreakdown) output += `- ${relation_type}: ${count}
+`;
+          output += "\n";
+        }
+        return { content: [{ type: "text", text: output }] };
+      } catch (error2) {
+        return { content: [{ type: "text", text: handleError(error2) }], isError: true };
+      } finally {
+        db.close();
+      }
+    }
+    if (name === "cross_project_insights") {
+      const params = external_exports.object({
+        query: external_exports.string().min(2),
+        current_project: external_exports.string().optional(),
+        limit: external_exports.number().int().min(1).max(20).default(5)
+      }).strict().parse(args);
+      await initEmbeddings();
+      const db = initDatabase();
+      try {
+        const queryEmbedding = await generateEmbedding(params.query);
+        const allResults = searchAllFacts(db, queryEmbedding, params.limit * 3, 0.5);
+        const currentProject = params.current_project || process.cwd();
+        const crossProjectResults = allResults.filter(
+          (r) => r.fact.scope_type === "project" && r.fact.scope_project !== currentProject
+        ).slice(0, params.limit);
+        if (crossProjectResults.length === 0) {
+          return { content: [{ type: "text", text: `No cross-project insights found for "${params.query}". Similar decisions may not exist in other projects yet.` }] };
+        }
+        const byProject = /* @__PURE__ */ new Map();
+        for (const { fact, distance } of crossProjectResults) {
+          const proj = fact.scope_project || "global";
+          if (!byProject.has(proj)) byProject.set(proj, []);
+          byProject.get(proj).push({ fact, distance });
+        }
+        let output = `# Cross-Project Insights
+
+Query: "${params.query}"
+Excluding: ${currentProject}
+
+`;
+        for (const [project, facts] of byProject) {
+          output += `## Project: ${project}
+
+`;
+          for (const { fact, distance } of facts) {
+            const similarity = Math.round((1 - distance * distance / 2) * 100);
+            output += `- **[${fact.category}]** ${fact.fact} _(${similarity}% relevant, ${fact.created_at.slice(0, 10)})_
+`;
+          }
+          output += "\n";
+        }
+        return { content: [{ type: "text", text: output }] };
+      } catch (error2) {
+        return { content: [{ type: "text", text: handleError(error2) }], isError: true };
+      } finally {
+        db.close();
+      }
+    }
+    if (name === "explore_graph") {
+      const params = external_exports.object({
+        query: external_exports.string().min(2),
+        hops: external_exports.number().int().min(1).max(3).default(2),
+        project: external_exports.string().optional()
+      }).strict().parse(args);
+      await initEmbeddings();
+      const db = initDatabase();
+      try {
+        const queryEmbedding = await generateEmbedding(params.query);
+        const seedFacts = searchSimilarFacts(db, queryEmbedding, params.project ?? null, 3, 0.5);
+        if (seedFacts.length === 0) {
+          return { content: [{ type: "text", text: `No facts found related to "${params.query}" to start graph exploration.` }] };
+        }
+        const domains = listDomains(db);
+        const categories = listCategories(db);
+        const domainMap = new Map(domains.map((d2) => [d2.id, d2.name]));
+        const categoryMap = new Map(categories.map((c) => [c.id, { name: c.name, domainId: c.domain_id }]));
+        let output = `# Knowledge Graph Exploration
+
+Seed: "${params.query}" | Depth: ${params.hops} hops
+
+`;
+        const allDiscovered = /* @__PURE__ */ new Set();
+        for (const { fact: seedFact, distance } of seedFacts) {
+          const similarity = Math.round((1 - distance * distance / 2) * 100);
+          const catInfo = seedFact.ontology_category_id ? categoryMap.get(seedFact.ontology_category_id) : void 0;
+          const domainName = catInfo ? domainMap.get(catInfo.domainId) ?? "?" : "?";
+          const catName = catInfo ? catInfo.name : "?";
+          output += `## Seed: ${seedFact.fact}
+`;
+          output += `- [${domainName}/${catName}] ${seedFact.category} | ${similarity}% relevant
+
+`;
+          allDiscovered.add(seedFact.id);
+          const related = getRelatedFacts(db, seedFact.id, params.hops);
+          if (related.length === 0) {
+            output += `_No connected facts found._
+
+`;
+            continue;
+          }
+          output += `### Connected Facts (${related.length} found, up to ${params.hops} hops)
+
+`;
+          for (const { fact: relFact, relation } of related) {
+            if (allDiscovered.has(relFact.id)) continue;
+            allDiscovered.add(relFact.id);
+            const relCatInfo = relFact.ontology_category_id ? categoryMap.get(relFact.ontology_category_id) : void 0;
+            const relDomain = relCatInfo ? domainMap.get(relCatInfo.domainId) ?? "?" : "?";
+            const relCat = relCatInfo ? relCatInfo.name : "?";
+            output += `- **[${relation.relation_type}]** ${relFact.fact}
+`;
+            output += `  [${relDomain}/${relCat}] ${relFact.category} | ${relFact.created_at.slice(0, 10)}
+`;
+            if (relation.reasoning) {
+              output += `  _${relation.reasoning}_
+`;
+            }
+          }
+          output += "\n";
+        }
+        output += `
+_Total unique facts discovered: ${allDiscovered.size}_
+`;
+        return { content: [{ type: "text", text: output }] };
+      } catch (error2) {
+        return { content: [{ type: "text", text: handleError(error2) }], isError: true };
+      } finally {
+        db.close();
       }
     }
     throw new Error(`Unknown tool: ${name}`);

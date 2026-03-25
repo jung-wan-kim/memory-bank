@@ -32,6 +32,28 @@ export declare function searchSimilarFacts(db: Database.Database, embedding: num
     fact: Fact;
     distance: number;
 }>;
+/**
+ * Get top facts using a relevance score that combines:
+ * - Confirmation count (consolidated_count) — how established is this fact
+ * - Recency (updated_at) — how recent is this fact
+ * - Scope priority — project-specific facts rank higher than global for that project
+ *
+ * Score = (log2(consolidated_count + 1) * 3) + recency_bonus + scope_bonus
+ *   recency_bonus: 5 if updated in last 7 days, 3 if last 30 days, 1 if last 90 days, 0 otherwise
+ *   scope_bonus: 2 for project-scoped facts, 0 for global
+ */
 export declare function getTopFacts(db: Database.Database, project: string, limit?: number): Fact[];
+/**
+ * Legacy: get facts by pure confirmation count (for backward compatibility).
+ */
+export declare function getTopFactsByCount(db: Database.Database, project: string, limit?: number): Fact[];
 export declare function getNewFactsSince(db: Database.Database, project: string, since: string): Fact[];
+/**
+ * Search facts across ALL projects (no scope filter).
+ * Used for cross-project knowledge transfer.
+ */
+export declare function searchAllFacts(db: Database.Database, embedding: number[], limit?: number, threshold?: number): Array<{
+    fact: Fact;
+    distance: number;
+}>;
 export {};

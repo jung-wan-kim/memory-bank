@@ -1,11 +1,21 @@
 import { marked } from 'marked';
+function parseJsonlMessages(lines) {
+    const messages = [];
+    for (const line of lines) {
+        try {
+            messages.push(JSON.parse(line));
+        }
+        catch { /* skip malformed */ }
+    }
+    return messages;
+}
 export function formatConversationAsMarkdown(jsonl, startLine, endLine) {
     const allLines = jsonl.trim().split('\n').filter(line => line.trim());
     // Apply line range if specified (1-indexed, inclusive)
     const lines = startLine !== undefined || endLine !== undefined
         ? allLines.slice(startLine !== undefined ? startLine - 1 : 0, endLine !== undefined ? endLine : undefined)
         : allLines;
-    const allMessages = lines.map(line => JSON.parse(line));
+    const allMessages = parseJsonlMessages(lines);
     // Filter out system messages and messages with no content
     const messages = allMessages.filter(msg => {
         if (msg.type !== 'user' && msg.type !== 'assistant')
@@ -191,10 +201,9 @@ export function formatConversationAsMarkdown(jsonl, startLine, endLine) {
 }
 export function formatConversationAsHTML(jsonl) {
     const lines = jsonl.trim().split('\n').filter(line => line.trim());
-    const allMessages = lines.map(line => JSON.parse(line));
+    const allMessages = parseJsonlMessages(lines);
     // Filter out system messages and messages with no content
     const messages = allMessages.filter(msg => {
-        // Skip file-history-snapshot and other non-conversation messages
         if (msg.type !== 'user' && msg.type !== 'assistant')
             return false;
         // Skip messages with null timestamps
