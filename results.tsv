@@ -1,0 +1,20 @@
+commit	metric	value	status	description
+baseline	tests	115	keep	baseline - context management 관점 취약점 분석 완료
+9b69e63	tests	115	keep	Smart Context Injection - 관련성 복합 스코어 (recency+scope+count)
+4523f83	tests	120	keep	Repeat Detection - 반복 질문 감지 + 선제 응답 + inject 통합
+194deaa	tests	125	keep	Session Continuity - 직전 세션 맥락 자동 주입
+fd9f5f5	tests	129	keep	Intent Prediction - 도구 패턴 기반 의도 예측
+0ecd2c1	tests	129	keep	Relevance Decay - hop별 감쇠 + 관계 유형 가중치 + pruning
+9910328	tests	143	keep	paths.ts 단위 테스트 추가 - 환경변수 우선순위, exclude 설정 파싱
+1b8dd1a	tests	143	keep	SQL 문자열 보간 → 파라미터화 쿼리 (보안 강화)
+112c091	tests	152	keep	embeddings.ts 단위 테스트 - 차원 검증, 정규화, 유사도, 도구 포함
+683b866	tests	165	keep	ontology-classifier.ts 단위 테스트 - 분류, 관계 감지, 폴백, 에러 처리
+67ab138	tests	173	keep	sync-export/import 단위 테스트 - 라운드트립, 중복 스킵, malformed 처리
+8f89f44	tests	181	keep	avatar-responder.ts 단위 테스트 - 응답 생성, confidence 클램핑, 소스 인용
+e83f9c8	tests	186	keep	summarizer.ts 단위 테스트 - formatConversationText 검증
+c4269bb	tests	186	keep	벡터 인덱스 DELETE+INSERT 트랜잭션 래핑 (race condition 수정)
+4c359a6	tests	186	keep	MCP 서버 입력 크기 제한 추가 (리소스 소진 방지)
+6ae769f	tests	187	keep	exclude 환경변수 빈 문자열 필터링 버그 수정
+cf28040	tests	187	keep	미사용 import 제거 (Pipeline, Fact, getFactsByCategory)
+12f7a5d	tests	187	keep	consolidator: 빈 merged_fact 방어 로직 추가
+4b3a97c	tests	187	keep	미사용 params 변수 제거
