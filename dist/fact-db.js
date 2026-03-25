@@ -6,11 +6,13 @@ export function insertFact(db, params) {
     INSERT INTO facts (id, fact, category, scope_type, scope_project, source_exchange_ids, embedding, created_at, updated_at, consolidated_count, is_active)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
   `).run(id, params.fact, params.category, params.scope_type, params.scope_project, JSON.stringify(params.source_exchange_ids), params.embedding ? Buffer.from(new Float32Array(params.embedding).buffer) : null, now, now);
-    // Insert into vector index
+    // Insert into vector index (atomic DELETE+INSERT via transaction)
     if (params.embedding) {
-        const delStmt = db.prepare('DELETE FROM vec_facts WHERE id = ?');
-        delStmt.run(id);
-        db.prepare('INSERT INTO vec_facts (id, embedding) VALUES (?, ?)').run(id, Buffer.from(new Float32Array(params.embedding).buffer));
+        const upsertVec = db.transaction((vecId, buf) => {
+            db.prepare('DELETE FROM vec_facts WHERE id = ?').run(vecId);
+            db.prepare('INSERT INTO vec_facts (id, embedding) VALUES (?, ?)').run(vecId, buf);
+        });
+        upsertVec(id, Buffer.from(new Float32Array(params.embedding).buffer));
     }
     return id;
 }
@@ -44,10 +46,13 @@ export function updateFact(db, id, params) {
     }
     values.push(id);
     db.prepare(`UPDATE facts SET ${updates.join(', ')} WHERE id = ?`).run(...values);
-    // Update vector index
+    // Update vector index (atomic DELETE+INSERT via transaction)
     if (params.embedding) {
-        db.prepare('DELETE FROM vec_facts WHERE id = ?').run(id);
-        db.prepare('INSERT INTO vec_facts (id, embedding) VALUES (?, ?)').run(id, Buffer.from(new Float32Array(params.embedding).buffer));
+        const upsertVec = db.transaction((vecId, buf) => {
+            db.prepare('DELETE FROM vec_facts WHERE id = ?').run(vecId);
+            db.prepare('INSERT INTO vec_facts (id, embedding) VALUES (?, ?)').run(vecId, buf);
+        });
+        upsertVec(id, Buffer.from(new Float32Array(params.embedding).buffer));
     }
 }
 export function deactivateFact(db, id) {

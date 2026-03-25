@@ -23599,8 +23599,15 @@ async function searchConversations(query2, options = {}) {
   let results = [];
   try {
     const timeFilter = [];
-    if (after) timeFilter.push(`e.timestamp >= '${after}'`);
-    if (before) timeFilter.push(`e.timestamp <= '${before}'`);
+    const timeParams = [];
+    if (after) {
+      timeFilter.push(`e.timestamp >= ?`);
+      timeParams.push(after);
+    }
+    if (before) {
+      timeFilter.push(`e.timestamp <= ?`);
+      timeParams.push(before);
+    }
     const timeClause = timeFilter.length > 0 ? `AND ${timeFilter.join(" AND ")}` : "";
     if (mode === "vector" || mode === "both") {
       await initEmbeddings();
@@ -23625,7 +23632,8 @@ async function searchConversations(query2, options = {}) {
       `);
       results = stmt.all(
         Buffer.from(new Float32Array(queryEmbedding).buffer),
-        limit
+        limit,
+        ...timeParams
       );
     }
     if (mode === "text" || mode === "both") {
@@ -23648,7 +23656,7 @@ async function searchConversations(query2, options = {}) {
         ORDER BY e.timestamp DESC
         LIMIT ?
       `);
-      const textResults = textStmt.all(likePattern, likePattern, limit);
+      const textResults = textStmt.all(likePattern, likePattern, ...timeParams, limit);
       if (mode === "both") {
         const seenIds = new Set(results.map((r) => r.id));
         for (const textResult of textResults) {
@@ -25417,8 +25425,8 @@ var SearchModeEnum = external_exports.enum(["vector", "text", "both"]);
 var ResponseFormatEnum = external_exports.enum(["markdown", "json"]);
 var SearchInputSchema = external_exports.object({
   query: external_exports.union([
-    external_exports.string().min(2, "Query must be at least 2 characters"),
-    external_exports.array(external_exports.string().min(2)).min(2, "Must provide at least 2 concepts for multi-concept search").max(5, "Cannot search more than 5 concepts at once")
+    external_exports.string().min(2, "Query must be at least 2 characters").max(1e4, "Query too long (max 10000 chars)"),
+    external_exports.array(external_exports.string().min(2).max(1e4)).min(2, "Must provide at least 2 concepts for multi-concept search").max(5, "Cannot search more than 5 concepts at once")
   ]).describe(
     "Search query - string for single concept, array of strings for multi-concept AND search"
   ),
@@ -25438,8 +25446,8 @@ var ShowConversationInputSchema = external_exports.object({
   endLine: external_exports.number().int().min(1).optional().describe("Ending line number (1-indexed, inclusive). Omit to read to end.")
 }).strict();
 var SearchFactsInputSchema = external_exports.object({
-  query: external_exports.string().min(2, "Query must be at least 2 characters"),
-  project: external_exports.string().optional(),
+  query: external_exports.string().min(2, "Query must be at least 2 characters").max(1e4, "Query too long (max 10000 chars)"),
+  project: external_exports.string().max(500).optional(),
   category: external_exports.enum(["decision", "preference", "pattern", "knowledge", "constraint"]).optional(),
   include_revisions: external_exports.boolean().default(false),
   limit: external_exports.number().int().min(1).max(50).default(10)
@@ -25450,8 +25458,8 @@ var SearchOntologyInputSchema = external_exports.object({
   include_relations: external_exports.boolean().default(false).describe("Include 1-hop fact relations")
 }).strict();
 var AskAvatarInputSchema = external_exports.object({
-  question: external_exports.string().min(2, "Question must be at least 2 characters").describe("Question to ask"),
-  project: external_exports.string().optional().describe("Project path to scope the search")
+  question: external_exports.string().min(2, "Question must be at least 2 characters").max(1e4, "Question too long (max 10000 chars)").describe("Question to ask"),
+  project: external_exports.string().max(500).optional().describe("Project path to scope the search")
 }).strict();
 function handleError(error2) {
   if (error2 instanceof Error) {
@@ -26039,8 +26047,8 @@ _Source exchanges not available._
       }
     }
     if (name === "graph_stats") {
-      const params = external_exports.object({
-        project: external_exports.string().optional()
+      external_exports.object({
+        project: external_exports.string().max(500).optional()
       }).strict().parse(args);
       const db = initDatabase();
       try {

@@ -77,7 +77,7 @@ export function getExcludeConfigPath() {
 export function getExcludedProjects() {
     // Check env variable first
     if (process.env.CONVERSATION_SEARCH_EXCLUDE_PROJECTS) {
-        return process.env.CONVERSATION_SEARCH_EXCLUDE_PROJECTS.split(',').map(p => p.trim());
+        return process.env.CONVERSATION_SEARCH_EXCLUDE_PROJECTS.split(',').map(p => p.trim()).filter(p => p !== '');
     }
     // Check for config file
     const configPath = getExcludeConfigPath();

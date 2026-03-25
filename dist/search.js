@@ -25,12 +25,17 @@ export async function searchConversations(query, options = {}) {
     const db = initDatabase();
     let results = [];
     try {
-        // Build time filter clause
+        // Build time filter clause with parameterized queries
         const timeFilter = [];
-        if (after)
-            timeFilter.push(`e.timestamp >= '${after}'`);
-        if (before)
-            timeFilter.push(`e.timestamp <= '${before}'`);
+        const timeParams = [];
+        if (after) {
+            timeFilter.push(`e.timestamp >= ?`);
+            timeParams.push(after);
+        }
+        if (before) {
+            timeFilter.push(`e.timestamp <= ?`);
+            timeParams.push(before);
+        }
         const timeClause = timeFilter.length > 0 ? `AND ${timeFilter.join(' AND ')}` : '';
         if (mode === 'vector' || mode === 'both') {
             // Vector similarity search
@@ -54,7 +59,7 @@ export async function searchConversations(query, options = {}) {
           ${timeClause}
         ORDER BY vec.distance ASC
       `);
-            results = stmt.all(Buffer.from(new Float32Array(queryEmbedding).buffer), limit);
+            results = stmt.all(Buffer.from(new Float32Array(queryEmbedding).buffer), limit, ...timeParams);
         }
         if (mode === 'text' || mode === 'both') {
             // Escape LIKE metacharacters
@@ -78,7 +83,7 @@ export async function searchConversations(query, options = {}) {
         ORDER BY e.timestamp DESC
         LIMIT ?
       `);
-            const textResults = textStmt.all(likePattern, likePattern, limit);
+            const textResults = textStmt.all(likePattern, likePattern, ...timeParams, limit);
             if (mode === 'both') {
                 // Merge and deduplicate by ID
                 const seenIds = new Set(results.map(r => r.id));
