@@ -5,7 +5,7 @@
  */
 const http = require('http');
 const path = require('path');
-const PLUGIN_ROOT = path.join(process.env.HOME, '.claude/plugins/cache/superpowers-marketplace/episodic-memory/1.0.15');
+const PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(__dirname, '..');
 const Database = require(path.join(PLUGIN_ROOT, 'node_modules/better-sqlite3'));
 
 const DB_PATH = path.join(process.env.HOME, '.config/superpowers/conversation-index/db.sqlite');

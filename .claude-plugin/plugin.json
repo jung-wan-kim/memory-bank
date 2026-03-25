@@ -1,6 +1,6 @@
 {
   "name": "memory-bank",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "description": "Semantic search for Claude Code conversations. Remember past discussions, decisions, and patterns.",
   "author": {
     "name": "Jung-Wan Kim"
@@ -10,6 +10,10 @@
   "license": "MIT",
   "keywords": ["memory", "search", "conversations", "semantic-search", "memory-bank"],
   "agents": ["./agents/search-conversations.md"],
+  "commands": [
+    "./commands/show-memory-bank.md",
+    "./commands/search-conversations.md"
+  ],
   "mcpServers": {
     "memory-bank": {
       "command": "node",

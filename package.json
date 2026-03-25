@@ -1,6 +1,6 @@
 {
   "name": "memory-bank",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "description": "Semantic search for Claude Code conversations",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
