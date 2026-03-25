@@ -143,6 +143,12 @@ describe('paths', () => {
       expect(getExcludedProjects()).toEqual(['project1', 'project2', 'project3']);
     });
 
+    it('should filter empty strings from env var with consecutive commas', async () => {
+      process.env.CONVERSATION_SEARCH_EXCLUDE_PROJECTS = 'project1,,project2, ,project3';
+      const { getExcludedProjects } = await import('../src/paths.js');
+      expect(getExcludedProjects()).toEqual(['project1', 'project2', 'project3']);
+    });
+
     it('should ignore comments and empty lines in exclude.txt', async () => {
       const configDir = path.join(tmpDir, 'config');
       process.env.MEMORY_BANK_CONFIG_DIR = configDir;
