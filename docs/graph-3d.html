@@ -44,6 +44,10 @@ canvas{display:block}
 .nav-a{padding:5px 12px;border-radius:5px;font-size:11px;color:#484f58;text-decoration:none;border:1px solid transparent;transition:all .15s;font-weight:500;letter-spacing:.3px;cursor:pointer}
 .nav-a:hover{color:#c9d1d9;border-color:#30363d;background:rgba(255,255,255,.04)}
 .nav-a.active{color:#bf7af0;border-color:#bf7af055;background:rgba(191,122,240,.08)}
+#lang-sw{display:flex;gap:0;pointer-events:auto;align-self:center;border:1px solid #21262d;border-radius:5px;overflow:hidden}
+.lang-btn{padding:4px 10px;font-size:10px;color:#484f58;cursor:pointer;font-weight:600;letter-spacing:.5px;transition:all .15s}
+.lang-btn:hover{color:#8b949e;background:rgba(255,255,255,.03)}
+.lang-btn.active{color:#c9d1d9;background:rgba(191,122,240,.12)}
 #overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:50;background:rgba(5,8,13,.88);backdrop-filter:blur(12px);overflow:hidden}
 #overlay.open{display:flex;flex-direction:column}
 #ov-header{display:flex;justify-content:space-between;align-items:center;padding:14px 24px;border-bottom:1px solid #161b22}
@@ -95,6 +99,7 @@ canvas{display:block}
 <h1><b>Memory</b> Bank</h1>
 <div class="hud-sub">Knowledge Graph · User Scope · Project Scope · Ontology</div>
 </div>
+<div id="lang-sw"><span class="lang-btn active" onclick="setLang('en')">EN</span><span class="lang-btn" onclick="setLang('kr')">KR</span></div>
 <nav id="nav">
 <span class="nav-a active" onclick="closeOverlay()">3D Graph</span>
 <span class="nav-a" onclick="openPanel('projects')">Projects</span>
@@ -4996,14 +5001,14 @@ function rsz(){W=cv.width=innerWidth;H=cv.height=innerHeight}rsz();addEventListe
 var rX=-.15,rY=0,zm=2.8,drg=false,lx=0,ly2=0,ar=true,mx=-1,my=-1,frame=0;
 var camBaseZm=2.8,camT=0;
 var clickStart={x:0,y:0},hov=null;
-cv.onmousedown=function(e){drg=true;lx=e.clientX;ly2=e.clientY;clickStart={x:e.clientX,y:e.clientY};ar=false;document.body.classList.add('dragging')};
-var hovPause=false;
+var hovPause=false,rotSpeed=0,ROT_MAX=.0008,rotEaseStart=0;
+cv.onmousedown=function(e){drg=true;lx=e.clientX;ly2=e.clientY;clickStart={x:e.clientX,y:e.clientY};ar=false;rotSpeed=0;document.body.classList.add('dragging')};
 cv.onmousemove=function(e){mx=e.clientX;my=e.clientY;if(drg){rY+=(e.clientX-lx)*.003;rX+=(e.clientY-ly2)*.003;rX=Math.max(-1.1,Math.min(1.1,rX));lx=e.clientX;ly2=e.clientY}};
 cv.onmouseup=function(e){
   var wasDrag=Math.abs(e.clientX-clickStart.x)>3||Math.abs(e.clientY-clickStart.y)>3;
   drg=false;document.body.classList.remove('dragging');
-  if(!wasDrag&&hov&&hov.t==='project'){openProjectDetail(hov)}
-  clearTimeout(window._arTimer);window._arTimer=setTimeout(function(){ar=true;camT=rY/(Math.PI*2);camBaseZm=zm},3000)};
+  if(!wasDrag&&hov){openNodeDetail(hov)}
+  clearTimeout(window._arTimer);window._arTimer=setTimeout(function(){ar=true;camT=rY/(Math.PI*2);camBaseZm=zm;rotSpeed=0;rotEaseStart=Date.now()},3000)};
 cv.onmouseleave=function(){drg=false;mx=-1;my=-1;document.body.classList.remove('dragging')};
 cv.addEventListener('wheel',function(e){zm*=e.deltaY>0?.93:1.07;zm=Math.max(1.5,Math.min(12,zm));e.preventDefault()},{passive:false});
 cv.addEventListener('touchstart',function(e){if(e.touches.length===1){drg=true;lx=e.touches[0].clientX;ly2=e.touches[0].clientY;ar=false}},{passive:true});
@@ -5015,12 +5020,12 @@ function pj(x,y,z){var x1=x*Math.cos(rY)-z*Math.sin(rY),z1=x*Math.sin(rY)+z*Math
 function render(){
 frame++;
 if(ar&&!hovPause){
-camT+=.0008;
-// Slow orbit: full rotation ~130s
+// Ease-in rotation: ramp speed from 0 to ROT_MAX over 3 seconds
+var elapsed=(Date.now()-rotEaseStart)/3000;
+rotSpeed=Math.min(ROT_MAX,ROT_MAX*Math.min(1,elapsed*elapsed));
+camT+=rotSpeed;
 rY=camT*Math.PI*2;
-// Gentle pitch oscillation: see all 4 layers from top to bottom
 rX=-.15+Math.sin(camT*Math.PI*2*.37)*.22;
-// Breathing zoom: slowly in/out
 zm=camBaseZm+Math.sin(camT*Math.PI*2*.23)*.4;
 }
 
@@ -5173,7 +5178,7 @@ if(mx>=0){var dx=mx-n.sx,dy=my-n.sy,dd=Math.sqrt(dx*dx+dy*dy);if(dd<Math.max(r+8
 // TOOLTIP — pause rotation on hover, sync camT on resume
 var wasHovPause=hovPause;
 hovPause=!!hov;
-if(wasHovPause&&!hovPause){camT=rY/(Math.PI*2);camBaseZm=zm}
+if(wasHovPause&&!hovPause){camT=rY/(Math.PI*2);camBaseZm=zm;rotSpeed=0;rotEaseStart=Date.now()}
 var tt=document.getElementById('tt');
 if(hov&&!drg){tt.style.display='block';tt.style.left=Math.min(mx+14,W-340)+'px';tt.style.top=Math.min(my+14,H-220)+'px';
 document.getElementById('tDot').style.background=hov.c;document.getElementById('tDot').style.setProperty('--nc',hov.c);document.getElementById('tDot').style.boxShadow='0 0 6px '+hov.c;
@@ -5304,8 +5309,33 @@ function loadPrompts(){
   }).catch(function(){clearList('API error')})
 }
 
-// === PROJECT DETAIL PANEL ===
-function openProjectDetail(node){
+// === LANGUAGE PACK ===
+var LANG='en';
+var L={
+  en:{overview:'Overview',exchanges:'Exchanges',sessions:'Sessions',branches:'Branches',facts:'Facts',
+      topTools:'Top Tools',activity:'Activity (last 60 days)',recentPrompts:'Recent Prompts',
+      domain:'Domain',category:'Category',type:'Type',layer:'Layer',projects:'Projects',
+      relatedProjects:'Related Projects',scope:'Scope',noData:'No data available',
+      loading:'Loading...',nodeInfo:'Node Info',connections:'Connections',toolCategory:'Tool Category',
+      factContent:'Fact',factScope:'Scope',projectCount:'Projects in domain'},
+  kr:{overview:'개요',exchanges:'대화 수',sessions:'세션 수',branches:'브랜치',facts:'팩트',
+      topTools:'주요 도구',activity:'활동 (최근 60일)',recentPrompts:'최근 프롬프트',
+      domain:'도메인',category:'카테고리',type:'유형',layer:'레이어',projects:'프로젝트',
+      relatedProjects:'관련 프로젝트',scope:'범위',noData:'데이터 없음',
+      loading:'로딩 중...',nodeInfo:'노드 정보',connections:'연결',toolCategory:'도구 카테고리',
+      factContent:'내용',factScope:'범위',projectCount:'도메인 내 프로젝트'}
+};
+function t(k){return(L[LANG]||L.en)[k]||k}
+function setLang(lang){
+  LANG=lang;
+  document.querySelectorAll('.lang-btn').forEach(function(b){b.classList.toggle('active',b.textContent.toLowerCase()===lang)});
+  // Re-render detail if open
+  if(document.getElementById('detail-panel').classList.contains('open')&&window._lastDetailNode){openNodeDetail(window._lastDetailNode)}
+}
+
+// === NODE DETAIL PANEL (all types) ===
+function openNodeDetail(node){
+  window._lastDetailNode=node;
   var panel=document.getElementById('detail-panel');
   panel.classList.add('open');
   document.getElementById('dp-name').textContent=node.nm;
@@ -5314,115 +5344,220 @@ function openProjectDetail(node){
   content.textContent='';
   var loading=document.createElement('div');
   loading.style.cssText='color:#484f58;text-align:center;padding:40px';
-  loading.textContent='Loading...';
+  loading.textContent=t('loading');
   content.appendChild(loading);
 
-  // Find original project name from R.projects
+  if(node.t==='project'){renderProjectNode(node,content)}
+  else if(node.t==='domain'){renderDomainNode(node,content)}
+  else if(node.t==='category'){renderCategoryNode(node,content)}
+  else if(node.t==='fact'){renderFactNode(node,content)}
+  else{renderGenericNode(node,content)}
+}
+
+function addSection(parent,title){
+  var sec=document.createElement('div');sec.className='dp-section';
+  var t=document.createElement('div');t.className='dp-section-title';t.textContent=title;sec.appendChild(t);
+  parent.appendChild(sec);return sec
+}
+
+function addStatRow(parent,stats){
+  var row=document.createElement('div');row.className='dp-stat-row';
+  stats.forEach(function(s){
+    var st=document.createElement('div');st.className='dp-stat';
+    var sv=document.createElement('div');sv.className='dp-stat-v';sv.style.color=s.c;sv.textContent=(typeof s.v==='number'?s.v.toLocaleString():s.v);
+    var sl=document.createElement('div');sl.className='dp-stat-l';sl.textContent=s.l;
+    st.appendChild(sv);st.appendChild(sl);row.appendChild(st)
+  });
+  parent.appendChild(row)
+}
+
+function addBarChart(parent,items,color,maxVal){
+  if(!maxVal)maxVal=items[0]?items[0].v:1;
+  items.forEach(function(item){
+    var row=document.createElement('div');row.className='dp-bar-row';
+    var lbl=document.createElement('div');lbl.className='dp-bar-label';lbl.textContent=item.l;
+    var bar=document.createElement('div');bar.className='dp-bar';
+    var fill=document.createElement('div');fill.className='dp-bar-fill';
+    fill.style.width=Math.round(item.v/maxVal*100)+'%';fill.style.background=color;
+    bar.appendChild(fill);
+    var val=document.createElement('div');val.className='dp-bar-val';val.textContent=item.v;
+    row.appendChild(lbl);row.appendChild(bar);row.appendChild(val);parent.appendChild(row)
+  })
+}
+
+function addConnections(parent,nodeId){
+  var rels=vE.filter(function(e){return e.s.id===nodeId||e.t.id===nodeId});
+  if(!rels.length)return;
+  var sec=addSection(parent,t('connections')+' ('+rels.length+')');
+  rels.slice(0,10).forEach(function(rl){
+    var oth=rl.s.id===nodeId?rl.t:rl.s;
+    var rs2=RS[rl.tp]||RS.SHARES;
+    var row=document.createElement('div');row.style.cssText='display:flex;align-items:center;gap:6px;margin-bottom:4px';
+    var badge=document.createElement('span');badge.className='dp-fact-cat';
+    badge.style.background='rgba('+parseInt(rs2.c.slice(1,3),16)+','+parseInt(rs2.c.slice(3,5),16)+','+parseInt(rs2.c.slice(5,7),16)+',0.2)';
+    badge.style.color=rs2.c;badge.textContent=rl.tp;
+    var name=document.createElement('span');name.style.cssText='font-size:11px;color:#8b949e';name.textContent=oth.nm;
+    row.appendChild(badge);row.appendChild(name);sec.appendChild(row)
+  })
+}
+
+function renderProjectNode(node,content){
   var origProject='';
   for(var i=0;i<R.projects.length;i++){
     var sh=R.projects[i].project.replace(/-Users-jung-wankim[-]?/g,'').replace(/^Project-/,'').replace(/-/g,'/')||'home';
     if(sh===node.nm){origProject=R.projects[i].project;break}
   }
-  if(!origProject){content.textContent='Project not found';return}
+  if(!origProject){content.textContent=t('noData');return}
 
   fetch('/api/project-detail?project='+encodeURIComponent(origProject))
     .then(function(r){return r.json()})
-    .then(function(d){renderDetail(d,node.c)})
+    .then(function(d){
+      content.textContent='';
+      var info=d.info||{};
+
+      // Overview
+      var sec1=addSection(content,t('overview'));
+      addStatRow(sec1,[
+        {v:info.exchanges||0,l:t('exchanges'),c:'#58a6ff'},
+        {v:info.sessions||0,l:t('sessions'),c:'#3fb950'},
+        {v:info.branches||0,l:t('branches'),c:'#bf7af0'},
+        {v:(d.facts||[]).length,l:t('facts'),c:'#f0883e'}
+      ]);
+      if(info.first_seen){
+        var dr=document.createElement('div');dr.style.cssText='font-size:10px;color:#30363d;text-align:center;margin-top:4px';
+        dr.textContent=(info.first_seen||'').slice(0,10)+' ~ '+(info.last_seen||'').slice(0,10);sec1.appendChild(dr)
+      }
+
+      // Tools - grouped by category
+      if(d.toolUsage&&d.toolUsage.length){
+        var sec2=addSection(content,t('topTools'));
+        var grouped={};
+        d.toolUsage.forEach(function(tu){
+          var tn=tu.tool_name.replace(/mcp__[^_]+_[^_]+__/,'');
+          var cat='Other';
+          for(var cn in TCAT){if(TCAT[cn].m.test(tu.tool_name)){cat=cn;break}}
+          if(!grouped[cat])grouped[cat]={items:[],total:0,c:TCAT[cat]?TCAT[cat].c:'#484f58'};
+          grouped[cat].items.push({l:tn,v:tu.cnt});grouped[cat].total+=tu.cnt
+        });
+        var sortedGroups=Object.keys(grouped).sort(function(a,b){return grouped[b].total-grouped[a].total});
+        var maxCnt=d.toolUsage[0].cnt;
+        sortedGroups.forEach(function(gName){
+          var g=grouped[gName];
+          var gh=document.createElement('div');gh.style.cssText='font-size:10px;font-weight:600;color:'+g.c+';margin:8px 0 4px;display:flex;justify-content:space-between';
+          var gn=document.createElement('span');gn.textContent=gName;
+          var gt=document.createElement('span');gt.style.color='#30363d';gt.textContent=g.total;
+          gh.appendChild(gn);gh.appendChild(gt);sec2.appendChild(gh);
+          addBarChart(sec2,g.items.slice(0,5),g.c,maxCnt)
+        })
+      }
+
+      // Activity
+      if(d.activity&&d.activity.length){
+        var sec3=addSection(content,t('activity'));
+        var actDiv=document.createElement('div');actDiv.className='dp-activity';
+        var maxAct=Math.max.apply(null,d.activity.map(function(a){return a.cnt}));
+        d.activity.reverse().forEach(function(a){
+          var bar=document.createElement('div');bar.className='dp-act-bar';
+          bar.style.height=Math.max(2,Math.round(a.cnt/maxAct*36))+'px';bar.style.background=node.c;
+          bar.title=a.day+': '+a.cnt;actDiv.appendChild(bar)
+        });
+        sec3.appendChild(actDiv)
+      }
+
+      // Facts grouped by category
+      if(d.facts&&d.facts.length){
+        var sec4=addSection(content,t('facts')+' ('+d.facts.length+')');
+        var catColors={decision:'#58a6ff',preference:'#3fb950',pattern:'#bf7af0',knowledge:'#f0883e',constraint:'#ef4444'};
+        var fGroups={};
+        d.facts.forEach(function(f){if(!fGroups[f.category])fGroups[f.category]=[];fGroups[f.category].push(f)});
+        Object.keys(fGroups).forEach(function(cat){
+          var cc=catColors[cat]||'#484f58';
+          var ch=document.createElement('div');ch.style.cssText='font-size:10px;font-weight:600;margin:8px 0 4px;color:'+cc;
+          ch.textContent=cat.toUpperCase()+' ('+fGroups[cat].length+')';sec4.appendChild(ch);
+          fGroups[cat].slice(0,6).forEach(function(f){
+            var fd=document.createElement('div');fd.className='dp-fact';fd.textContent=f.fact;sec4.appendChild(fd)
+          })
+        })
+      }
+
+      // Recent prompts
+      if(d.recentPrompts&&d.recentPrompts.length){
+        var sec5=addSection(content,t('recentPrompts'));
+        d.recentPrompts.slice(0,8).forEach(function(p){
+          var pd=document.createElement('div');pd.className='dp-prompt';
+          var dt=document.createElement('div');dt.className='dp-prompt-date';dt.textContent=(p.timestamp||'').slice(0,16).replace('T',' ');
+          pd.appendChild(dt);pd.appendChild(document.createTextNode((p.user_message||'').slice(0,200)));sec5.appendChild(pd)
+        })
+      }
+
+      addConnections(content,node.id)
+    })
     .catch(function(){content.textContent='API error'})
 }
 
-function renderDetail(d,color){
-  var content=document.getElementById('dp-content');
+function renderDomainNode(node,content){
   content.textContent='';
-  var info=d.info||{};
-
-  // Stats section
-  var sec1=document.createElement('div');sec1.className='dp-section';
-  var t1=document.createElement('div');t1.className='dp-section-title';t1.textContent='Overview';sec1.appendChild(t1);
-  var statRow=document.createElement('div');statRow.className='dp-stat-row';
-  var stats=[
-    {v:info.exchanges||0,l:'Exchanges',c:'#58a6ff'},
-    {v:info.sessions||0,l:'Sessions',c:'#3fb950'},
-    {v:info.branches||0,l:'Branches',c:'#bf7af0'},
-    {v:(d.facts||[]).length,l:'Facts',c:'#f0883e'}
-  ];
-  stats.forEach(function(s){
-    var st=document.createElement('div');st.className='dp-stat';
-    var sv=document.createElement('div');sv.className='dp-stat-v';sv.style.color=s.c;sv.textContent=s.v.toLocaleString();
-    var sl=document.createElement('div');sl.className='dp-stat-l';sl.textContent=s.l;
-    st.appendChild(sv);st.appendChild(sl);statRow.appendChild(st)
-  });
-  sec1.appendChild(statRow);
-  if(info.first_seen){
-    var dr=document.createElement('div');dr.style.cssText='font-size:10px;color:#30363d;text-align:center';
-    dr.textContent=(info.first_seen||'').slice(0,10)+' ~ '+(info.last_seen||'').slice(0,10);
-    sec1.appendChild(dr)
+  var sec1=addSection(content,t('nodeInfo'));
+  addStatRow(sec1,[
+    {v:node.t,l:t('type'),c:node.c},
+    {v:node.ly,l:t('layer'),c:'#484f58'}
+  ]);
+  // Projects in this domain
+  var domProjects=pN.filter(function(n){return n.dom===node.nm});
+  if(domProjects.length){
+    var sec2=addSection(content,t('relatedProjects')+' ('+domProjects.length+')');
+    var sorted=domProjects.sort(function(a,b){return(b.dt.ex||0)-(a.dt.ex||0)});
+    addBarChart(sec2,sorted.slice(0,12).map(function(p){return{l:p.nm,v:p.dt.ex||0}}),node.c,sorted[0]?sorted[0].dt.ex:1)
   }
-  content.appendChild(sec1);
+  addConnections(content,node.id)
+}
 
-  // Tool usage bars
-  if(d.toolUsage&&d.toolUsage.length){
-    var sec2=document.createElement('div');sec2.className='dp-section';
-    var t2=document.createElement('div');t2.className='dp-section-title';t2.textContent='Top Tools';sec2.appendChild(t2);
-    var maxCnt=d.toolUsage[0].cnt;
-    d.toolUsage.slice(0,10).forEach(function(t){
-      var row=document.createElement('div');row.className='dp-bar-row';
-      var lbl=document.createElement('div');lbl.className='dp-bar-label';lbl.textContent=t.tool_name.replace(/mcp__[^_]+_[^_]+__/,'');
-      var bar=document.createElement('div');bar.className='dp-bar';
-      var fill=document.createElement('div');fill.className='dp-bar-fill';
-      fill.style.width=Math.round(t.cnt/maxCnt*100)+'%';fill.style.background=color;
-      bar.appendChild(fill);
-      var val=document.createElement('div');val.className='dp-bar-val';val.textContent=t.cnt;
-      row.appendChild(lbl);row.appendChild(bar);row.appendChild(val);sec2.appendChild(row)
+function renderCategoryNode(node,content){
+  content.textContent='';
+  var sec1=addSection(content,t('nodeInfo'));
+  var info=document.createElement('div');info.style.cssText='font-size:12px;color:#8b949e;line-height:1.6';
+  info.textContent=t('toolCategory');sec1.appendChild(info);
+  // Tools in this category
+  var catTools=R.toolUsage.filter(function(tu){return TCAT[node.nm]&&TCAT[node.nm].m.test(tu.tool_name)});
+  if(catTools.length){
+    var grouped={};catTools.forEach(function(tu){
+      var tn=tu.tool_name.replace(/mcp__[^_]+_[^_]+__/,'');
+      if(!grouped[tn])grouped[tn]=0;grouped[tn]+=tu.cnt
     });
-    content.appendChild(sec2)
+    var items=Object.keys(grouped).map(function(k){return{l:k,v:grouped[k]}}).sort(function(a,b){return b.v-a.v});
+    var sec2=addSection(content,t('topTools')+' ('+items.length+')');
+    addBarChart(sec2,items.slice(0,15),node.c,items[0]?items[0].v:1)
   }
+  addConnections(content,node.id)
+}
 
-  // Activity timeline
-  if(d.activity&&d.activity.length){
-    var sec3=document.createElement('div');sec3.className='dp-section';
-    var t3=document.createElement('div');t3.className='dp-section-title';t3.textContent='Activity (last 60 days)';sec3.appendChild(t3);
-    var actDiv=document.createElement('div');actDiv.className='dp-activity';
-    var maxAct=Math.max.apply(null,d.activity.map(function(a){return a.cnt}));
-    d.activity.reverse().forEach(function(a){
-      var bar=document.createElement('div');bar.className='dp-act-bar';
-      var h=Math.max(2,Math.round(a.cnt/maxAct*36));
-      bar.style.height=h+'px';bar.style.background=color;
-      bar.title=a.day+': '+a.cnt+' exchanges';
-      actDiv.appendChild(bar)
-    });
-    sec3.appendChild(actDiv);content.appendChild(sec3)
+function renderFactNode(node,content){
+  content.textContent='';
+  var sec1=addSection(content,t('factContent'));
+  var factText=document.createElement('div');factText.style.cssText='font-size:13px;color:#c9d1d9;line-height:1.6;padding:8px 0';
+  factText.textContent=node.nm;sec1.appendChild(factText);
+  if(node.dt){
+    var meta=document.createElement('div');meta.style.cssText='font-size:10px;color:#484f58;margin-top:6px';
+    meta.textContent=(node.dt.cat||'')+' · '+(node.dt.scope||'global');sec1.appendChild(meta)
   }
+  addConnections(content,node.id)
+}
 
-  // Facts
-  if(d.facts&&d.facts.length){
-    var sec4=document.createElement('div');sec4.className='dp-section';
-    var t4=document.createElement('div');t4.className='dp-section-title';t4.textContent='Facts ('+d.facts.length+')';sec4.appendChild(t4);
-    var catColors={decision:'#58a6ff',preference:'#3fb950',pattern:'#bf7af0',knowledge:'#f0883e',constraint:'#ef4444'};
-    d.facts.slice(0,12).forEach(function(f){
-      var fd=document.createElement('div');fd.className='dp-fact';
-      var cat=document.createElement('span');cat.className='dp-fact-cat';
-      var cc=catColors[f.category]||'#484f58';
-      cat.style.background='rgba('+parseInt(cc.slice(1,3),16)+','+parseInt(cc.slice(3,5),16)+','+parseInt(cc.slice(5,7),16)+',0.15)';
-      cat.style.color=cc;cat.textContent=f.category;
-      fd.appendChild(cat);fd.appendChild(document.createTextNode(f.fact));
-      sec4.appendChild(fd)
+function renderGenericNode(node,content){
+  content.textContent='';
+  var sec1=addSection(content,t('nodeInfo'));
+  addStatRow(sec1,[
+    {v:node.t||'unknown',l:t('type'),c:node.c},
+    {v:node.ly||'—',l:t('layer'),c:'#484f58'}
+  ]);
+  if(node.dt&&typeof node.dt==='object'){
+    var info=document.createElement('div');info.style.cssText='font-size:11px;color:#6e7681;line-height:1.5;margin-top:8px';
+    Object.keys(node.dt).forEach(function(k){
+      var row=document.createElement('div');row.textContent=k+': '+JSON.stringify(node.dt[k]).slice(0,100);info.appendChild(row)
     });
-    content.appendChild(sec4)
+    sec1.appendChild(info)
   }
-
-  // Recent prompts
-  if(d.recentPrompts&&d.recentPrompts.length){
-    var sec5=document.createElement('div');sec5.className='dp-section';
-    var t5=document.createElement('div');t5.className='dp-section-title';t5.textContent='Recent Prompts';sec5.appendChild(t5);
-    d.recentPrompts.slice(0,8).forEach(function(p){
-      var pd=document.createElement('div');pd.className='dp-prompt';
-      var dt=document.createElement('div');dt.className='dp-prompt-date';dt.textContent=(p.timestamp||'').slice(0,16).replace('T',' ');
-      pd.appendChild(dt);pd.appendChild(document.createTextNode((p.user_message||'').slice(0,200)));
-      sec5.appendChild(pd)
-    });
-    content.appendChild(sec5)
-  }
+  addConnections(content,node.id)
 }
 
 function closeDetail(){document.getElementById('detail-panel').classList.remove('open')}
