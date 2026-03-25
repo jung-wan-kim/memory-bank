@@ -5402,11 +5402,7 @@ function addConnections(parent,nodeId){
 }
 
 function renderProjectNode(node,content){
-  var origProject='';
-  for(var i=0;i<R.projects.length;i++){
-    var sh=R.projects[i].project.replace(/-Users-jung-wankim[-]?/g,'').replace(/^Project-/,'').replace(/-/g,'/')||'home';
-    if(sh===node.nm){origProject=R.projects[i].project;break}
-  }
+  var origProject=node.dt&&node.dt.raw?node.dt.raw:'';
   if(!origProject){content.textContent=t('noData');return}
 
   fetch('/api/project-detail?project='+encodeURIComponent(origProject))
