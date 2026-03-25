@@ -10,10 +10,7 @@
   "license": "MIT",
   "keywords": ["memory", "search", "conversations", "semantic-search", "memory-bank"],
   "agents": ["./agents/search-conversations.md"],
-  "commands": [
-    "./commands/show-memory-bank.md",
-    "./commands/search-conversations.md"
-  ],
+  "commands": "./commands/",
   "mcpServers": {
     "memory-bank": {
       "command": "node",
