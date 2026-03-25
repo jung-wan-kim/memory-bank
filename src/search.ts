@@ -51,10 +51,17 @@ export async function searchConversations(
   let results: ExchangeRow[] = [];
 
   try {
-    // Build time filter clause
-    const timeFilter = [];
-    if (after) timeFilter.push(`e.timestamp >= '${after}'`);
-    if (before) timeFilter.push(`e.timestamp <= '${before}'`);
+    // Build time filter clause with parameterized queries
+    const timeFilter: string[] = [];
+    const timeParams: string[] = [];
+    if (after) {
+      timeFilter.push(`e.timestamp >= ?`);
+      timeParams.push(after);
+    }
+    if (before) {
+      timeFilter.push(`e.timestamp <= ?`);
+      timeParams.push(before);
+    }
     const timeClause = timeFilter.length > 0 ? `AND ${timeFilter.join(' AND ')}` : '';
 
     if (mode === 'vector' || mode === 'both') {
@@ -83,7 +90,8 @@ export async function searchConversations(
 
       results = stmt.all(
         Buffer.from(new Float32Array(queryEmbedding).buffer),
-        limit
+        limit,
+        ...timeParams
       ) as ExchangeRow[];
     }
 
@@ -111,7 +119,7 @@ export async function searchConversations(
         LIMIT ?
       `);
 
-      const textResults = textStmt.all(likePattern, likePattern, limit) as ExchangeRow[];
+      const textResults = textStmt.all(likePattern, likePattern, ...timeParams, limit) as ExchangeRow[];
 
       if (mode === 'both') {
         // Merge and deduplicate by ID
