@@ -41,9 +41,28 @@ canvas{display:block}
 .ri-l{width:16px;height:0;border-top:1.5px}
 #ctrl{position:fixed;bottom:10px;right:16px;z-index:10;font-size:10px;color:#21262d}
 #nav{display:flex;gap:2px;pointer-events:auto;align-self:center}
-.nav-a{padding:5px 12px;border-radius:5px;font-size:11px;color:#484f58;text-decoration:none;border:1px solid transparent;transition:all .15s;font-weight:500;letter-spacing:.3px}
+.nav-a{padding:5px 12px;border-radius:5px;font-size:11px;color:#484f58;text-decoration:none;border:1px solid transparent;transition:all .15s;font-weight:500;letter-spacing:.3px;cursor:pointer}
 .nav-a:hover{color:#c9d1d9;border-color:#30363d;background:rgba(255,255,255,.04)}
 .nav-a.active{color:#bf7af0;border-color:#bf7af055;background:rgba(191,122,240,.08)}
+#overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:50;background:rgba(5,8,13,.88);backdrop-filter:blur(12px);overflow:hidden}
+#overlay.open{display:flex;flex-direction:column}
+#ov-header{display:flex;justify-content:space-between;align-items:center;padding:14px 24px;border-bottom:1px solid #161b22}
+#ov-title{font-size:15px;font-weight:600;color:#c9d1d9}
+#ov-close{background:none;border:1px solid #30363d;color:#8b949e;padding:4px 12px;border-radius:5px;cursor:pointer;font-size:11px}
+#ov-close:hover{color:#c9d1d9;border-color:#484f58}
+#ov-body{flex:1;overflow-y:auto;padding:20px 24px}
+#ov-search{display:flex;gap:8px;margin-bottom:16px}
+#ov-search input{flex:1;background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:8px 12px;color:#c9d1d9;font-size:13px;outline:none}
+#ov-search input:focus{border-color:#58a6ff}
+#ov-search button{background:#21262d;border:1px solid #30363d;color:#c9d1d9;padding:8px 16px;border-radius:6px;cursor:pointer;font-size:12px}
+#ov-search button:hover{background:#30363d}
+#ov-list{display:flex;flex-direction:column;gap:8px}
+.ov-card{background:rgba(13,17,23,.8);border:1px solid #161b22;border-radius:8px;padding:12px 16px;cursor:default;transition:border-color .15s}
+.ov-card:hover{border-color:#30363d}
+.ov-card-title{font-size:13px;font-weight:600;color:#c9d1d9;margin-bottom:4px}
+.ov-card-meta{font-size:10px;color:#484f58;display:flex;gap:12px;flex-wrap:wrap}
+.ov-card-body{font-size:12px;color:#8b949e;margin-top:6px;line-height:1.5;max-height:80px;overflow:hidden}
+.ov-tag{display:inline-block;font-size:9px;padding:1px 6px;border-radius:8px;margin-right:4px}
 </style>
 </head>
 <body>
@@ -54,11 +73,11 @@ canvas{display:block}
 <div class="hud-sub">Knowledge Graph · User Scope · Project Scope · Ontology</div>
 </div>
 <nav id="nav">
-<a href="/" class="nav-a active">3D Graph</a>
-<a href="/dashboard" class="nav-a">Projects</a>
-<a href="/dashboard#search" class="nav-a">Search</a>
-<a href="/dashboard#prompts" class="nav-a">Prompts</a>
-<a href="/dashboard#facts" class="nav-a">Facts</a>
+<span class="nav-a active" onclick="closeOverlay()">3D Graph</span>
+<span class="nav-a" onclick="openPanel('projects')">Projects</span>
+<span class="nav-a" onclick="openPanel('search')">Search</span>
+<span class="nav-a" onclick="openPanel('prompts')">Prompts</span>
+<span class="nav-a" onclick="openPanel('facts')">Facts</span>
 </nav>
 <div id="stats">
 <div class="st"><div class="st-v" style="color:#58a6ff" id="sN">0</div><div class="st-l">Nodes</div></div>
@@ -72,6 +91,13 @@ canvas{display:block}
 <div id="rl"></div>
 <div id="legend"></div>
 <div id="ctrl">drag rotate · scroll zoom · hover details</div>
+<div id="overlay">
+<div id="ov-header"><div id="ov-title"></div><button id="ov-close" onclick="closeOverlay()">ESC</button></div>
+<div id="ov-body">
+<div id="ov-search" style="display:none"><input id="ov-q" placeholder="Search..." onkeydown="if(event.key==='Enter')doSearch()"><button onclick="doSearch()">Search</button></div>
+<div id="ov-list"></div>
+</div>
+</div>
 
 <script>
 var R={
@@ -5147,6 +5173,108 @@ else{tRx.style.display='none'}
 
 requestAnimationFrame(render)}
 render();
+
+// === OVERLAY PANEL SYSTEM ===
+var curPanel=null;
+function esc2(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML}
+function shortP(p){return(p||'').replace(/-Users-jung-wankim[-]?/g,'').replace(/^Project-/,'').replace(/-/g,'/')||'home'}
+function fDate(d){if(!d)return'';return d.slice(0,10)}
+
+function setActiveNav(name){
+  document.querySelectorAll('.nav-a').forEach(function(a){
+    a.classList.toggle('active',a.textContent.toLowerCase().replace('3d ','')===name)
+  })
+}
+
+function closeOverlay(){
+  document.getElementById('overlay').classList.remove('open');
+  curPanel=null;
+  setActiveNav('graph')
+}
+
+function openPanel(type){
+  curPanel=type;
+  document.getElementById('overlay').classList.add('open');
+  var titles={projects:'Projects',search:'Search Conversations',prompts:'User Prompts',facts:'Fact Search'};
+  document.getElementById('ov-title').textContent=titles[type]||type;
+  var sq=document.getElementById('ov-search');
+  sq.style.display=(type==='search'||type==='facts')?'flex':'none';
+  document.getElementById('ov-q').value='';
+  document.getElementById('ov-q').placeholder=type==='facts'?'Search facts...':'Search conversations...';
+  setActiveNav(type);
+  clearList('Loading...');
+  if(type==='projects')loadProjects();
+  else if(type==='prompts')loadPrompts();
+  else clearList(type==='search'?'Enter a search query above':'Enter a fact query above');
+}
+
+function clearList(msg){
+  var el=document.getElementById('ov-list');
+  el.textContent='';
+  var d=document.createElement('div');
+  d.style.cssText='color:#484f58;text-align:center;padding:40px';
+  d.textContent=msg;
+  el.appendChild(d);
+}
+
+function makeCard(title,meta,body){
+  var card=document.createElement('div');card.className='ov-card';
+  if(title){var t=document.createElement('div');t.className='ov-card-title';t.textContent=title;card.appendChild(t)}
+  if(meta){var m=document.createElement('div');m.className='ov-card-meta';
+    meta.forEach(function(s){var sp=document.createElement('span');sp.textContent=s;m.appendChild(sp)});
+    card.appendChild(m)}
+  if(body){var b=document.createElement('div');b.className='ov-card-body';b.textContent=body;card.appendChild(b)}
+  return card
+}
+
+function doSearch(){
+  var q=document.getElementById('ov-q').value.trim();
+  if(!q)return;
+  clearList('Searching...');
+  var url=curPanel==='facts'?'/api/search?q='+encodeURIComponent(q)+'&type=facts':'/api/search?q='+encodeURIComponent(q);
+  fetch(url).then(function(r){return r.json()}).then(function(d){
+    var list=document.getElementById('ov-list');list.textContent='';
+    var results=d.results||[];
+    if(!results.length){clearList('No results');return}
+    results.forEach(function(r){
+      list.appendChild(makeCard(
+        curPanel==='facts'?(r.fact||r.user_message||''):'',
+        [shortP(r.project),fDate(r.timestamp),r.category||''].filter(Boolean),
+        (r.user_message||r.fact||'').slice(0,300)
+      ))
+    })
+  }).catch(function(){clearList('API error')})
+}
+
+function loadProjects(){
+  fetch('/api/projects').then(function(r){return r.json()}).then(function(data){
+    var list=document.getElementById('ov-list');list.textContent='';
+    if(!data||!data.length){clearList('No projects');return}
+    data.forEach(function(p){
+      list.appendChild(makeCard(
+        shortP(p.project),
+        [p.count+' exchanges',fDate(p.first_seen)+' ~ '+fDate(p.last_seen),p.real_path||''].filter(Boolean),
+        (p.last_prompt||'').slice(0,200)
+      ))
+    })
+  }).catch(function(){clearList('API error')})
+}
+
+function loadPrompts(){
+  fetch('/api/user-prompts?limit=50').then(function(r){return r.json()}).then(function(data){
+    var list=document.getElementById('ov-list');list.textContent='';
+    var results=data.results||data||[];
+    if(!results.length){clearList('No prompts');return}
+    results.forEach(function(p){
+      list.appendChild(makeCard('',
+        [shortP(p.project),fDate(p.timestamp)],
+        (p.user_message||'').slice(0,300)
+      ))
+    })
+  }).catch(function(){clearList('API error')})
+}
+
+document.addEventListener('keydown',function(e){if(e.key==='Escape'&&curPanel)closeOverlay()});
 </script>
 </body>
 </html>
