@@ -741,8 +741,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     if (name === 'graph_stats') {
-      const params = z.object({
-        project: z.string().optional(),
+      z.object({
+        project: z.string().max(500).optional(),
       }).strict().parse(args);
 
       const db = initDatabase();
