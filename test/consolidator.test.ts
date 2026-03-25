@@ -81,6 +81,34 @@ describe('Consolidator', () => {
       expect(active[0].consolidated_count).toBe(2);
     });
 
+    it('should use newFact.fact when merged_fact is empty on CONTRADICTION', () => {
+      const id1 = insertFact(db, { fact: 'Old approach', category: 'decision', scope_type: 'project', scope_project: '/proj', source_exchange_ids: [], embedding: null });
+      const id2 = insertFact(db, { fact: 'New approach', category: 'decision', scope_type: 'project', scope_project: '/proj', source_exchange_ids: [], embedding: null });
+
+      const facts = getActiveFacts(db);
+      applyConsolidationResult(db, facts.find(f => f.id === id1)!, facts.find(f => f.id === id2)!, {
+        relation: 'CONTRADICTION', merged_fact: '', reason: 'LLM returned empty',
+      });
+
+      const active = getActiveFacts(db);
+      expect(active).toHaveLength(1);
+      expect(active[0].fact).toBe('New approach'); // falls back to newFact
+    });
+
+    it('should use newFact.fact when merged_fact is whitespace on EVOLUTION', () => {
+      const id1 = insertFact(db, { fact: 'v1 config', category: 'knowledge', scope_type: 'project', scope_project: '/proj', source_exchange_ids: [], embedding: null });
+      const id2 = insertFact(db, { fact: 'v2 config', category: 'knowledge', scope_type: 'project', scope_project: '/proj', source_exchange_ids: [], embedding: null });
+
+      const facts = getActiveFacts(db);
+      applyConsolidationResult(db, facts.find(f => f.id === id1)!, facts.find(f => f.id === id2)!, {
+        relation: 'EVOLUTION', merged_fact: '   ', reason: 'whitespace only',
+      });
+
+      const active = getActiveFacts(db);
+      expect(active).toHaveLength(1);
+      expect(active[0].fact).toBe('v2 config'); // falls back to newFact
+    });
+
     it('should keep both for INDEPENDENT', () => {
       insertFact(db, { fact: 'Uses React', category: 'decision', scope_type: 'project', scope_project: '/proj', source_exchange_ids: [], embedding: null });
       insertFact(db, { fact: 'Uses PostgreSQL', category: 'decision', scope_type: 'project', scope_project: '/proj', source_exchange_ids: [], embedding: null });
