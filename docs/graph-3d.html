@@ -40,11 +40,33 @@ canvas{display:block}
 .ri{display:flex;align-items:center;gap:5px;font-size:9px;color:#30363d}
 .ri-l{width:16px;height:0;border-top:1.5px}
 #ctrl{position:fixed;bottom:10px;right:16px;z-index:10;font-size:10px;color:#21262d}
+#nav{display:flex;gap:2px;pointer-events:auto;align-self:center}
+.nav-a{padding:5px 12px;border-radius:5px;font-size:11px;color:#484f58;text-decoration:none;border:1px solid transparent;transition:all .15s;font-weight:500;letter-spacing:.3px}
+.nav-a:hover{color:#c9d1d9;border-color:#30363d;background:rgba(255,255,255,.04)}
+.nav-a.active{color:#bf7af0;border-color:#bf7af055;background:rgba(191,122,240,.08)}
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="hud"><div class="hud-l"><h1><b>Memory</b> Bank</h1><div class="hud-sub">Knowledge Graph · User Scope · Project Scope · Ontology</div></div><div id="stats"><div class="st"><div class="st-v" style="color:#58a6ff" id="sN">0</div><div class="st-l">Nodes</div></div><div class="st"><div class="st-v" style="color:#3fb950" id="sE">0</div><div class="st-l">Edges</div></div><div class="st"><div class="st-v" style="color:#bf7af0" id="sD">0</div><div class="st-l">Domains</div></div><div class="st"><div class="st-v" style="color:#f0883e" id="sX">0</div><div class="st-l">Exchanges</div></div></div></div>
+<div id="hud">
+<div class="hud-l">
+<h1><b>Memory</b> Bank</h1>
+<div class="hud-sub">Knowledge Graph · User Scope · Project Scope · Ontology</div>
+</div>
+<nav id="nav">
+<a href="/" class="nav-a active">3D Graph</a>
+<a href="/dashboard" class="nav-a">Projects</a>
+<a href="/dashboard#search" class="nav-a">Search</a>
+<a href="/dashboard#prompts" class="nav-a">Prompts</a>
+<a href="/dashboard#facts" class="nav-a">Facts</a>
+</nav>
+<div id="stats">
+<div class="st"><div class="st-v" style="color:#58a6ff" id="sN">0</div><div class="st-l">Nodes</div></div>
+<div class="st"><div class="st-v" style="color:#3fb950" id="sE">0</div><div class="st-l">Edges</div></div>
+<div class="st"><div class="st-v" style="color:#bf7af0" id="sD">0</div><div class="st-l">Domains</div></div>
+<div class="st"><div class="st-v" style="color:#f0883e" id="sX">0</div><div class="st-l">Exchanges</div></div>
+</div>
+</div>
 <div id="layers"></div>
 <div id="tt"><div class="th"><div class="td" id="tDot"></div><div class="tn" id="tNm"></div><div class="ts" id="tSc"></div></div><div class="tb" id="tBd"></div><div class="tx" id="tTx" style="display:none"><div class="tx-t" id="tTxT"></div><div class="tags" id="tTg"></div></div><div class="tx" id="tRx" style="display:none"><div class="tx-t">Relations</div><div id="tRl"></div></div></div>
 <div id="rl"></div>
@@ -5092,8 +5114,10 @@ cx.fillText(lb,n.sx,n.sy+r+(n.t==='domain'?14:10))}
 
 if(mx>=0){var dx=mx-n.sx,dy=my-n.sy,dd=Math.sqrt(dx*dx+dy*dy);if(dd<Math.max(r+8,mnd)){mnd=dd;hov=n}}}
 
-// TOOLTIP — pause rotation on hover
+// TOOLTIP — pause rotation on hover, sync camT on resume
+var wasHovPause=hovPause;
 hovPause=!!hov;
+if(wasHovPause&&!hovPause){camT=rY/(Math.PI*2);camBaseZm=zm}
 var tt=document.getElementById('tt');
 if(hov&&!drg){tt.style.display='block';tt.style.left=Math.min(mx+14,W-340)+'px';tt.style.top=Math.min(my+14,H-220)+'px';
 document.getElementById('tDot').style.background=hov.c;document.getElementById('tDot').style.setProperty('--nc',hov.c);document.getElementById('tDot').style.boxShadow='0 0 6px '+hov.c;
