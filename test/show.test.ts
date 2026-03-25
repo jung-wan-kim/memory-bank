@@ -85,6 +85,62 @@ describe('show command - markdown formatting', () => {
   });
 });
 
+describe('show command - edge cases', () => {
+  it('should return empty string for empty input', () => {
+    expect(formatConversationAsMarkdown('')).toBe('');
+  });
+
+  it('should return empty string for whitespace-only input', () => {
+    expect(formatConversationAsMarkdown('   \n  \n  ')).toBe('');
+  });
+
+  it('should return empty string for malformed JSON lines', () => {
+    expect(formatConversationAsMarkdown('not json\nalso not json')).toBe('');
+  });
+
+  it('should handle startLine and endLine range', () => {
+    const fixturesDir = join(import.meta.dirname, 'fixtures');
+    const jsonl = readFileSync(join(fixturesDir, 'tiny-conversation.jsonl'), 'utf-8');
+    const full = formatConversationAsMarkdown(jsonl);
+    const partial = formatConversationAsMarkdown(jsonl, 1, 2);
+
+    // Partial should be shorter or equal
+    expect(partial.length).toBeLessThanOrEqual(full.length);
+  });
+
+  it('should handle out-of-bounds line range gracefully', () => {
+    const fixturesDir = join(import.meta.dirname, 'fixtures');
+    const jsonl = readFileSync(join(fixturesDir, 'tiny-conversation.jsonl'), 'utf-8');
+    // Lines way beyond file length
+    const result = formatConversationAsMarkdown(jsonl, 9999, 10000);
+    expect(result).toBe('');
+  });
+
+  it('should skip system messages (non user/assistant)', () => {
+    const systemMsg = JSON.stringify({
+      uuid: 'sys-1',
+      parentUuid: null,
+      timestamp: '2026-01-01T00:00:00Z',
+      type: 'system',
+      isSidechain: false,
+      message: { role: 'system', content: 'System message' }
+    });
+    expect(formatConversationAsMarkdown(systemMsg)).toBe('');
+  });
+
+  it('should handle messages with empty content array', () => {
+    const emptyContent = JSON.stringify({
+      uuid: 'empty-1',
+      parentUuid: null,
+      timestamp: '2026-01-01T00:00:00Z',
+      type: 'user',
+      isSidechain: false,
+      message: { role: 'user', content: [] }
+    });
+    expect(formatConversationAsMarkdown(emptyContent)).toBe('');
+  });
+});
+
 describe('show command - HTML formatting', () => {
   const fixturesDir = join(import.meta.dirname, 'fixtures');
 
