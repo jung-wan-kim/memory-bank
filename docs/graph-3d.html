@@ -4921,6 +4921,7 @@ function rsz(){W=cv.width=innerWidth;H=cv.height=innerHeight}rsz();addEventListe
 var rX=-.15,rY=0,zm=2.8,drg=false,lx=0,ly2=0,ar=true,mx=-1,my=-1,frame=0;
 var camBaseZm=2.8,camT=0;
 cv.onmousedown=function(e){drg=true;lx=e.clientX;ly2=e.clientY;ar=false;document.body.classList.add('dragging')};
+var hovPause=false;
 cv.onmousemove=function(e){mx=e.clientX;my=e.clientY;if(drg){rY+=(e.clientX-lx)*.003;rX+=(e.clientY-ly2)*.003;rX=Math.max(-1.1,Math.min(1.1,rX));lx=e.clientX;ly2=e.clientY}};
 cv.onmouseup=function(){drg=false;document.body.classList.remove('dragging');
 // Resume auto orbit after 3s idle
@@ -4935,7 +4936,7 @@ function pj(x,y,z){var x1=x*Math.cos(rY)-z*Math.sin(rY),z1=x*Math.sin(rY)+z*Math
 
 function render(){
 frame++;
-if(ar){
+if(ar&&!hovPause){
 camT+=.0008;
 // Slow orbit: full rotation ~130s
 rY=camT*Math.PI*2;
@@ -5091,7 +5092,8 @@ cx.fillText(lb,n.sx,n.sy+r+(n.t==='domain'?14:10))}
 
 if(mx>=0){var dx=mx-n.sx,dy=my-n.sy,dd=Math.sqrt(dx*dx+dy*dy);if(dd<Math.max(r+8,mnd)){mnd=dd;hov=n}}}
 
-// TOOLTIP
+// TOOLTIP — pause rotation on hover
+hovPause=!!hov;
 var tt=document.getElementById('tt');
 if(hov&&!drg){tt.style.display='block';tt.style.left=Math.min(mx+14,W-340)+'px';tt.style.top=Math.min(my+14,H-220)+'px';
 document.getElementById('tDot').style.background=hov.c;document.getElementById('tDot').style.setProperty('--nc',hov.c);document.getElementById('tDot').style.boxShadow='0 0 6px '+hov.c;
