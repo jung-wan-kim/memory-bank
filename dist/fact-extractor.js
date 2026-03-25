@@ -91,10 +91,13 @@ export async function saveExtractedFacts(db, facts, project, sourceExchangeIds) 
             embedding,
         });
         savedIds.push(id);
-        // Ontology classification + relation detection (non-blocking, fire-and-forget in background)
-        classifyAndLinkFact(db, id, embedding).catch((err) => {
+        // Ontology classification + relation detection (must await to prevent DB close race)
+        try {
+            await classifyAndLinkFact(db, id, embedding);
+        }
+        catch (err) {
             console.error(`Ontology pipeline failed for fact ${id}:`, err);
-        });
+        }
     }
     return savedIds;
 }
