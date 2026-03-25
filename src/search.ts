@@ -2,7 +2,7 @@ import { initDatabase } from './db.js';
 import { initEmbeddings, generateEmbedding } from './embeddings.js';
 import { searchSimilarFacts } from './fact-db.js';
 import { getRelatedFacts, listDomains, listCategories } from './ontology-db.js';
-import { SearchResult, ConversationExchange, MultiConceptResult, Fact } from './types.js';
+import { SearchResult, ConversationExchange, MultiConceptResult } from './types.js';
 import fs from 'fs';
 import readline from 'readline';
 

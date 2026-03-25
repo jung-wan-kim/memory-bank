@@ -1,4 +1,4 @@
-import { pipeline, Pipeline, FeatureExtractionPipeline } from '@xenova/transformers';
+import { pipeline, FeatureExtractionPipeline } from '@xenova/transformers';
 
 let embeddingPipeline: FeatureExtractionPipeline | null = null;
 

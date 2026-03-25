@@ -26,7 +26,7 @@ import { formatConversationAsMarkdown } from './show.js';
 import { initDatabase } from './db.js';
 import { searchSimilarFacts, searchAllFacts, getRevisions } from './fact-db.js';
 import { generateEmbedding, initEmbeddings } from './embeddings.js';
-import { getOntologyTree, listDomains, listCategories, getFactsByCategory, getRelatedFacts } from './ontology-db.js';
+import { getOntologyTree, listDomains, listCategories, getRelatedFacts } from './ontology-db.js';
 import { askAvatar } from './avatar-responder.js';
 import fs from 'fs';
 import path from 'path';
