@@ -1,7 +1,7 @@
 ---
 description: Gives you memory across sessions. You don't automatically remember past conversations - THIS AGENT RESTORES IT. Search your history before starting any task to recover decisions, solutions, and lessons learned.
 capabilities: ["semantic-search", "conversation-synthesis", "historical-context", "pattern-recognition", "decision-archaeology"]
-model: haiku
+model: sonnet
 tools: Read, mcp__plugin_memory-bank_memory-bank__search, mcp__plugin_memory-bank_memory-bank__show
 ---
 
