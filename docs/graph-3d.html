@@ -5508,9 +5508,38 @@ function renderProjectNode(node,content){
         })
       }
 
-      addConnections(content,node.id)
+      addConnections(content,node.id);
+
+      // Translate content if KR mode
+      if(LANG==='kr'){
+        var textsToTranslate=[];
+        var factEls=content.querySelectorAll('.dp-fact');
+        var promptEls=content.querySelectorAll('.dp-prompt');
+        factEls.forEach(function(el){textsToTranslate.push(el.textContent)});
+        promptEls.forEach(function(el){
+          var dateEl=el.querySelector('.dp-prompt-date');
+          var txt=el.textContent.replace(dateEl?dateEl.textContent:'','').trim();
+          textsToTranslate.push(txt);
+        });
+        if(textsToTranslate.length>0){
+          translateContent(textsToTranslate).then(function(translated){
+            var fi=0;
+            factEls.forEach(function(el){if(translated[fi])el.textContent=translated[fi];fi++});
+            promptEls.forEach(function(el){
+              var dateEl=el.querySelector('.dp-prompt-date');
+              var dateText=dateEl?dateEl.textContent:'';
+              if(translated[fi]){
+                el.textContent='';
+                if(dateText){var dt2=document.createElement('div');dt2.className='dp-prompt-date';dt2.textContent=dateText;el.appendChild(dt2)}
+                el.appendChild(document.createTextNode(translated[fi]));
+              }
+              fi++
+            })
+          })
+        }
+      }
     })
-    .catch(function(){content.textContent='API error'})
+    .catch(function(){content.textContent=t('apiError')})
 }
 
 function renderDomainNode(node,content){
@@ -5579,6 +5608,17 @@ function renderGenericNode(node,content){
 }
 
 function closeDetail(){document.getElementById('detail-panel').classList.remove('open')}
+
+// Translation helper - calls server API
+function translateContent(texts){
+  return fetch('/api/translate',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({texts:texts})
+  }).then(function(r){return r.json()})
+    .then(function(d){return d.translated||texts})
+    .catch(function(){return texts})
+}
 
 document.addEventListener('keydown',function(e){
   if(e.key==='Escape'){

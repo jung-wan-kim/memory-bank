@@ -18,6 +18,50 @@ catch (e) { console.error(`DB open failed: ${DB_PATH}\n${e.message}`); process.e
 function query(sql, params = []) { return db.prepare(sql).all(...params); }
 function queryOne(sql, params = []) { return db.prepare(sql).get(...params); }
 
+// Translation cache (in-memory, persists during server lifetime)
+const translationCache = new Map();
+
+async function translateTexts(texts) {
+  if (!texts || texts.length === 0) return [];
+
+  // Filter already cached
+  const uncached = [];
+  const results = new Array(texts.length);
+  for (let i = 0; i < texts.length; i++) {
+    const cached = translationCache.get(texts[i]);
+    if (cached) { results[i] = cached; }
+    else { uncached.push({ index: i, text: texts[i] }); }
+  }
+
+  if (uncached.length === 0) return results;
+
+  const textsToTranslate = uncached.map(u => u.text);
+
+  try {
+    // Use translate-worker.mjs (Agent SDK - no API key needed)
+    const { execFileSync } = require('child_process');
+    const workerPath = path.join(__dirname, 'translate-worker.mjs');
+    const output = execFileSync('node', [workerPath], {
+      input: JSON.stringify(textsToTranslate),
+      encoding: 'utf-8',
+      timeout: 30000,
+      env: { ...process.env, NODE_NO_WARNINGS: '1' }
+    });
+
+    const translated = JSON.parse(output.trim());
+    for (let i = 0; i < uncached.length; i++) {
+      const kr = translated[i] || uncached[i].text;
+      results[uncached[i].index] = kr;
+      translationCache.set(uncached[i].text, kr);
+    }
+  } catch (e) {
+    console.error('Translation failed:', e.message);
+    for (const { index, text } of uncached) results[index] = text;
+  }
+
+  return results;
+}
+
 const apiHandlers = {
   '/api/stats': () => {
     const total = queryOne('SELECT COUNT(*) as cnt FROM exchanges');
@@ -165,6 +209,16 @@ apiHandlers['/api/project-detail'] = (params) => {
   return { project, info, toolUsage, activity, recentPrompts, facts, sessions };
 };
 
+// Translation API (async handler - special case)
+const asyncHandlers = {
+  '/api/translate': async (params, body) => {
+    const texts = body && body.texts ? body.texts : [];
+    if (!texts.length) return { translated: [] };
+    const translated = await translateTexts(texts.slice(0, 50)); // max 50 at a time
+    return { translated };
+  }
+};
+
 // Graph 3D data API
 apiHandlers['/api/graph-data'] = () => {
   const projects = query(`
@@ -223,6 +277,23 @@ const server = http.createServer((req, res) => {
   if (url.pathname === '/dashboard') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(getHTML());
+    return;
+  }
+  // Async API handlers (translation etc.)
+  if (asyncHandlers[url.pathname]) {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const parsed = body ? JSON.parse(body) : {};
+        const result = await asyncHandlers[url.pathname](url.searchParams, parsed);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify(result));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
     return;
   }
   if (apiHandlers[url.pathname]) {
