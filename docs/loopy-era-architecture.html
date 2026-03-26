@@ -333,6 +333,508 @@ footer a{color:var(--accent);text-decoration:none}
   </div>
 </section>
 
+<!-- PROMPT CONTEXT STACK -->
+<section>
+  <div class="section-title">Context Assembly</div>
+  <div class="section-heading">Prompt Context Stack</div>
+  <p style="text-align:center;color:var(--dim);font-size:14px;margin-bottom:32px;max-width:600px">
+    Every prompt Claude receives is already enriched with layers of context.<br>The user's words are just the top of a deep stack.
+  </p>
+
+  <div class="ctx-stack-wrapper">
+    <div class="ctx-stack">
+      <div class="ctx-layer ctx-l5" style="--delay:0s">
+        <div class="ctx-layer-left">
+          <div class="ctx-layer-num">5</div>
+          <div class="ctx-layer-icon">💬</div>
+        </div>
+        <div class="ctx-layer-body">
+          <div class="ctx-layer-title" style="color:var(--red)">User Prompt</div>
+          <div class="ctx-layer-desc">The actual message typed. Arrives at the top of an already-rich context window.</div>
+        </div>
+        <div class="ctx-layer-tag" style="background:rgba(248,113,113,.12);color:var(--red)">TOP</div>
+      </div>
+
+      <div class="ctx-layer ctx-l4" style="--delay:.12s">
+        <div class="ctx-layer-left">
+          <div class="ctx-layer-num">4</div>
+          <div class="ctx-layer-icon">🧠</div>
+        </div>
+        <div class="ctx-layer-body">
+          <div class="ctx-layer-title" style="color:var(--green)">Memory Bank</div>
+          <div class="ctx-layer-desc">Semantic search surfaces the top-K relevant past decisions, patterns, and resolved errors from 2,600+ facts.</div>
+          <div class="ctx-layer-badges">
+            <span class="clb">384-dim embeddings</span>
+            <span class="clb">sqlite-vec cosine</span>
+            <span class="clb">top-5 facts injected</span>
+          </div>
+        </div>
+        <div class="ctx-layer-arrow">← feeds context</div>
+      </div>
+
+      <div class="ctx-layer ctx-l3" style="--delay:.24s">
+        <div class="ctx-layer-left">
+          <div class="ctx-layer-num">3</div>
+          <div class="ctx-layer-icon">⚡</div>
+        </div>
+        <div class="ctx-layer-body">
+          <div class="ctx-layer-title" style="color:var(--blue)">Hook Injections</div>
+          <div class="ctx-layer-desc">inject-context.sh runs at SessionStart — injects session continuity notes, pending self-improve tasks, and top project facts.</div>
+          <div class="ctx-layer-badges">
+            <span class="clb">inject-context.sh</span>
+            <span class="clb">self-improve-check.sh</span>
+            <span class="clb">session continuity</span>
+          </div>
+        </div>
+        <div class="ctx-layer-arrow">← auto-injected</div>
+      </div>
+
+      <div class="ctx-layer ctx-l2" style="--delay:.36s">
+        <div class="ctx-layer-left">
+          <div class="ctx-layer-num">2</div>
+          <div class="ctx-layer-icon">📚</div>
+        </div>
+        <div class="ctx-layer-body">
+          <div class="ctx-layer-title" style="color:var(--accent)">Skills / Scaffold</div>
+          <div class="ctx-layer-desc">Project scaffold (SKILL.md) with NEVER DO rules + domain patterns. Grows via /self-improve after each fix commit.</div>
+          <div class="ctx-layer-badges">
+            <span class="clb">SKILL.md</span>
+            <span class="clb">frontend-patterns.md</span>
+            <span class="clb">backend-patterns.md</span>
+          </div>
+        </div>
+        <div class="ctx-layer-arrow">← loaded at start</div>
+      </div>
+
+      <div class="ctx-layer ctx-l1" style="--delay:.48s">
+        <div class="ctx-layer-left">
+          <div class="ctx-layer-num">1</div>
+          <div class="ctx-layer-icon">📋</div>
+        </div>
+        <div class="ctx-layer-body">
+          <div class="ctx-layer-title" style="color:var(--orange)">CLAUDE.md</div>
+          <div class="ctx-layer-desc">Project rules, build commands, stack constraints. The permanent baseline every session inherits.</div>
+          <div class="ctx-layer-badges">
+            <span class="clb">project rules</span>
+            <span class="clb">build commands</span>
+            <span class="clb">stack config</span>
+          </div>
+        </div>
+        <div class="ctx-layer-tag" style="background:rgba(251,146,60,.12);color:var(--orange)">BASE</div>
+      </div>
+    </div>
+
+    <div class="ctx-memo-feed">
+      <div class="ctx-memo-label">Memory Bank Feed</div>
+      <div class="ctx-memo-pipe">
+        <div class="ctx-memo-item">past decisions</div>
+        <div class="ctx-memo-item">error patterns</div>
+        <div class="ctx-memo-item">project constraints</div>
+        <div class="ctx-memo-flow-line"></div>
+      </div>
+      <div class="ctx-memo-arrow">↑ injected into Layer 4</div>
+    </div>
+  </div>
+</section>
+
+<!-- MEMORY BANK DATA FLOW -->
+<section>
+  <div class="section-title">Data Pipeline</div>
+  <div class="section-heading">Memory Bank Data Flow</div>
+  <p style="text-align:center;color:var(--dim);font-size:14px;margin-bottom:48px;max-width:600px">
+    Two parallel pipelines transform raw conversations into searchable facts.
+  </p>
+
+  <div class="mb-pipelines">
+    <!-- Pipeline 1: Indexing -->
+    <div class="mb-pipeline-label">Conversation Indexing Pipeline</div>
+    <div class="mb-pipeline">
+      <div class="mb-node" style="--nc:var(--blue)">
+        <div class="mb-node-icon">📁</div>
+        <div class="mb-node-title">Conversations</div>
+        <div class="mb-node-sub">JSONL files<br>~/.claude/projects/</div>
+      </div>
+      <div class="mb-connector"><div class="mb-flow-dot" style="--flow-color:var(--blue)"></div></div>
+      <div class="mb-node" style="--nc:var(--accent)">
+        <div class="mb-node-icon">🔍</div>
+        <div class="mb-node-title">Parser</div>
+        <div class="mb-node-sub">parser.ts<br>user/assistant pairs</div>
+      </div>
+      <div class="mb-connector"><div class="mb-flow-dot" style="--flow-color:var(--accent)"></div></div>
+      <div class="mb-node" style="--nc:var(--cyan)">
+        <div class="mb-node-icon">🔢</div>
+        <div class="mb-node-title">Embeddings</div>
+        <div class="mb-node-sub">384-dim vectors<br>all-MiniLM-L6-v2</div>
+      </div>
+      <div class="mb-connector"><div class="mb-flow-dot" style="--flow-color:var(--cyan)"></div></div>
+      <div class="mb-node" style="--nc:var(--green)">
+        <div class="mb-node-icon">🗄️</div>
+        <div class="mb-node-title">SQLite + vec</div>
+        <div class="mb-node-sub">exchanges table<br>vec_exchanges index</div>
+      </div>
+      <div class="mb-connector"><div class="mb-flow-dot" style="--flow-color:var(--green)"></div></div>
+      <div class="mb-node" style="--nc:var(--orange)">
+        <div class="mb-node-icon">🔎</div>
+        <div class="mb-node-title">Semantic Search</div>
+        <div class="mb-node-sub">cosine similarity<br>FTS hybrid</div>
+      </div>
+    </div>
+
+    <!-- Pipeline 2: Facts -->
+    <div class="mb-pipeline-label" style="color:var(--pink)">Fact Extraction Pipeline</div>
+    <div class="mb-pipeline">
+      <div class="mb-node" style="--nc:var(--pink)">
+        <div class="mb-node-icon">🔚</div>
+        <div class="mb-node-title">Session End</div>
+        <div class="mb-node-sub">Stop hook<br>triggers extraction</div>
+      </div>
+      <div class="mb-connector"><div class="mb-flow-dot" style="--flow-color:var(--pink)"></div></div>
+      <div class="mb-node" style="--nc:var(--accent)">
+        <div class="mb-node-icon">🤖</div>
+        <div class="mb-node-title">Fact Extraction</div>
+        <div class="mb-node-sub">Haiku LLM<br>decisions/patterns</div>
+      </div>
+      <div class="mb-connector"><div class="mb-flow-dot" style="--flow-color:var(--accent)"></div></div>
+      <div class="mb-node" style="--nc:var(--orange)">
+        <div class="mb-node-icon">🔄</div>
+        <div class="mb-node-title">Consolidation</div>
+        <div class="mb-node-sub">dedup / contradict<br>/ evolve / keep</div>
+      </div>
+      <div class="mb-connector"><div class="mb-flow-dot" style="--flow-color:var(--orange)"></div></div>
+      <div class="mb-node" style="--nc:var(--green)">
+        <div class="mb-node-icon">💎</div>
+        <div class="mb-node-title">Facts DB</div>
+        <div class="mb-node-sub">2,600+ facts<br>vec_facts index</div>
+      </div>
+      <div class="mb-connector"><div class="mb-flow-dot" style="--flow-color:var(--green)"></div></div>
+      <div class="mb-node" style="--nc:var(--cyan)">
+        <div class="mb-node-icon">🗂️</div>
+        <div class="mb-node-title">Ontology</div>
+        <div class="mb-node-sub">domains / categories<br>INFLUENCES / SUPPORTS</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mb-consolidation-legend">
+    <div class="mb-legend-title">Consolidation Relations</div>
+    <div class="mb-legend-items">
+      <div class="mb-legend-item"><span class="mb-rel-badge" style="background:rgba(96,165,250,.15);color:var(--blue)">DUPLICATE</span> merge into one</div>
+      <div class="mb-legend-item"><span class="mb-rel-badge" style="background:rgba(248,113,113,.15);color:var(--red)">CONTRADICTION</span> replace old</div>
+      <div class="mb-legend-item"><span class="mb-rel-badge" style="background:rgba(251,146,60,.15);color:var(--orange)">EVOLUTION</span> update + track history</div>
+      <div class="mb-legend-item"><span class="mb-rel-badge" style="background:rgba(74,222,128,.15);color:var(--green)">INDEPENDENT</span> keep both</div>
+    </div>
+  </div>
+</section>
+
+<!-- INIT-PROJECT TREE -->
+<section>
+  <div class="section-title">Project Bootstrap</div>
+  <div class="section-heading">init-project → Skill Generation</div>
+  <p style="text-align:center;color:var(--dim);font-size:14px;margin-bottom:48px;max-width:600px">
+    One command scaffolds a full intelligent development environment.<br>Skills learn and grow automatically after every fix commit.
+  </p>
+
+  <div class="ip-tree-wrapper">
+    <div class="ip-center-node">
+      <div class="ip-cmd">/init-project</div>
+      <div class="ip-cmd-sub">Bootstrap command</div>
+    </div>
+
+    <div class="ip-branches">
+      <div class="ip-branch ip-branch-left">
+        <div class="ip-branch-line ip-branch-line-left"></div>
+        <div class="ip-file-node" style="--fc:var(--orange)">
+          <div class="ip-file-icon">📋</div>
+          <div class="ip-file-name">CLAUDE.md</div>
+          <div class="ip-file-desc">build commands<br>project overview<br>stack constraints</div>
+        </div>
+        <div class="ip-file-node" style="--fc:var(--blue)">
+          <div class="ip-file-icon">🔧</div>
+          <div class="ip-file-name">backend-patterns.md</div>
+          <div class="ip-file-desc">API patterns<br>DB access rules<br>auth patterns</div>
+        </div>
+        <div class="ip-file-node" style="--fc:var(--pink)">
+          <div class="ip-file-icon">🎨</div>
+          <div class="ip-file-name">frontend-patterns.md</div>
+          <div class="ip-file-desc">component rules<br>state management<br>CSS conventions</div>
+        </div>
+      </div>
+
+      <div class="ip-branch ip-branch-right">
+        <div class="ip-branch-line ip-branch-line-right"></div>
+        <div class="ip-file-node" style="--fc:var(--cyan)">
+          <div class="ip-file-icon">🧪</div>
+          <div class="ip-file-name">qa-strategy.md</div>
+          <div class="ip-file-desc">test approach<br>QA levels L0–L5<br>coverage targets</div>
+        </div>
+        <div class="ip-file-node ip-file-highlight" style="--fc:var(--accent)">
+          <div class="ip-file-icon">💎</div>
+          <div class="ip-file-name">{project}-scaffold/<br>SKILL.md</div>
+          <div class="ip-file-desc">NEVER DO rules<br>auto-grows on fix<br>project-specific</div>
+        </div>
+        <div class="ip-file-node" style="--fc:var(--green)">
+          <div class="ip-file-icon">⚙️</div>
+          <div class="ip-file-name">auto-issue settings</div>
+          <div class="ip-file-desc">GitHub issue polling<br>auto-dispatch rules<br>schedule config</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="ip-feedback-row">
+      <div class="ip-feedback-node ip-fb-hook" style="--fc:var(--blue)">
+        <div class="ip-fb-icon">⚡</div>
+        <div class="ip-fb-label">scaffold-violation-<br>check.sh</div>
+        <div class="ip-fb-desc">Hook reads SKILL.md<br>blocks rule violations</div>
+      </div>
+      <div class="ip-feedback-arrow">
+        <div class="ip-fa-line"></div>
+        <div class="ip-fa-label">reads NEVER DO rules</div>
+      </div>
+      <div class="ip-feedback-node ip-fb-skill" style="--fc:var(--accent)">
+        <div class="ip-fb-icon">💎</div>
+        <div class="ip-fb-label">SKILL.md</div>
+        <div class="ip-fb-desc">Living rules file<br>grows with project</div>
+      </div>
+      <div class="ip-feedback-arrow">
+        <div class="ip-fa-line"></div>
+        <div class="ip-fa-label">adds new rules</div>
+      </div>
+      <div class="ip-feedback-node ip-fb-self" style="--fc:var(--green)">
+        <div class="ip-fb-icon">🔄</div>
+        <div class="ip-fb-label">/self-improve</div>
+        <div class="ip-fb-desc">Analyzes fix diffs<br>generates new rules</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TEAM ORCHESTRATOR SWIMLANE -->
+<section>
+  <div class="section-title">Team Execution</div>
+  <div class="section-heading">/team Orchestrator Flow</div>
+  <p style="text-align:center;color:var(--dim);font-size:14px;margin-bottom:48px;max-width:600px">
+    Six roles execute across six phases. Frontend and Backend run in parallel.<br>QA only starts after implementation is complete.
+  </p>
+
+  <div class="sw-wrapper">
+    <div class="sw-header">
+      <div class="sw-role-col"></div>
+      <div class="sw-phases">
+        <div class="sw-phase-label">Phase 0<br><span>Analyze</span></div>
+        <div class="sw-phase-label">Phase 1<br><span>Design</span></div>
+        <div class="sw-phase-label">Phase 2<br><span>Database</span></div>
+        <div class="sw-phase-label">Phase 3<br><span>Implement</span></div>
+        <div class="sw-phase-label">Phase 4<br><span>QA</span></div>
+        <div class="sw-phase-label sw-phase-ship">Phase 5<br><span>Ship</span></div>
+      </div>
+    </div>
+
+    <div class="sw-rows">
+      <div class="sw-row">
+        <div class="sw-role" style="--rc:var(--accent)">
+          <div class="sw-role-icon">🎯</div>
+          <div class="sw-role-name">Team Lead</div>
+        </div>
+        <div class="sw-cells">
+          <div class="sw-cell"><div class="sw-bar sw-bar-full" style="--bc:var(--accent)">Orchestrate</div></div>
+          <div class="sw-cell"><div class="sw-bar sw-bar-full" style="--bc:var(--accent)">Coordinate</div></div>
+          <div class="sw-cell"><div class="sw-bar sw-bar-full" style="--bc:var(--accent)">Monitor</div></div>
+          <div class="sw-cell"><div class="sw-bar sw-bar-full" style="--bc:var(--accent)">Coordinate</div></div>
+          <div class="sw-cell"><div class="sw-bar sw-bar-full" style="--bc:var(--accent)">Review</div></div>
+          <div class="sw-cell"><div class="sw-bar sw-bar-full sw-bar-ship" style="--bc:var(--green)">Ship ✓</div></div>
+        </div>
+      </div>
+
+      <div class="sw-row">
+        <div class="sw-role" style="--rc:var(--blue)">
+          <div class="sw-role-icon">🏗️</div>
+          <div class="sw-role-name">Architect</div>
+        </div>
+        <div class="sw-cells">
+          <div class="sw-cell"><div class="sw-bar sw-bar-thin" style="--bc:var(--blue)">Brief</div></div>
+          <div class="sw-cell"><div class="sw-bar sw-bar-full" style="--bc:var(--blue)">Design</div></div>
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+        </div>
+      </div>
+
+      <div class="sw-row">
+        <div class="sw-role" style="--rc:var(--orange)">
+          <div class="sw-role-icon">🗄️</div>
+          <div class="sw-role-name">DB Admin</div>
+        </div>
+        <div class="sw-cells">
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+          <div class="sw-cell"><div class="sw-bar sw-bar-thin" style="--bc:var(--orange)">Schema</div></div>
+          <div class="sw-cell"><div class="sw-bar sw-bar-full" style="--bc:var(--orange)">Migrate + RLS</div></div>
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+        </div>
+      </div>
+
+      <div class="sw-row sw-row-parallel">
+        <div class="sw-role" style="--rc:var(--pink)">
+          <div class="sw-role-icon">🎨</div>
+          <div class="sw-role-name">Frontend</div>
+        </div>
+        <div class="sw-cells">
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+          <div class="sw-cell"><div class="sw-bar sw-bar-thin" style="--bc:var(--pink)">Types</div></div>
+          <div class="sw-cell"><div class="sw-bar sw-bar-full sw-bar-parallel" style="--bc:var(--pink)">UI Components</div></div>
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+        </div>
+      </div>
+
+      <div class="sw-row sw-row-parallel">
+        <div class="sw-role" style="--rc:var(--cyan)">
+          <div class="sw-role-icon">⚙️</div>
+          <div class="sw-role-name">Backend</div>
+        </div>
+        <div class="sw-cells">
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+          <div class="sw-cell"><div class="sw-bar sw-bar-thin" style="--bc:var(--cyan)">API Spec</div></div>
+          <div class="sw-cell"><div class="sw-bar sw-bar-full sw-bar-parallel" style="--bc:var(--cyan)">API Endpoints</div></div>
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+        </div>
+      </div>
+
+      <div class="sw-row">
+        <div class="sw-role" style="--rc:var(--green)">
+          <div class="sw-role-icon">🧪</div>
+          <div class="sw-role-name">QA</div>
+        </div>
+        <div class="sw-cells">
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+          <div class="sw-cell"><div class="sw-bar sw-bar-full" style="--bc:var(--green)">L0–L5 Tests</div></div>
+          <div class="sw-cell sw-cell-empty"><div class="sw-cell-dot"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sw-parallel-note">
+      <div class="sw-parallel-badge">
+        <span style="color:var(--pink)">Frontend</span> + <span style="color:var(--cyan)">Backend</span> run in parallel during Phase 3 — Promise.all()
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+/* ---- PROMPT CONTEXT STACK ---- */
+.ctx-stack-wrapper{display:flex;gap:40px;align-items:flex-start;max-width:900px;width:100%;margin:0 auto;flex-wrap:wrap;justify-content:center}
+.ctx-stack{display:flex;flex-direction:column;gap:6px;flex:1;min-width:500px}
+@keyframes slideInLeft{from{opacity:0;transform:translateX(-32px)}to{opacity:1;transform:translateX(0)}}
+.ctx-layer{display:flex;align-items:center;gap:16px;border-radius:12px;padding:16px 20px;border:1px solid var(--border);background:var(--s1);animation:slideInLeft .5s ease both;animation-delay:var(--delay)}
+.ctx-layer:hover{transform:translateX(4px);transition:transform .2s}
+.ctx-l5{background:rgba(248,113,113,.05);border-color:rgba(248,113,113,.2)}
+.ctx-l4{background:rgba(74,222,128,.05);border-color:rgba(74,222,128,.2)}
+.ctx-l3{background:rgba(96,165,250,.05);border-color:rgba(96,165,250,.2)}
+.ctx-l2{background:rgba(167,139,250,.05);border-color:rgba(167,139,250,.2)}
+.ctx-l1{background:rgba(251,146,60,.05);border-color:rgba(251,146,60,.2)}
+.ctx-layer-left{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.ctx-layer-num{width:22px;height:22px;border-radius:50%;background:var(--s2);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;color:var(--dim)}
+.ctx-layer-icon{font-size:22px}
+.ctx-layer-body{flex:1}
+.ctx-layer-title{font-size:13px;font-weight:700;margin-bottom:4px}
+.ctx-layer-desc{font-size:11px;color:var(--dim);line-height:1.5}
+.ctx-layer-badges{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}
+.clb{font-size:9px;font-weight:600;padding:2px 7px;border-radius:3px;background:rgba(255,255,255,.05);color:var(--dim)}
+.ctx-layer-tag{font-size:9px;font-weight:700;padding:3px 8px;border-radius:4px;flex-shrink:0}
+.ctx-layer-arrow{font-size:10px;color:var(--dim);flex-shrink:0;white-space:nowrap;font-style:italic}
+
+.ctx-memo-feed{background:rgba(74,222,128,.04);border:1px solid rgba(74,222,128,.15);border-radius:14px;padding:20px;width:160px;flex-shrink:0;text-align:center;align-self:center}
+.ctx-memo-label{font-size:10px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:2px;margin-bottom:12px}
+.ctx-memo-pipe{display:flex;flex-direction:column;gap:4px;position:relative;padding-bottom:16px}
+.ctx-memo-item{font-size:10px;color:var(--dim);background:rgba(74,222,128,.08);border-radius:4px;padding:4px 8px}
+@keyframes flowUp{0%{opacity:0;transform:translateY(0)}30%{opacity:1}100%{opacity:0;transform:translateY(-20px)}}
+.ctx-memo-flow-line{position:absolute;bottom:0;left:50%;width:2px;height:12px;background:linear-gradient(180deg,var(--green),transparent);animation:flowUp 2s ease-in-out infinite}
+.ctx-memo-arrow{font-size:9px;color:var(--green);margin-top:8px}
+
+/* ---- MEMORY BANK DATA FLOW ---- */
+.mb-pipelines{display:flex;flex-direction:column;gap:32px;max-width:1100px;width:100%;margin:0 auto}
+.mb-pipeline-label{font-size:11px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:2px;margin-bottom:12px;padding-left:4px}
+.mb-pipeline-label:nth-of-type(2){color:var(--pink)}
+.mb-pipeline{display:flex;align-items:center;gap:0;overflow-x:auto;padding-bottom:4px}
+.mb-node{flex-shrink:0;width:160px;padding:16px;border-radius:12px;border:1px solid var(--border);background:var(--s1);text-align:center;border-color:color-mix(in srgb, var(--nc) 30%, transparent);background:color-mix(in srgb, var(--nc) 5%, var(--s1))}
+.mb-node-icon{font-size:24px;margin-bottom:6px}
+.mb-node-title{font-size:12px;font-weight:700;color:var(--nc);margin-bottom:4px}
+.mb-node-sub{font-size:10px;color:var(--dim);line-height:1.5}
+.mb-connector{flex:1;min-width:24px;height:40px;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+@keyframes flowRight{0%{transform:translateX(-100%);opacity:0}50%{opacity:1}100%{transform:translateX(100%);opacity:0}}
+.mb-flow-dot{width:8px;height:8px;border-radius:50%;background:var(--flow-color);animation:flowRight 1.6s ease-in-out infinite;box-shadow:0 0 8px var(--flow-color)}
+
+.mb-consolidation-legend{margin-top:40px;border:1px solid var(--border);border-radius:14px;padding:20px 28px;max-width:700px;width:100%;margin-left:auto;margin-right:auto}
+.mb-legend-title{font-size:11px;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:2px;margin-bottom:12px}
+.mb-legend-items{display:flex;gap:16px;flex-wrap:wrap}
+.mb-legend-item{font-size:12px;color:var(--dim);display:flex;align-items:center;gap:8px}
+.mb-rel-badge{font-size:10px;font-weight:700;padding:3px 9px;border-radius:4px}
+
+/* ---- INIT-PROJECT TREE ---- */
+.ip-tree-wrapper{max-width:900px;width:100%;margin:0 auto;display:flex;flex-direction:column;align-items:center;gap:0}
+.ip-center-node{background:linear-gradient(135deg,rgba(167,139,250,.15),rgba(96,165,250,.1));border:1px solid rgba(167,139,250,.4);border-radius:16px;padding:20px 48px;text-align:center;position:relative;z-index:2;box-shadow:0 0 32px rgba(167,139,250,.1)}
+.ip-cmd{font-size:20px;font-weight:800;color:var(--accent);font-family:'JetBrains Mono',monospace}
+.ip-cmd-sub{font-size:11px;color:var(--dim);margin-top:4px;text-transform:uppercase;letter-spacing:2px}
+.ip-branches{display:flex;gap:24px;width:100%;margin-top:0;padding-top:0;position:relative}
+.ip-branches::before{content:'';position:absolute;top:0;left:50%;width:2px;height:24px;background:linear-gradient(180deg,rgba(167,139,250,.4),transparent);transform:translateX(-50%)}
+.ip-branch{flex:1;display:flex;flex-direction:column;gap:12px;padding-top:32px;position:relative}
+.ip-branch-line-left{position:absolute;top:0;right:0;width:50%;height:24px;border-top:1px dashed rgba(167,139,250,.3);border-right:1px dashed rgba(167,139,250,.3);border-radius:0 8px 0 0}
+.ip-branch-line-right{position:absolute;top:0;left:0;width:50%;height:24px;border-top:1px dashed rgba(167,139,250,.3);border-left:1px dashed rgba(167,139,250,.3);border-radius:8px 0 0 0}
+.ip-file-node{border-radius:12px;padding:14px 16px;border:1px solid color-mix(in srgb, var(--fc) 25%, transparent);background:color-mix(in srgb, var(--fc) 5%, var(--s1));transition:transform .2s}
+.ip-file-node:hover{transform:scale(1.02)}
+.ip-file-highlight{box-shadow:0 0 20px color-mix(in srgb, var(--fc) 15%, transparent)}
+.ip-file-icon{font-size:18px;margin-bottom:6px}
+.ip-file-name{font-size:12px;font-weight:700;color:var(--fc);margin-bottom:4px;font-family:'JetBrains Mono',monospace}
+.ip-file-desc{font-size:10px;color:var(--dim);line-height:1.6}
+
+.ip-feedback-row{display:flex;align-items:center;gap:0;margin-top:32px;width:100%;background:rgba(255,255,255,.02);border:1px solid var(--border);border-radius:16px;padding:20px 24px}
+.ip-feedback-node{flex:1;text-align:center;padding:12px}
+.ip-fb-icon{font-size:22px;margin-bottom:6px}
+.ip-fb-label{font-size:11px;font-weight:700;color:var(--fc);font-family:'JetBrains Mono',monospace;margin-bottom:4px}
+.ip-fb-desc{font-size:10px;color:var(--dim);line-height:1.5}
+.ip-feedback-arrow{display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0;width:80px}
+@keyframes arrowPulse{0%,100%{opacity:.4}50%{opacity:1}}
+.ip-fa-line{width:60px;height:2px;background:linear-gradient(90deg,var(--accent),var(--blue));border-radius:1px;animation:arrowPulse 2s ease-in-out infinite}
+.ip-fa-label{font-size:9px;color:var(--dim);text-align:center;line-height:1.3}
+
+/* ---- TEAM SWIMLANE ---- */
+.sw-wrapper{max-width:1100px;width:100%;margin:0 auto;overflow-x:auto}
+.sw-header{display:flex;align-items:center;margin-bottom:2px}
+.sw-role-col{width:130px;flex-shrink:0}
+.sw-phases{flex:1;display:grid;grid-template-columns:repeat(6,1fr);gap:2px}
+.sw-phase-label{font-size:10px;font-weight:700;color:var(--dim);text-align:center;padding:8px 4px;text-transform:uppercase;letter-spacing:1px;line-height:1.4}
+.sw-phase-label span{font-weight:400;font-size:9px}
+.sw-phase-ship{color:var(--green) !important}
+.sw-rows{display:flex;flex-direction:column;gap:3px}
+.sw-row{display:flex;align-items:center;gap:2px;border-radius:10px;overflow:hidden;border:1px solid var(--border)}
+.sw-row-parallel{border-color:rgba(255,255,255,.05)}
+.sw-role{width:130px;flex-shrink:0;padding:12px 14px;background:var(--s1);display:flex;align-items:center;gap:8px;border-right:1px solid var(--border)}
+.sw-role-icon{font-size:16px}
+.sw-role-name{font-size:11px;font-weight:700;color:var(--rc)}
+.sw-cells{flex:1;display:grid;grid-template-columns:repeat(6,1fr);gap:2px;padding:6px}
+.sw-cell{display:flex;align-items:center;justify-content:center;min-height:40px}
+.sw-bar{width:100%;padding:7px 8px;border-radius:6px;font-size:10px;font-weight:600;text-align:center;background:color-mix(in srgb, var(--bc) 15%, var(--s2));border:1px solid color-mix(in srgb, var(--bc) 30%, transparent);color:var(--bc);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sw-bar-thin{opacity:.6}
+.sw-bar-full{}
+@keyframes parallelPulse{0%,100%{box-shadow:0 0 0 rgba(255,255,255,0)}50%{box-shadow:0 0 12px color-mix(in srgb, var(--bc) 30%, transparent)}}
+.sw-bar-parallel{animation:parallelPulse 2.5s ease-in-out infinite}
+.sw-bar-ship{background:rgba(74,222,128,.15) !important;border-color:rgba(74,222,128,.4) !important;color:var(--green) !important}
+.sw-cell-empty{opacity:.2}
+.sw-cell-dot{width:6px;height:6px;border-radius:50%;background:var(--border)}
+
+.sw-parallel-note{margin-top:16px;text-align:center}
+.sw-parallel-badge{display:inline-block;font-size:12px;color:var(--dim);background:rgba(255,255,255,.03);border:1px dashed var(--border);border-radius:8px;padding:8px 20px}
+</style>
+
 <footer>
   Loopy Era — Built with Claude Code<br>
   Inspired by <a href="https://github.com/karpathy">Karpathy</a>'s autoresearch
