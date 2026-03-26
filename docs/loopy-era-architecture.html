@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Loopy Era — Claude Code Autonomous Architecture</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0a0e17;--surface:#111827;--surface2:#1a2332;--border:#1e293b;--text:#c9d1d9;--dim:#6e7681;--accent:#bf7af0;--blue:#58a6ff;--green:#3fb950;--orange:#f0883e;--red:#ef4444;--cyan:#06b6d4}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;padding:0}
+.hero{text-align:center;padding:80px 20px 60px;background:linear-gradient(180deg,#0f1520 0%,var(--bg) 100%)}
+.hero h1{font-size:48px;font-weight:800;background:linear-gradient(135deg,var(--accent),var(--blue));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px}
+.hero .sub{font-size:18px;color:var(--dim);font-weight:300;letter-spacing:1px}
+.hero .tagline{font-size:14px;color:var(--accent);margin-top:16px;font-style:italic}
+.container{max-width:1100px;margin:0 auto;padding:0 24px}
+section{margin-bottom:60px}
+h2{font-size:28px;font-weight:700;margin-bottom:24px;color:var(--text);display:flex;align-items:center;gap:12px}
+h2 .icon{font-size:24px}
+h3{font-size:18px;font-weight:600;margin:20px 0 12px;color:var(--blue)}
+
+/* Flow Diagram */
+.flow{display:flex;flex-direction:column;gap:0;align-items:center;margin:32px 0}
+.flow-row{display:flex;align-items:center;gap:0;width:100%}
+.flow-node{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 20px;flex:1;text-align:center;position:relative}
+.flow-node.active{border-color:var(--accent);box-shadow:0 0 20px rgba(191,122,240,.15)}
+.flow-node .label{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
+.flow-node .desc{font-size:11px;color:var(--dim)}
+.flow-arrow{width:40px;text-align:center;color:var(--dim);font-size:20px;flex-shrink:0}
+.flow-arrow-down{text-align:center;color:var(--dim);font-size:20px;padding:8px 0}
+
+/* Cards */
+.card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;transition:border-color .2s}
+.card:hover{border-color:var(--accent)}
+.card .title{font-size:14px;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.card .body{font-size:12px;color:var(--dim);line-height:1.6}
+.badge{display:inline-block;font-size:9px;font-weight:700;padding:2px 8px;border-radius:4px;text-transform:uppercase;letter-spacing:.5px}
+.badge-hard{background:rgba(239,68,68,.15);color:var(--red)}
+.badge-soft{background:rgba(63,185,80,.15);color:var(--green)}
+.badge-agent{background:rgba(191,122,240,.15);color:var(--accent)}
+.badge-hook{background:rgba(88,166,255,.15);color:var(--blue)}
+
+/* Escalation */
+.escalation{display:flex;gap:0;margin:24px 0}
+.esc-step{flex:1;padding:16px;text-align:center;position:relative}
+.esc-step:not(:last-child)::after{content:'→';position:absolute;right:-8px;top:50%;transform:translateY(-50%);color:var(--dim);font-size:20px;z-index:1}
+.esc-step .stage{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+.esc-step .detail{font-size:11px;color:var(--dim)}
+.esc-1{background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.2);border-radius:12px 0 0 12px}
+.esc-2{background:rgba(191,122,240,.08);border:1px solid rgba(191,122,240,.2)}
+.esc-3{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:0 12px 12px 0}
+
+/* Hook Table */
+table{width:100%;border-collapse:collapse;font-size:12px;margin:16px 0}
+th{text-align:left;padding:10px 12px;background:var(--surface);color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--border)}
+td{padding:10px 12px;border-bottom:1px solid var(--border)}
+tr:hover td{background:rgba(191,122,240,.03)}
+.mono{font-family:'SF Mono',Menlo,monospace;font-size:11px;color:var(--blue)}
+
+/* Architecture Layers */
+.layers{display:flex;flex-direction:column;gap:2px;margin:24px 0}
+.layer{display:flex;align-items:stretch;gap:2px}
+.layer-label{width:140px;padding:12px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;display:flex;align-items:center;border-radius:8px 0 0 8px}
+.layer-content{flex:1;padding:12px 16px;border-radius:0 8px 8px 0;font-size:12px}
+.l-user{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.15)}
+.l-user .layer-label{color:var(--red)}
+.l-claude{background:rgba(191,122,240,.08);border:1px solid rgba(191,122,240,.15)}
+.l-claude .layer-label{color:var(--accent)}
+.l-hook{background:rgba(88,166,255,.08);border:1px solid rgba(88,166,255,.15)}
+.l-hook .layer-label{color:var(--blue)}
+.l-memory{background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.15)}
+.l-memory .layer-label{color:var(--green)}
+.l-infra{background:rgba(240,136,62,.08);border:1px solid rgba(240,136,62,.15)}
+.l-infra .layer-label{color:var(--orange)}
+
+/* Orchestrator */
+.orch-flow{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0;justify-content:center}
+.orch-phase{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;text-align:center;min-width:120px}
+.orch-phase .num{font-size:20px;font-weight:800;color:var(--accent)}
+.orch-phase .name{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
+
+.code-block{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:16px;font-family:'SF Mono',Menlo,monospace;font-size:11px;color:var(--green);overflow-x:auto;margin:12px 0;line-height:1.8}
+.dim{color:var(--dim)}
+.highlight{color:var(--accent)}
+footer{text-align:center;padding:40px;color:var(--dim);font-size:11px;border-top:1px solid var(--border)}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1>Loopy Era</h1>
+  <div class="sub">Claude Code Autonomous Self-Improving Architecture</div>
+  <div class="tagline">"The human sets direction. The system builds itself."</div>
+</div>
+
+<div class="container">
+
+<!-- CONCEPT -->
+<section>
+  <h2><span class="icon">💡</span> Core Concept</h2>
+  <div class="card-grid">
+    <div class="card">
+      <div class="title">🔄 Self-Improving Loop</div>
+      <div class="body">Every mistake teaches the system. Fix commits are detected → analyzed → new rules are added to project scaffolds → same mistake never happens again. The scaffold evolves autonomously.</div>
+    </div>
+    <div class="card">
+      <div class="title">🤖 Zero Human Intervention</div>
+      <div class="body">30 hooks across 11 events handle everything: validation errors auto-fix via Opus agent hooks, test failures trigger retries with strategy rotation, and HARD blocks send Telegram alerts only when truly stuck.</div>
+    </div>
+    <div class="card">
+      <div class="title">🧠 Cross-Session Memory</div>
+      <div class="body">Memory Bank indexes 50K+ conversations with semantic search. Facts (decisions, preferences, patterns) persist across sessions. Each session starts with context injection from past work.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ARCHITECTURE LAYERS -->
+<section>
+  <h2><span class="icon">🏗️</span> Architecture Layers</h2>
+  <div class="layers">
+    <div class="layer l-user">
+      <div class="layer-label">👤 User Layer</div>
+      <div class="layer-content">Direction setting, feedback, quality information input. Telegram notifications for HARD blocks. The human is the "taste maker" — not the worker.</div>
+    </div>
+    <div class="layer l-claude">
+      <div class="layer-label">🧠 Claude Layer</div>
+      <div class="layer-content">Opus 4.6 main thread + orchestrators (manager/team). Skills provide domain knowledge. Agents handle specialized tasks. <code>bypassPermissions</code> mode — no approval prompts.</div>
+    </div>
+    <div class="layer l-hook">
+      <div class="layer-label">⚡ Hook Layer</div>
+      <div class="layer-content">30 hooks enforce quality gates. <span class="badge badge-hard">HARD</span> gates block bad commits. <span class="badge badge-agent">AGENT</span> hooks (Opus) auto-fix errors. <span class="badge badge-soft">SOFT</span> hooks inject guidance via <code>additionalContext</code>.</div>
+    </div>
+    <div class="layer l-memory">
+      <div class="layer-label">💾 Memory Layer</div>
+      <div class="layer-content">Memory Bank (2,600+ facts, semantic search), session state persistence, project scaffolds (NEVER DO rules), error logs (tool-errors.jsonl), self-improve pending queue.</div>
+    </div>
+    <div class="layer l-infra">
+      <div class="layer-label">🔧 Infra Layer</div>
+      <div class="layer-content">Git (atomic commits), npm/tsc/vitest (build/test), SQLite + sqlite-vec (vector DB), Telegram bot (notifications), MCP servers (Supabase, Figma, browser).</div>
+    </div>
+  </div>
+</section>
+
+<!-- ERROR ESCALATION -->
+<section>
+  <h2><span class="icon">🚨</span> 3-Stage Error Escalation</h2>
+  <p style="font-size:13px;color:var(--dim);margin-bottom:16px">When code has errors, the system escalates automatically — no human needed until Stage 3.</p>
+  <div class="escalation">
+    <div class="esc-step esc-1">
+      <div class="stage" style="color:var(--green)">Stage 1 — Soft</div>
+      <div style="font-size:13px;font-weight:600;margin:6px 0">additionalContext</div>
+      <div class="detail">Error message + "fix this now" injected into Claude's context. Claude usually fixes it immediately.</div>
+      <div style="margin-top:8px"><span class="badge badge-soft">1/3 attempts</span></div>
+    </div>
+    <div class="esc-step esc-2">
+      <div class="stage" style="color:var(--accent)">Stage 2 — Agent</div>
+      <div style="font-size:13px;font-weight:600;margin:6px 0">Opus Agent Hook</div>
+      <div class="detail">Independent Opus agent spawned by hook. Reads file, analyzes error, fixes it directly. Runs parallel to main thread.</div>
+      <div style="margin-top:8px"><span class="badge badge-agent">2/3 attempts</span></div>
+    </div>
+    <div class="esc-step esc-3">
+      <div class="stage" style="color:var(--red)">Stage 3 — Hard Block</div>
+      <div style="font-size:13px;font-weight:600;margin:6px 0">exit 2 + Telegram</div>
+      <div class="detail">Tool execution blocked. Telegram alert sent to user. "Change your approach" message. Counter resets.</div>
+      <div style="margin-top:8px"><span class="badge badge-hard">blocked</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- SELF-IMPROVE LOOP -->
+<section>
+  <h2><span class="icon">🔄</span> Self-Improvement Loop</h2>
+  <div class="code-block">
+<span class="dim">Session N:</span> Development work
+    ↓
+<span class="highlight">fix: commit detected</span> → Stop hook (self-improve-trigger.sh)
+    → saves ~/.claude/pending/self-improve-{project}.json
+    ↓
+<span class="dim">Session N+1:</span> User sends any prompt
+    → UserPromptSubmit hook (self-improve-check.sh)
+    → pending file found → <span class="highlight">"run /self-improve first"</span> auto-injected
+    ↓
+Claude runs /self-improve → analyzes fix diff → <span class="highlight">adds new NEVER DO rule to scaffold</span>
+    → deletes pending file
+    ↓
+<span class="dim">Session N+2:</span> <span class="highlight">Scaffold is stronger. Same mistake cannot happen again.</span>
+  </div>
+</section>
+
+<!-- ORCHESTRATOR STRUCTURE -->
+<section>
+  <h2><span class="icon">🎭</span> Orchestrator Structure</h2>
+  <p style="font-size:13px;color:var(--dim);margin-bottom:16px">Auto-selected based on project scale — no manual choice needed.</p>
+
+  <table>
+    <tr><th>Condition</th><th>Orchestrator</th><th>Agents</th></tr>
+    <tr><td>Bug fix, 1-2 files</td><td class="mono">Direct (no orchestrator)</td><td>—</td></tr>
+    <tr><td>≤2 specialists needed</td><td class="mono">manager-orchestrator</td><td>Sequential dispatch</td></tr>
+    <tr><td>≥3 specialists / full-stack</td><td class="mono">team-orchestrator</td><td>Parallel team (5 roles)</td></tr>
+  </table>
+
+  <h3>Team Orchestrator Phases</h3>
+  <div class="orch-flow">
+    <div class="orch-phase"><div class="num">0</div><div class="name">Analysis</div></div>
+    <div class="orch-phase"><div class="num">1</div><div class="name">Design</div></div>
+    <div class="orch-phase"><div class="num">2</div><div class="name">Database</div></div>
+    <div class="orch-phase"><div class="num">3</div><div class="name">Implement</div></div>
+    <div class="orch-phase"><div class="num">4</div><div class="name">QA</div></div>
+    <div class="orch-phase"><div class="num">5</div><div class="name">Ship</div></div>
+  </div>
+
+  <h3>Specialist Agents</h3>
+  <div class="card-grid">
+    <div class="card"><div class="title">🏛 architect-designer</div><div class="body">Project structure, directory layout, config files, boilerplate</div></div>
+    <div class="card"><div class="title">🎨 frontend-specialist</div><div class="body">React/Next.js/Vue UI, components, state management, Tailwind</div></div>
+    <div class="card"><div class="title">⚙️ backend-specialist</div><div class="body">API endpoints, business logic, auth, middleware</div></div>
+    <div class="card"><div class="title">🗄 supabase-specialist</div><div class="body">Database schema, RLS policies, Edge Functions, migrations</div></div>
+    <div class="card"><div class="title">📱 flutter-developer</div><div class="body">Dart/Flutter mobile apps, Riverpod, GoRouter</div></div>
+    <div class="card"><div class="title">🐛 bug-fixer</div><div class="body">Auto-called on errors. 3 strategies: direct fix → restructure → revert+rebuild</div></div>
+    <div class="card"><div class="title">🔍 code-reviewer</div><div class="body">Duplication, security, performance, best practices audit</div></div>
+  </div>
+</section>
+
+<!-- HOOK TABLE -->
+<section>
+  <h2><span class="icon">⚡</span> Hook System (30 hooks, 11 events)</h2>
+  <table>
+    <tr><th>Event</th><th>Hook</th><th>Type</th><th>Purpose</th></tr>
+    <tr><td>PreToolUse</td><td class="mono">validate-before-commit</td><td><span class="badge badge-hard">HARD</span></td><td>Build + type check before git commit</td></tr>
+    <tr><td>PreToolUse</td><td class="mono">qa-gate-before-push</td><td><span class="badge badge-hard">HARD</span></td><td>QA gate before git push (project-type aware)</td></tr>
+    <tr><td>PreToolUse</td><td class="mono">no-env-commit</td><td><span class="badge badge-hard">HARD</span></td><td>Block .env files from commits</td></tr>
+    <tr><td>PostToolUse</td><td class="mono">auto-validate</td><td><span class="badge badge-soft">SOFT→HARD</span></td><td>Type check after edit (escalates after 3 failures)</td></tr>
+    <tr><td>PostToolUse</td><td class="mono">scaffold-violation-check</td><td><span class="badge badge-soft">SOFT</span></td><td>Detect NEVER DO pattern violations</td></tr>
+    <tr><td>PostToolUse</td><td class="mono">agent auto-fix</td><td><span class="badge badge-agent">AGENT</span></td><td>Opus agent independently fixes validation errors</td></tr>
+    <tr><td>PostToolUseFailure</td><td class="mono">error-tracker</td><td><span class="badge badge-soft">SOFT</span></td><td>Log errors + inject fix instructions</td></tr>
+    <tr><td>PostToolUseFailure</td><td class="mono">agent recovery</td><td><span class="badge badge-agent">AGENT</span></td><td>Opus agent auto-recovers from tool failures</td></tr>
+    <tr><td>UserPromptSubmit</td><td class="mono">self-improve-check</td><td><span class="badge badge-soft">SOFT</span></td><td>Trigger self-improve if pending fixes exist</td></tr>
+    <tr><td>UserPromptSubmit</td><td class="mono">session-resume-check</td><td><span class="badge badge-soft">SOFT</span></td><td>Restore previous session state</td></tr>
+    <tr><td>UserPromptSubmit</td><td class="mono">inject-context</td><td><span class="badge badge-hook">INJECT</span></td><td>Inject top facts + session continuity</td></tr>
+    <tr><td>PreCompact</td><td class="mono">context-snapshot</td><td><span class="badge badge-hook">SAVE</span></td><td>Save work state before context compression</td></tr>
+    <tr><td>PostCompact</td><td class="mono">context-restore</td><td><span class="badge badge-hook">RESTORE</span></td><td>Restore work context after compression</td></tr>
+    <tr><td>Stop</td><td class="mono">self-improve-trigger</td><td><span class="badge badge-hook">DETECT</span></td><td>Detect fix: commits → create pending file</td></tr>
+    <tr><td>Stop</td><td class="mono">session-state-save</td><td><span class="badge badge-hook">SAVE</span></td><td>Save uncommitted changes, last commit for next session</td></tr>
+    <tr><td>Notification</td><td class="mono">telegram-notification</td><td><span class="badge badge-hook">NOTIFY</span></td><td>Send completion/error alerts via Telegram</td></tr>
+  </table>
+</section>
+
+<!-- MEMORY SYSTEM -->
+<section>
+  <h2><span class="icon">🧠</span> Memory System</h2>
+  <div class="card-grid">
+    <div class="card">
+      <div class="title">📚 Memory Bank Plugin</div>
+      <div class="body">
+        <strong>50K+ conversations</strong> indexed with semantic search (all-MiniLM-L6-v2, 384-dim vectors).<br>
+        <strong>2,600+ facts</strong> extracted by Haiku — decisions, preferences, patterns, knowledge, constraints.<br>
+        <strong>Ontology</strong> — 20 domains, auto-classified, with INFLUENCES/SUPPORTS/CONTRADICTS relations.<br>
+        <strong>3D Knowledge Graph</strong> — visual explorer with 4 layers (prompt → user → project → ontology).
+      </div>
+    </div>
+    <div class="card">
+      <div class="title">📋 Project Scaffolds</div>
+      <div class="body">
+        Per-project SKILL.md files with <strong>NEVER DO</strong> rules extracted from actual fix commits.<br>
+        <code>scaffold-violation-check.sh</code> hook enforces rules at edit time.<br>
+        <code>self-improve</code> adds new rules automatically when patterns are detected.<br>
+        Created by <code>/init-project</code> — analyzes real codebase, not generic templates.
+      </div>
+    </div>
+    <div class="card">
+      <div class="title">🔄 Session Continuity</div>
+      <div class="body">
+        <strong>session-state-save</strong> — captures uncommitted changes + last commit at session end.<br>
+        <strong>session-resume-check</strong> — restores state at next session start.<br>
+        <strong>context-snapshot/restore</strong> — preserves work context across compact cycles.<br>
+        <strong>inject-context</strong> — top facts + recent session summary injected before each prompt.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HUMAN ROLE -->
+<section>
+  <h2><span class="icon">👤</span> Human's Role in Loopy Era</h2>
+  <div class="card-grid">
+    <div class="card" style="border-color:var(--green)">
+      <div class="title" style="color:var(--green)">✅ What Humans Do</div>
+      <div class="body">
+        • Set direction and goals<br>
+        • Provide quality feedback<br>
+        • Feed quality information (articles, repos, ideas)<br>
+        • Respond to Telegram HARD-block alerts<br>
+        • Approve/reject self-improve proposals
+      </div>
+    </div>
+    <div class="card" style="border-color:var(--red)">
+      <div class="title" style="color:var(--red)">❌ What Humans Don't Do</div>
+      <div class="body">
+        • Write code<br>
+        • Create skills manually (skills create skills)<br>
+        • Fix bugs (3-stage escalation handles it)<br>
+        • Run tests (hooks auto-validate)<br>
+        • Approve tool execution (bypassPermissions)
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SETTINGS -->
+<section>
+  <h2><span class="icon">⚙️</span> Key Settings</h2>
+  <div class="code-block">
+<span class="dim">// ~/.claude/settings.json</span>
+{
+  "permissions": {
+    "defaultMode": "<span class="highlight">bypassPermissions</span>"  <span class="dim">// No approval prompts</span>
+  },
+  "hooks": {
+    "PostToolUse": [{
+      "matcher": "Edit|Write",
+      "hooks": [
+        { "type": "command", "command": "auto-validate.sh" },       <span class="dim">// Type check</span>
+        { "type": "command", "command": "scaffold-violation-check.sh" }, <span class="dim">// NEVER DO</span>
+        { "type": "<span class="highlight">agent</span>", "model": "<span class="highlight">claude-opus-4-6</span>", "timeout": 120,
+          "prompt": "Check and fix TypeScript errors..." }          <span class="dim">// Auto-fix</span>
+      ]
+    }],
+    "PostToolUseFailure": [{
+      "hooks": [
+        { "type": "command", "command": "error-tracker.sh" },       <span class="dim">// Log + track</span>
+        { "type": "<span class="highlight">agent</span>", "model": "<span class="highlight">claude-opus-4-6</span>", "timeout": 120,
+          "prompt": "Analyze and fix the root cause..." }           <span class="dim">// Auto-recover</span>
+      ]
+    }]
+  }
+}
+  </div>
+</section>
+
+<!-- GETTING STARTED -->
+<section>
+  <h2><span class="icon">🚀</span> Getting Started</h2>
+  <div class="code-block">
+<span class="dim"># 1. Set bypass permissions</span>
+claude config set permissions.defaultMode bypassPermissions
+
+<span class="dim"># 2. Install Memory Bank plugin</span>
+/plugin marketplace add jung-wan-kim/memory-bank
+/plugin install memory-bank@memory-bank-dev
+
+<span class="dim"># 3. Initialize project</span>
+/init-project
+
+<span class="dim"># 4. Run self-improve to start the loop</span>
+/self-improve
+
+<span class="dim"># 5. Start working — the system handles the rest</span>
+  </div>
+</section>
+
+</div>
+
+<footer>
+  Loopy Era Architecture — Built with Claude Code · Inspired by Karpathy's autoresearch<br>
+  30 hooks · 11 events · 65 skills · 2,600+ facts · 50K+ indexed conversations
+</footer>
+
+</body>
+</html>

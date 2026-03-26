@@ -185,6 +185,9 @@ export function initDatabase() {
     if (!factColumnNames.has('ontology_category_id')) {
         db.prepare('ALTER TABLE facts ADD COLUMN ontology_category_id TEXT').run();
     }
+    if (!factColumnNames.has('fact_kr')) {
+        db.prepare('ALTER TABLE facts ADD COLUMN fact_kr TEXT').run();
+    }
     db.exec(`
     CREATE TABLE IF NOT EXISTS ontology_relations (
       id TEXT PRIMARY KEY,

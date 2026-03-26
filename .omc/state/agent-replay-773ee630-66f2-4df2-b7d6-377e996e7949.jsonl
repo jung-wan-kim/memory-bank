@@ -1,0 +1,8 @@
+{"t":0,"agent":"a4a63f2","agent_type":"unknown","event":"agent_stop","success":true}
+{"t":0,"agent":"a0e3534","agent_type":"unknown","event":"agent_stop","success":true}
+{"t":0,"agent":"aa40e27","agent_type":"unknown","event":"agent_stop","success":true}
+{"t":0,"agent":"af4bb93","agent_type":"unknown","event":"agent_stop","success":true}
+{"t":0,"agent":"ad46eac","agent_type":"telegram-notifier","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"ad46eac","agent_type":"telegram-notifier","event":"agent_stop","success":true,"duration_ms":7861}
+{"t":0,"agent":"afdbf1f","agent_type":"claude-code-guide","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"afdbf1f","agent_type":"claude-code-guide","event":"agent_stop","success":true,"duration_ms":13320}

@@ -1,0 +1,214 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1773617140980,
+  "projectRoot": "/Users/jung-wankim/Project/Claude/episodic-memory",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "esbuild",
+        "version": "0.25.11",
+        "category": "build"
+      },
+      {
+        "name": "vitest",
+        "version": "3.2.4",
+        "category": "testing"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "npm run build",
+    "testCommand": "npm test",
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {
+      "build": "tsc && npm run bundle",
+      "bundle": "esbuild src/mcp-server.ts --bundle --platform=node --format=esm --outfile=dist/mcp-server.js --external:fsevents --external:@anthropic-ai/claude-agent-sdk --external:sharp --external:onnxruntime-node --external:better-sqlite3 --external:@xenova/transformers --external:sqlite-vec",
+      "postinstall": "npm rebuild better-sqlite3 2>/dev/null || true",
+      "test": "vitest run",
+      "test:watch": "vitest"
+    }
+  },
+  "conventions": {
+    "namingStyle": "camelCase",
+    "importStyle": "ES modules",
+    "testPattern": "*.test.ts",
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "scripts",
+      "src",
+      "test"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "agents": {
+      "path": "agents",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1773617140959,
+      "keyFiles": [
+        "search-conversations.md"
+      ]
+    },
+    "cli": {
+      "path": "cli",
+      "purpose": null,
+      "fileCount": 8,
+      "lastAccessed": 1773617140960,
+      "keyFiles": [
+        "index-conversations",
+        "index-conversations.js",
+        "mcp-server",
+        "mcp-server-wrapper.js",
+        "memory-bank"
+      ]
+    },
+    "commands": {
+      "path": "commands",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1773617140963,
+      "keyFiles": [
+        "search-conversations.md"
+      ]
+    },
+    "dist": {
+      "path": "dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 48,
+      "lastAccessed": 1773617140972,
+      "keyFiles": [
+        "consolidator.d.ts",
+        "consolidator.js",
+        "constants.d.ts",
+        "constants.js",
+        "db.d.ts"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 6,
+      "lastAccessed": 1773617140972,
+      "keyFiles": [
+        "SCHEMA.md",
+        "architecture.png",
+        "architecture.svg",
+        "fact-consolidation-demo.gif",
+        "fact-lifecycle.png"
+      ]
+    },
+    "hooks": {
+      "path": "hooks",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1773617140973,
+      "keyFiles": [
+        "hooks.json"
+      ]
+    },
+    "prompts": {
+      "path": "prompts",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1773617140973,
+      "keyFiles": [
+        "search-agent.md"
+      ]
+    },
+    "scripts": {
+      "path": "scripts",
+      "purpose": "Build/utility scripts",
+      "fileCount": 3,
+      "lastAccessed": 1773617140974,
+      "keyFiles": [
+        "fact-consolidate-hook.js",
+        "fact-extract-hook.js",
+        "scrub-fixtures.sh"
+      ]
+    },
+    "skills": {
+      "path": "skills",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1773617140974,
+      "keyFiles": []
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 24,
+      "lastAccessed": 1773617140975,
+      "keyFiles": [
+        "consolidator.ts",
+        "constants.ts",
+        "db.ts",
+        "embeddings.ts",
+        "fact-db.ts"
+      ]
+    },
+    "test": {
+      "path": "test",
+      "purpose": "Test files",
+      "fileCount": 18,
+      "lastAccessed": 1773617140976,
+      "keyFiles": [
+        "api-config.test.ts",
+        "consolidator.test.ts",
+        "db.test.ts",
+        "fact-db.test.ts",
+        "fact-extractor.test.ts"
+      ]
+    },
+    "video": {
+      "path": "video",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1773617140978,
+      "keyFiles": []
+    },
+    "test/fixtures": {
+      "path": "test/fixtures",
+      "purpose": "Test fixtures",
+      "fileCount": 5,
+      "lastAccessed": 1773617140980,
+      "keyFiles": [
+        "large-conversation.jsonl",
+        "long-conversation.jsonl",
+        "medium-conversation.jsonl"
+      ]
+    }
+  },
+  "hotPaths": [],
+  "userDirectives": []
+}

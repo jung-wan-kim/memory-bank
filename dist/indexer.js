@@ -16,7 +16,7 @@ function getProjectsDir() {
     return process.env.TEST_PROJECTS_DIR || path.join(os.homedir(), '.claude', 'projects');
 }
 // Process items in batches with limited concurrency
-async function processBatch(items, processor, concurrency) {
+export async function processBatch(items, processor, concurrency) {
     const results = [];
     for (let i = 0; i < items.length; i += concurrency) {
         const batch = items.slice(i, i + concurrency);

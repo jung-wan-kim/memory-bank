@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"git add docs/fact-consolidation-demo.gif video/fact-consolidation/out/fact-consolidation.mp4 && git commit -m \\\"$(cat <<'EOF'\\n비디오/GIF 재생성 (memory-bank 키워드 반영)\\n\\nCo-Authored-By: Claude Op...",
+  "error": "Exit code 128\nfatal: 'docs/fact-consolidation-demo.gif' 경로명세가 어떤 파일과도 일치하지 않습니다",
+  "timestamp": "2026-03-12T07:11:38.354Z",
+  "retry_count": 1
+}

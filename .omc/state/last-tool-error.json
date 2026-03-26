@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"claude plugin add -- https://github.com/jung-wan-kim/memory-bank 2>&1\",\"timeout\":120000,\"description\":\"Test plugin installation\"}",
+  "error": "Exit code 1\nError: Claude Code cannot be launched inside another Claude Code session.\nNested sessions share runtime resources and will crash all active sessions.\nTo bypass this check, unset the CLAUDECODE environment variable.",
+  "timestamp": "2026-03-12T07:44:44.344Z",
+  "retry_count": 1
+}
