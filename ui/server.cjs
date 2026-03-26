@@ -194,7 +194,7 @@ apiHandlers['/api/project-detail'] = (params) => {
   let facts = [];
   try {
     facts = query(`
-      SELECT fact, category, scope_type FROM facts
+      SELECT fact, fact_kr, category, scope_type FROM facts
       WHERE is_active = 1 AND (scope_project = ? OR scope_type = 'global')
       ORDER BY consolidated_count DESC LIMIT 20
     `, [project]);
@@ -241,7 +241,7 @@ apiHandlers['/api/graph-data'] = () => {
     SELECT tool_name, COUNT(*) as cnt FROM tool_calls GROUP BY tool_name ORDER BY cnt DESC LIMIT 50
   `);
   let facts = [];
-  try { facts = query(`SELECT id, fact, category, scope_type, scope_project FROM facts WHERE is_active = 1 LIMIT 200`); } catch(e) {}
+  try { facts = query(`SELECT id, fact, fact_kr, category, scope_type, scope_project FROM facts WHERE is_active = 1 LIMIT 200`); } catch(e) {}
   let domains = [];
   try { domains = query(`SELECT id, name, description FROM ontology_domains`); } catch(e) {}
   let relations = [];
