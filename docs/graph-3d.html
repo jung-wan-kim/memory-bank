@@ -5185,13 +5185,13 @@ document.getElementById('tDot').style.background=hov.c;document.getElementById('
 var tn=document.getElementById('tNm');tn.textContent=hov.nm;tn.style.color=hov.c;
 var ts=document.getElementById('tSc');var ll={source:'USER',project:'PROJECT',ontology:'ONTOLOGY'};ts.textContent=ll[hov.ly]||'';ts.style.background=rgba(hov.c,.15);ts.style.color=hov.c;
 var tb=document.getElementById('tBd');tb.textContent='';
-if(hov.t==='project'){['Domain: '+(hov.dom||'?'),'Exchanges: '+(hov.dt.ex||0).toLocaleString(),'Sessions: '+(hov.dt.sess||'?')].forEach(function(l){var d=document.createElement('div');d.textContent=l;tb.appendChild(d)});if(hov.dt.f){var d=document.createElement('div');d.textContent=hov.dt.f.slice(0,10)+' ~ '+(hov.dt.l||'').slice(0,10);tb.appendChild(d)}}
-else if(hov.t==='domain'){tb.textContent=pN.filter(function(n){return n.dom===hov.nm}).length+' projects'}
+if(hov.t==='project'){[t('domainLabel')+': '+(hov.dom||'?'),t('exchangesLabel')+': '+(hov.dt.ex||0).toLocaleString(),t('sessionsLabel')+': '+(hov.dt.sess||'?')].forEach(function(l){var d=document.createElement('div');d.textContent=l;tb.appendChild(d)});if(hov.dt.f){var d=document.createElement('div');d.textContent=hov.dt.f.slice(0,10)+' ~ '+(hov.dt.l||'').slice(0,10);tb.appendChild(d)}}
+else if(hov.t==='domain'){tb.textContent=pN.filter(function(n){return n.dom===hov.nm}).length+' '+t('projects')}
 else if(hov.t==='fact'){tb.textContent='Scope: Global · '+hov.dt.cat}
-else if(hov.t==='category'){tb.textContent='Tool Category'}
+else if(hov.t==='category'){tb.textContent=t('toolCategory')}
 // Tools
 var tTx=document.getElementById('tTx'),tTg=document.getElementById('tTg');tTg.textContent='';
-if(hov.dt.tools&&hov.dt.tools.length>0){tTx.style.display='block';document.getElementById('tTxT').textContent='Tools';
+if(hov.dt.tools&&hov.dt.tools.length>0){tTx.style.display='block';document.getElementById('tTxT').textContent=t('tools');
 hov.dt.tools.slice(0,8).forEach(function(t){var tg=document.createElement('span');tg.className='tg';tg.textContent=t;tg.style.background=rgba('#3b82f6',.1);tg.style.color='#3b82f6';tTg.appendChild(tg)});
 if(hov.dt.cats)hov.dt.cats.forEach(function(c){var ci=TCAT[c];var tg=document.createElement('span');tg.className='tg';tg.textContent=c;tg.style.background=rgba(ci?ci.c:'#484f58',.15);tg.style.color=ci?ci.c:'#484f58';tTg.appendChild(tg)})}else{tTx.style.display='none'}
 // Rels
@@ -5230,17 +5230,17 @@ function closeOverlay(){
 function openPanel(type){
   curPanel=type;
   document.getElementById('overlay').classList.add('open');
-  var titles={projects:'Projects',search:'Search Conversations',prompts:'User Prompts',facts:'Fact Search'};
+  var titles={projects:t('projects'),search:LANG==='kr'?'대화 검색':'Search Conversations',prompts:LANG==='kr'?'사용자 프롬프트':'User Prompts',facts:LANG==='kr'?'팩트 검색':'Fact Search'};
   document.getElementById('ov-title').textContent=titles[type]||type;
   var sq=document.getElementById('ov-search');
   sq.style.display=(type==='search'||type==='facts')?'flex':'none';
   document.getElementById('ov-q').value='';
-  document.getElementById('ov-q').placeholder=type==='facts'?'Search facts...':'Search conversations...';
+  document.getElementById('ov-q').placeholder=type==='facts'?t('factSearchPlaceholder'):t('searchPlaceholder');
   setActiveNav(type);
-  clearList('Loading...');
+  clearList(t('loading'));
   if(type==='projects')loadProjects();
   else if(type==='prompts')loadPrompts();
-  else clearList(type==='search'?'Enter a search query above':'Enter a fact query above');
+  else clearList(type==='search'?t('enterQuery'):t('enterFactQuery'));
 }
 
 function clearList(msg){
@@ -5265,12 +5265,12 @@ function makeCard(title,meta,body){
 function doSearch(){
   var q=document.getElementById('ov-q').value.trim();
   if(!q)return;
-  clearList('Searching...');
+  clearList(LANG==='kr'?'검색 중...':'Searching...');
   var url=curPanel==='facts'?'/api/search?q='+encodeURIComponent(q)+'&type=facts':'/api/search?q='+encodeURIComponent(q);
   fetch(url).then(function(r){return r.json()}).then(function(d){
     var list=document.getElementById('ov-list');list.textContent='';
     var results=d.results||[];
-    if(!results.length){clearList('No results');return}
+    if(!results.length){clearList(t('noResults'));return}
     results.forEach(function(r){
       list.appendChild(makeCard(
         curPanel==='facts'?(r.fact||r.user_message||''):'',
@@ -5278,35 +5278,35 @@ function doSearch(){
         (r.user_message||r.fact||'').slice(0,300)
       ))
     })
-  }).catch(function(){clearList('API error')})
+  }).catch(function(){clearList(t('apiError'))})
 }
 
 function loadProjects(){
   fetch('/api/projects').then(function(r){return r.json()}).then(function(data){
     var list=document.getElementById('ov-list');list.textContent='';
-    if(!data||!data.length){clearList('No projects');return}
+    if(!data||!data.length){clearList(t('noProjects'));return}
     data.forEach(function(p){
       list.appendChild(makeCard(
         shortP(p.project),
-        [p.count+' exchanges',fDate(p.first_seen)+' ~ '+fDate(p.last_seen),p.real_path||''].filter(Boolean),
+        [p.count+' '+t('exchanges').toLowerCase(),fDate(p.first_seen)+' ~ '+fDate(p.last_seen),p.real_path||''].filter(Boolean),
         (p.last_prompt||'').slice(0,200)
       ))
     })
-  }).catch(function(){clearList('API error')})
+  }).catch(function(){clearList(t('apiError'))})
 }
 
 function loadPrompts(){
   fetch('/api/user-prompts?limit=50').then(function(r){return r.json()}).then(function(data){
     var list=document.getElementById('ov-list');list.textContent='';
     var results=data.results||data||[];
-    if(!results.length){clearList('No prompts');return}
+    if(!results.length){clearList(t('noPrompts'));return}
     results.forEach(function(p){
       list.appendChild(makeCard('',
         [shortP(p.project),fDate(p.timestamp)],
         (p.user_message||'').slice(0,300)
       ))
     })
-  }).catch(function(){clearList('API error')})
+  }).catch(function(){clearList(t('apiError'))})
 }
 
 // === LANGUAGE PACK ===
@@ -5317,13 +5317,35 @@ var L={
       domain:'Domain',category:'Category',type:'Type',layer:'Layer',projects:'Projects',
       relatedProjects:'Related Projects',scope:'Scope',noData:'No data available',
       loading:'Loading...',nodeInfo:'Node Info',connections:'Connections',toolCategory:'Tool Category',
-      factContent:'Fact',factScope:'Scope',projectCount:'Projects in domain'},
+      factContent:'Fact',factScope:'Scope',projectCount:'Projects in domain',
+      other:'Other',tools:'Tools',decision:'Decision',preference:'Preference',pattern:'Pattern',
+      knowledge:'Knowledge',constraint:'Constraint',global:'Global',project2:'Project',
+      domainLabel:'Domain',exchangesLabel:'Exchanges',sessionsLabel:'Sessions',
+      searchPlaceholder:'Search conversations...',factSearchPlaceholder:'Search facts...',
+      enterQuery:'Enter a search query above',enterFactQuery:'Enter a fact query above',
+      noResults:'No results',noProjects:'No projects',noPrompts:'No prompts',
+      apiError:'API Error',close:'Close',
+      ontologyLayer:'Ontology',projectScope:'Project Scope',userScope:'User Scope',promptInput:'Prompt Input',
+      domainsCategories:'Domains · Categories',clustersRelations:'Clusters · Relations',
+      globalPreferences:'Global · Preferences',conversationsExtract:'Conversations · Extract',
+      toolsCount:'tools',projectsInDomain:'projects in domain'},
   kr:{overview:'개요',exchanges:'대화 수',sessions:'세션 수',branches:'브랜치',facts:'팩트',
       topTools:'주요 도구',activity:'활동 (최근 60일)',recentPrompts:'최근 프롬프트',
       domain:'도메인',category:'카테고리',type:'유형',layer:'레이어',projects:'프로젝트',
       relatedProjects:'관련 프로젝트',scope:'범위',noData:'데이터 없음',
       loading:'로딩 중...',nodeInfo:'노드 정보',connections:'연결',toolCategory:'도구 카테고리',
-      factContent:'내용',factScope:'범위',projectCount:'도메인 내 프로젝트'}
+      factContent:'내용',factScope:'범위',projectCount:'도메인 내 프로젝트',
+      other:'기타',tools:'도구',decision:'결정',preference:'선호',pattern:'패턴',
+      knowledge:'지식',constraint:'제약',global:'전역',project2:'프로젝트',
+      domainLabel:'도메인',exchangesLabel:'대화 수',sessionsLabel:'세션 수',
+      searchPlaceholder:'대화 검색...',factSearchPlaceholder:'팩트 검색...',
+      enterQuery:'위에 검색어를 입력하세요',enterFactQuery:'위에 팩트 검색어를 입력하세요',
+      noResults:'결과 없음',noProjects:'프로젝트 없음',noPrompts:'프롬프트 없음',
+      apiError:'API 오류',close:'닫기',
+      ontologyLayer:'온톨로지',projectScope:'프로젝트 범위',userScope:'사용자 범위',promptInput:'프롬프트 입력',
+      domainsCategories:'도메인 · 카테고리',clustersRelations:'클러스터 · 관계',
+      globalPreferences:'전역 · 선호',conversationsExtract:'대화 · 추출',
+      toolsCount:'도구',projectsInDomain:'도메인 내 프로젝트'}
 };
 function t(k){return(L[LANG]||L.en)[k]||k}
 function setLang(lang){
@@ -5430,7 +5452,7 @@ function renderProjectNode(node,content){
         var grouped={};
         d.toolUsage.forEach(function(tu){
           var tn=tu.tool_name.replace(/mcp__[^_]+_[^_]+__/,'');
-          var cat='Other';
+          var cat=t('other');
           for(var cn in TCAT){if(TCAT[cn].m.test(tu.tool_name)){cat=cn;break}}
           if(!grouped[cat])grouped[cat]={items:[],total:0,c:TCAT[cat]?TCAT[cat].c:'#484f58'};
           grouped[cat].items.push({l:tn,v:tu.cnt});grouped[cat].total+=tu.cnt
@@ -5469,7 +5491,7 @@ function renderProjectNode(node,content){
         Object.keys(fGroups).forEach(function(cat){
           var cc=catColors[cat]||'#484f58';
           var ch=document.createElement('div');ch.style.cssText='font-size:10px;font-weight:600;margin:8px 0 4px;color:'+cc;
-          ch.textContent=cat.toUpperCase()+' ('+fGroups[cat].length+')';sec4.appendChild(ch);
+          var catLabel=t(cat)||cat;ch.textContent=catLabel.toUpperCase()+' ('+fGroups[cat].length+')';sec4.appendChild(ch);
           fGroups[cat].slice(0,6).forEach(function(f){
             var fd=document.createElement('div');fd.className='dp-fact';fd.textContent=f.fact;sec4.appendChild(fd)
           })
@@ -5534,7 +5556,7 @@ function renderFactNode(node,content){
   factText.textContent=node.nm;sec1.appendChild(factText);
   if(node.dt){
     var meta=document.createElement('div');meta.style.cssText='font-size:10px;color:#484f58;margin-top:6px';
-    meta.textContent=(node.dt.cat||'')+' · '+(node.dt.scope||'global');sec1.appendChild(meta)
+    var catT=t(node.dt.cat)||node.dt.cat||'';var scopeT=node.dt.scope==='global'?t('global'):t('project2');meta.textContent=catT+' · '+scopeT;sec1.appendChild(meta)
   }
   addConnections(content,node.id)
 }
