@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>루프 에라 — Claude Code 자율 아키텍처</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#06090f;--s1:#0d1320;--s2:#141e30;--border:#1a2744;--text:#e2e8f0;--dim:#64748b;--accent:#a78bfa;--blue:#60a5fa;--green:#4ade80;--orange:#fb923c;--red:#f87171;--cyan:#22d3ee;--pink:#f472b6}
+body{background:var(--bg);color:var(--text);font-family:'Inter',-apple-system,sans-serif;overflow-x:hidden}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap');
+
+/* Hero */
+.hero{height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;position:relative;overflow:hidden}
+.hero canvas{position:absolute;top:0;left:0;width:100%;height:100%;opacity:.3}
+.hero-content{position:relative;z-index:1;text-align:center}
+.hero h1{font-size:72px;font-weight:900;letter-spacing:-2px;background:linear-gradient(135deg,var(--accent) 0%,var(--blue) 50%,var(--cyan) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hero .sub{font-size:20px;color:var(--dim);margin-top:12px;font-weight:300;letter-spacing:2px}
+.hero .quote{font-size:14px;color:var(--accent);margin-top:24px;font-style:italic;opacity:.7}
+.scroll-hint{position:absolute;bottom:40px;left:50%;transform:translateX(-50%);color:var(--dim);font-size:11px;animation:bounce 2s infinite;letter-spacing:2px}
+@keyframes bounce{0%,100%{transform:translateX(-50%) translateY(0)}50%{transform:translateX(-50%) translateY(8px)}}
+
+/* Sections */
+section{min-height:100vh;padding:80px 20px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.container{max-width:1200px;width:100%;margin:0 auto}
+.section-title{font-size:14px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:4px;margin-bottom:8px;text-align:center}
+.section-heading{font-size:40px;font-weight:800;text-align:center;margin-bottom:48px;letter-spacing:-1px}
+
+/* Circular Loop Diagram */
+.loop-container{position:relative;width:600px;height:600px;margin:0 auto}
+.loop-ring{position:absolute;top:50%;left:50%;width:460px;height:460px;border:2px solid var(--border);border-radius:50%;transform:translate(-50%,-50%)}
+.loop-ring::after{content:'';position:absolute;top:-4px;left:50%;width:8px;height:8px;background:var(--accent);border-radius:50%;animation:orbit 8s linear infinite;box-shadow:0 0 12px var(--accent)}
+@keyframes orbit{0%{transform:rotate(0deg) translateX(230px) rotate(0deg)}100%{transform:rotate(360deg) translateX(230px) rotate(-360deg)}}
+.loop-center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center}
+.loop-center .icon{font-size:48px;margin-bottom:8px}
+.loop-center .label{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:2px}
+.loop-node{position:absolute;width:130px;text-align:center;transform:translate(-50%,-50%)}
+.loop-node .node-icon{width:56px;height:56px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:24px;margin:0 auto 8px;border:1px solid var(--border);backdrop-filter:blur(8px)}
+.loop-node .node-label{font-size:12px;font-weight:700;margin-bottom:2px}
+.loop-node .node-desc{font-size:10px;color:var(--dim);line-height:1.4}
+.ln1{top:5%;left:50%}.ln1 .node-icon{background:rgba(96,165,250,.1);border-color:rgba(96,165,250,.3)}
+.ln2{top:25%;left:93%}.ln2 .node-icon{background:rgba(167,139,250,.1);border-color:rgba(167,139,250,.3)}
+.ln3{top:65%;left:93%}.ln3 .node-icon{background:rgba(74,222,128,.1);border-color:rgba(74,222,128,.3)}
+.ln4{top:90%;left:50%}.ln4 .node-icon{background:rgba(251,146,60,.1);border-color:rgba(251,146,60,.3)}
+.ln5{top:65%;left:7%}.ln5 .node-icon{background:rgba(248,113,113,.1);border-color:rgba(248,113,113,.3)}
+.ln6{top:25%;left:7%}.ln6 .node-icon{background:rgba(34,211,238,.1);border-color:rgba(34,211,238,.3)}
+
+/* Escalation Visual */
+.esc-visual{display:flex;align-items:stretch;gap:0;margin:40px 0;max-width:900px;width:100%}
+.esc-step{flex:1;padding:32px 24px;position:relative;display:flex;flex-direction:column;align-items:center;text-align:center}
+.esc-step:not(:last-child)::after{content:'';position:absolute;right:0;top:20%;height:60%;width:2px;background:linear-gradient(180deg,transparent,var(--dim),transparent)}
+.esc-bar{width:100%;height:6px;border-radius:3px;margin-bottom:20px}
+.esc-step:nth-child(1) .esc-bar{background:linear-gradient(90deg,var(--green),var(--green)40%,transparent);width:33%}
+.esc-step:nth-child(2) .esc-bar{background:linear-gradient(90deg,var(--accent),var(--accent)66%,transparent);width:66%}
+.esc-step:nth-child(3) .esc-bar{background:linear-gradient(90deg,var(--red),var(--red));width:100%}
+.esc-num{font-size:48px;font-weight:900;line-height:1;margin-bottom:8px}
+.esc-name{font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:2px;margin-bottom:12px}
+.esc-desc{font-size:12px;color:var(--dim);line-height:1.6;max-width:220px}
+.esc-tag{display:inline-block;font-size:10px;font-weight:700;padding:3px 10px;border-radius:4px;margin-top:12px}
+
+/* Layer Stack */
+.stack{display:flex;flex-direction:column;gap:4px;max-width:900px;width:100%;margin:40px 0}
+.stack-layer{display:flex;align-items:center;border-radius:12px;overflow:hidden;transition:transform .2s}
+.stack-layer:hover{transform:scale(1.02)}
+.stack-icon{width:64px;height:64px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0}
+.stack-label{width:140px;font-size:13px;font-weight:700;padding:0 16px;flex-shrink:0}
+.stack-content{flex:1;font-size:12px;padding:16px;color:var(--dim);line-height:1.6}
+.stack-badges{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}
+.sb{font-size:9px;font-weight:600;padding:2px 8px;border-radius:4px;background:rgba(255,255,255,.05);color:var(--text)}
+
+.sl-user{background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.15)}
+.sl-user .stack-icon{color:var(--red)}
+.sl-user .stack-label{color:var(--red)}
+.sl-claude{background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.15)}
+.sl-claude .stack-icon{color:var(--accent)}
+.sl-claude .stack-label{color:var(--accent)}
+.sl-hook{background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.15)}
+.sl-hook .stack-icon{color:var(--blue)}
+.sl-hook .stack-label{color:var(--blue)}
+.sl-memory{background:rgba(74,222,128,.06);border:1px solid rgba(74,222,128,.15)}
+.sl-memory .stack-icon{color:var(--green)}
+.sl-memory .stack-label{color:var(--green)}
+.sl-infra{background:rgba(251,146,60,.06);border:1px solid rgba(251,146,60,.15)}
+.sl-infra .stack-icon{color:var(--orange)}
+.sl-infra .stack-label{color:var(--orange)}
+
+/* Stats */
+.stats{display:flex;gap:24px;justify-content:center;margin:48px 0;flex-wrap:wrap}
+.stat{text-align:center;min-width:100px}
+.stat-value{font-size:36px;font-weight:900;font-family:'JetBrains Mono',monospace}
+.stat-label{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:2px;margin-top:4px}
+
+/* Role Cards */
+.role-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;max-width:800px;width:100%;margin:40px 0}
+.role-card{border-radius:16px;padding:32px;position:relative;overflow:hidden}
+.role-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
+.role-do{background:rgba(74,222,128,.04);border:1px solid rgba(74,222,128,.15)}
+.role-do::before{background:linear-gradient(90deg,var(--green),transparent)}
+.role-dont{background:rgba(248,113,113,.04);border:1px solid rgba(248,113,113,.15)}
+.role-dont::before{background:linear-gradient(90deg,var(--red),transparent)}
+.role-title{font-size:16px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.role-list{list-style:none;font-size:13px;color:var(--dim);line-height:2}
+.role-list li::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:10px}
+.role-do .role-list li::before{background:var(--green)}
+.role-dont .role-list li::before{background:var(--red)}
+
+/* Orchestrator */
+.orch-visual{display:flex;flex-direction:column;align-items:center;gap:16px;margin:40px 0}
+.orch-row{display:flex;gap:8px;align-items:center}
+.orch-box{padding:12px 20px;border-radius:10px;font-size:12px;font-weight:600;text-align:center;border:1px solid var(--border);background:var(--s1);min-width:100px}
+.orch-box.active{border-color:var(--accent);box-shadow:0 0 20px rgba(167,139,250,.1)}
+.orch-arrow{color:var(--dim);font-size:16px}
+.orch-condition{display:flex;gap:16px;margin:24px 0;flex-wrap:wrap;justify-content:center}
+.orch-cond{padding:16px 24px;border-radius:12px;background:var(--s1);border:1px solid var(--border);text-align:center;flex:1;min-width:200px;max-width:300px}
+.orch-cond .cond-if{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
+.orch-cond .cond-then{font-size:14px;font-weight:700;color:var(--accent)}
+
+footer{text-align:center;padding:60px 20px;color:var(--dim);font-size:11px;letter-spacing:1px;border-top:1px solid var(--border)}
+footer a{color:var(--accent);text-decoration:none}
+</style>
+</head>
+<body>
+
+<!-- HERO -->
+<div class="hero">
+  <canvas id="bg"></canvas>
+  <div class="hero-content">
+    <h1>Loopy Era</h1>
+    <div class="sub">자율 자가개선 아키텍처</div>
+    <div class="quote">"사람은 방향을 정하고, 시스템이 스스로 만든다."</div>
+  </div>
+  <div class="scroll-hint">스크롤하여 탐색 ↓</div>
+</div>
+
+<!-- LOOP CYCLE -->
+<section>
+  <div class="section-title">핵심 루프</div>
+  <div class="section-heading">자가개선 순환 구조</div>
+
+  <div class="loop-container">
+    <div class="loop-ring"></div>
+    <div class="loop-center">
+      <div class="icon">♾️</div>
+      <div class="label">무한 루프</div>
+    </div>
+
+    <div class="loop-node ln1">
+      <div class="node-icon">📝</div>
+      <div class="node-label" style="color:var(--blue)">코드 작성</div>
+      <div class="node-desc">Claude가 요청 + scaffold 규칙 기반으로 코드 작성</div>
+    </div>
+    <div class="loop-node ln2">
+      <div class="node-icon">⚡</div>
+      <div class="node-label" style="color:var(--accent)">검증</div>
+      <div class="node-desc">30개 hook이 타입, 린트, scaffold 위반 자동 체크</div>
+    </div>
+    <div class="loop-node ln3">
+      <div class="node-icon">🔧</div>
+      <div class="node-label" style="color:var(--green)">자동 수정</div>
+      <div class="node-desc">Opus agent hook이 독립적으로 에러 수정</div>
+    </div>
+    <div class="loop-node ln4">
+      <div class="node-icon">📦</div>
+      <div class="node-label" style="color:var(--orange)">배포</div>
+      <div class="node-desc">커밋 + 푸시 + 텔레그램 알림</div>
+    </div>
+    <div class="loop-node ln5">
+      <div class="node-icon">🧠</div>
+      <div class="node-label" style="color:var(--red)">학습</div>
+      <div class="node-desc">Fix 커밋 감지, 팩트 추출, scaffold 업데이트</div>
+    </div>
+    <div class="loop-node ln6">
+      <div class="node-icon">💎</div>
+      <div class="node-label" style="color:var(--cyan)">강화</div>
+      <div class="node-desc">새 NEVER DO 규칙이 같은 실수를 영원히 방지</div>
+    </div>
+  </div>
+</section>
+
+<!-- ERROR ESCALATION -->
+<section>
+  <div class="section-title">에러 처리</div>
+  <div class="section-heading">3단계 에스컬레이션</div>
+  <p style="text-align:center;color:var(--dim);font-size:14px;margin-bottom:32px;max-width:600px">
+    코드에 에러가 있으면 시스템이 자동으로 단계를 올립니다.<br>3단계까지 사람 개입 불필요.
+  </p>
+
+  <div class="esc-visual">
+    <div class="esc-step">
+      <div class="esc-bar"></div>
+      <div class="esc-num" style="color:var(--green)">1</div>
+      <div class="esc-name" style="color:var(--green)">소프트 알림</div>
+      <div class="esc-desc"><code>additionalContext</code>로 에러 메시지를 Claude 컨텍스트에 주입. Claude가 보고 수정.</div>
+      <div class="esc-tag" style="background:rgba(74,222,128,.1);color:var(--green)">자동 복구 가능</div>
+    </div>
+    <div class="esc-step">
+      <div class="esc-bar"></div>
+      <div class="esc-num" style="color:var(--accent)">2</div>
+      <div class="esc-name" style="color:var(--accent)">에이전트 수정</div>
+      <div class="esc-desc">Hook이 독립 Opus 에이전트를 생성. 파일을 읽고, 에러 분석, 수정 적용. 메인 스레드와 병렬 실행.</div>
+      <div class="esc-tag" style="background:rgba(167,139,250,.1);color:var(--accent)">Opus 기반</div>
+    </div>
+    <div class="esc-step">
+      <div class="esc-bar"></div>
+      <div class="esc-num" style="color:var(--red)">3</div>
+      <div class="esc-name" style="color:var(--red)">강제 차단</div>
+      <div class="esc-desc">도구 실행 차단. 텔레그램으로 사용자에게 알림. "접근 방식 변경" 메시지. 카운터 리셋.</div>
+      <div class="esc-tag" style="background:rgba(248,113,113,.1);color:var(--red)">사람 개입 필요</div>
+    </div>
+  </div>
+</section>
+
+<!-- ARCHITECTURE LAYERS -->
+<section>
+  <div class="section-title">아키텍처</div>
+  <div class="section-heading">5개 레이어</div>
+
+  <div class="stack">
+    <div class="stack-layer sl-user">
+      <div class="stack-icon">👤</div>
+      <div class="stack-label">사용자</div>
+      <div class="stack-content">
+        방향 설정, 피드백, 양질의 정보 제공. HARD 차단 시에만 텔레그램 알림.
+        <div class="stack-badges"><span class="sb">방향 설정자</span><span class="sb">실행자 아님</span></div>
+      </div>
+    </div>
+    <div class="stack-layer sl-claude">
+      <div class="stack-icon">🧠</div>
+      <div class="stack-label">Claude</div>
+      <div class="stack-content">
+        Opus 메인 스레드 + 오케스트레이터 + 65개 스킬 + 전문 에이전트. bypassPermissions — 승인 프롬프트 없음.
+        <div class="stack-badges"><span class="sb">Opus 4.6</span><span class="sb">팀 오케스트레이터</span><span class="sb">7개 전문가</span></div>
+      </div>
+    </div>
+    <div class="stack-layer sl-hook">
+      <div class="stack-icon">⚡</div>
+      <div class="stack-label">훅 시스템</div>
+      <div class="stack-content">
+        11개 이벤트에 30개 훅. HARD 게이트가 잘못된 커밋 차단. Agent 훅이 에러 자동 수정. SOFT 훅이 가이드 주입.
+        <div class="stack-badges"><span class="sb">30 Hooks</span><span class="sb">11 Events</span><span class="sb">Agent + Command</span></div>
+      </div>
+    </div>
+    <div class="stack-layer sl-memory">
+      <div class="stack-icon">💾</div>
+      <div class="stack-label">메모리</div>
+      <div class="stack-content">
+        시맨틱 검색으로 2,600+ 팩트. 세션 상태 유지. 프로젝트 scaffold. 에러 로그가 self-improve에 피드.
+        <div class="stack-badges"><span class="sb">Memory Bank</span><span class="sb">2,600+ 팩트</span><span class="sb">50K+ 대화</span></div>
+      </div>
+    </div>
+    <div class="stack-layer sl-infra">
+      <div class="stack-icon">🔧</div>
+      <div class="stack-label">인프라</div>
+      <div class="stack-content">
+        Git, npm/tsc/vitest, SQLite + sqlite-vec, 텔레그램 봇, MCP 서버 (Supabase, Figma, 브라우저).
+        <div class="stack-badges"><span class="sb">Git</span><span class="sb">SQLite</span><span class="sb">Telegram</span><span class="sb">MCP</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="stat-value" style="color:var(--accent)">30</div><div class="stat-label">훅 시스템</div></div>
+    <div class="stat"><div class="stat-value" style="color:var(--blue)">11</div><div class="stat-label">이벤트</div></div>
+    <div class="stat"><div class="stat-value" style="color:var(--green)">65</div><div class="stat-label">스킬</div></div>
+    <div class="stat"><div class="stat-value" style="color:var(--orange)">2.6K</div><div class="stat-label">팩트</div></div>
+    <div class="stat"><div class="stat-value" style="color:var(--cyan)">50K+</div><div class="stat-label">대화</div></div>
+  </div>
+</section>
+
+<!-- ORCHESTRATOR -->
+<section>
+  <div class="section-title">오케스트레이션</div>
+  <div class="section-heading">규모에 따라 자동 선택</div>
+
+  <div class="orch-condition">
+    <div class="orch-cond">
+      <div class="cond-if">파일 1~2개, 버그 수정</div>
+      <div class="cond-then">직접 처리 (오케스트레이터 불필요)</div>
+    </div>
+    <div class="orch-cond">
+      <div class="cond-if">전문가 2명 이하</div>
+      <div class="cond-then">매니저 오케스트레이터</div>
+    </div>
+    <div class="orch-cond">
+      <div class="cond-if">전문가 3명 이상 / 풀스택</div>
+      <div class="cond-then">팀 오케스트레이터</div>
+    </div>
+  </div>
+
+  <div class="orch-visual">
+    <div class="orch-row">
+      <div class="orch-box active">Phase 0<br><span style="font-size:10px;color:var(--dim)">분석</span></div>
+      <div class="orch-arrow">→</div>
+      <div class="orch-box">Phase 1<br><span style="font-size:10px;color:var(--dim)">설계</span></div>
+      <div class="orch-arrow">→</div>
+      <div class="orch-box">Phase 2<br><span style="font-size:10px;color:var(--dim)">DB</span></div>
+      <div class="orch-arrow">→</div>
+      <div class="orch-box">Phase 3<br><span style="font-size:10px;color:var(--dim)">구현</span></div>
+      <div class="orch-arrow">→</div>
+      <div class="orch-box">Phase 4<br><span style="font-size:10px;color:var(--dim)">QA</span></div>
+      <div class="orch-arrow">→</div>
+      <div class="orch-box" style="border-color:var(--green)">Phase 5<br><span style="font-size:10px;color:var(--green)">배포</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- HUMAN ROLE -->
+<section>
+  <div class="section-title">사용자의 역할</div>
+  <div class="section-heading">방향 설정자, 실행자가 아닌</div>
+
+  <div class="role-grid">
+    <div class="role-card role-do">
+      <div class="role-title" style="color:var(--green)">✅ 하는 일</div>
+      <ul class="role-list">
+        <li>방향과 목표 설정</li>
+        <li>양질의 피드백 제공</li>
+        <li>정보 제공 (아티클, 레포)</li>
+        <li>텔레그램 알림 대응</li>
+        <li>self-improve 제안 검토</li>
+      </ul>
+    </div>
+    <div class="role-card role-dont">
+      <div class="role-title" style="color:var(--red)">❌ 안 하는 일</div>
+      <ul class="role-list">
+        <li>코드 작성</li>
+        <li>스킬 생성 (스킬이 스킬을 만듦)</li>
+        <li>버그 수정 (3단계가 처리)</li>
+        <li>테스트 실행 (훅이 자동 검증)</li>
+        <li>도구 실행 승인</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<footer>
+  루프 에라 — Claude Code로 구축<br>
+  영감: <a href="https://github.com/karpathy">Karpathy</a>의 autoresearch
+</footer>
+
+<script>
+// Animated background particles
+var c=document.getElementById('bg'),cx=c.getContext('2d');
+function resize(){c.width=innerWidth;c.height=innerHeight}resize();addEventListener('resize',resize);
+var particles=[];for(var i=0;i<80;i++)particles.push({x:Math.random()*innerWidth,y:Math.random()*innerHeight,vx:(Math.random()-.5)*.3,vy:(Math.random()-.5)*.3,r:Math.random()*1.5+.5});
+function draw(){cx.clearRect(0,0,c.width,c.height);
+for(var i=0;i<particles.length;i++){var p=particles[i];p.x+=p.vx;p.y+=p.vy;
+if(p.x<0)p.x=c.width;if(p.x>c.width)p.x=0;if(p.y<0)p.y=c.height;if(p.y>c.height)p.y=0;
+cx.beginPath();cx.arc(p.x,p.y,p.r,0,Math.PI*2);cx.fillStyle='rgba(167,139,250,.3)';cx.fill();
+for(var j=i+1;j<particles.length;j++){var q=particles[j],dx=p.x-q.x,dy=p.y-q.y,d=Math.sqrt(dx*dx+dy*dy);
+if(d<120){cx.beginPath();cx.moveTo(p.x,p.y);cx.lineTo(q.x,q.y);cx.strokeStyle='rgba(167,139,250,'+(1-d/120)*.08+')';cx.stroke()}}}
+requestAnimationFrame(draw)}draw();
+
+// Scroll reveal
+var sections=document.querySelectorAll('section');
+var observer=new IntersectionObserver(function(entries){entries.forEach(function(e){if(e.isIntersecting){e.target.style.opacity='1';e.target.style.transform='translateY(0)'}})},{threshold:.1});
+sections.forEach(function(s){s.style.opacity='0';s.style.transform='translateY(40px)';s.style.transition='opacity .8s ease,transform .8s ease';observer.observe(s)});
+</script>
+</body>
+</html>
