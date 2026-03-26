@@ -210,7 +210,7 @@ export const TeamDetailScene = () => {
                           [0, pulseAlpha],
                           { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
                         )
-                      : interpolate(frame, [headerOpacity > 0 ? 35 : 60, 55], [0, 0.25], {
+                      : interpolate(frame, [35, 55], [0, 0.25], {
                           extrapolateRight: "clamp",
                         }),
                   }}

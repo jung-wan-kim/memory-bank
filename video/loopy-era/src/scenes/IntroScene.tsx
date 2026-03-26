@@ -24,6 +24,9 @@ export const IntroScene = () => {
   // Subtitle fades in
   const subtitleOpacity = interpolate(frame, [50, 70], [0, 1], { extrapolateRight: "clamp" });
 
+  // Bottleneck quote fades in first
+  const quoteOpacity = interpolate(frame, [0, 15], [0, 1], { extrapolateRight: "clamp" });
+
   // Particles — 12 circles with deterministic positions
   const particles = [
     { x: 120, y: 200, r: 3, delay: 0 },
@@ -90,6 +93,21 @@ export const IntroScene = () => {
           height: "100%",
         }}
       >
+        {/* Bottleneck quote — appears first */}
+        <div
+          style={{
+            fontSize: 22,
+            color: colors.orange,
+            opacity: quoteOpacity,
+            fontWeight: 500,
+            fontStyle: "italic",
+            marginBottom: 40,
+            letterSpacing: 0.5,
+          }}
+        >
+          "The biggest bottleneck is human."
+        </div>
+
         {/* Tag */}
         <div
           style={{
@@ -145,6 +163,18 @@ export const IntroScene = () => {
           }}
         >
           Autonomous Self-Improving Architecture
+        </div>
+
+        {/* removed — quote moved to top */}
+        <div
+          style={{
+            display: "none",
+            fontStyle: "italic",
+            marginTop: 32,
+            letterSpacing: 0.5,
+          }}
+        >
+          "The biggest bottleneck is human."
         </div>
       </div>
     </AbsoluteFill>
