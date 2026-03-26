@@ -3,367 +3,358 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Loopy Era — Claude Code Autonomous Architecture</title>
+<title>Loopy Era — Claude Code Architecture</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#0a0e17;--surface:#111827;--surface2:#1a2332;--border:#1e293b;--text:#c9d1d9;--dim:#6e7681;--accent:#bf7af0;--blue:#58a6ff;--green:#3fb950;--orange:#f0883e;--red:#ef4444;--cyan:#06b6d4}
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.6;padding:0}
-.hero{text-align:center;padding:80px 20px 60px;background:linear-gradient(180deg,#0f1520 0%,var(--bg) 100%)}
-.hero h1{font-size:48px;font-weight:800;background:linear-gradient(135deg,var(--accent),var(--blue));-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px}
-.hero .sub{font-size:18px;color:var(--dim);font-weight:300;letter-spacing:1px}
-.hero .tagline{font-size:14px;color:var(--accent);margin-top:16px;font-style:italic}
-.container{max-width:1100px;margin:0 auto;padding:0 24px}
-section{margin-bottom:60px}
-h2{font-size:28px;font-weight:700;margin-bottom:24px;color:var(--text);display:flex;align-items:center;gap:12px}
-h2 .icon{font-size:24px}
-h3{font-size:18px;font-weight:600;margin:20px 0 12px;color:var(--blue)}
+:root{--bg:#06090f;--s1:#0d1320;--s2:#141e30;--border:#1a2744;--text:#e2e8f0;--dim:#64748b;--accent:#a78bfa;--blue:#60a5fa;--green:#4ade80;--orange:#fb923c;--red:#f87171;--cyan:#22d3ee;--pink:#f472b6}
+body{background:var(--bg);color:var(--text);font-family:'Inter',-apple-system,sans-serif;overflow-x:hidden}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap');
 
-/* Flow Diagram */
-.flow{display:flex;flex-direction:column;gap:0;align-items:center;margin:32px 0}
-.flow-row{display:flex;align-items:center;gap:0;width:100%}
-.flow-node{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 20px;flex:1;text-align:center;position:relative}
-.flow-node.active{border-color:var(--accent);box-shadow:0 0 20px rgba(191,122,240,.15)}
-.flow-node .label{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
-.flow-node .desc{font-size:11px;color:var(--dim)}
-.flow-arrow{width:40px;text-align:center;color:var(--dim);font-size:20px;flex-shrink:0}
-.flow-arrow-down{text-align:center;color:var(--dim);font-size:20px;padding:8px 0}
+/* Hero */
+.hero{height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;position:relative;overflow:hidden}
+.hero canvas{position:absolute;top:0;left:0;width:100%;height:100%;opacity:.3}
+.hero-content{position:relative;z-index:1;text-align:center}
+.hero h1{font-size:72px;font-weight:900;letter-spacing:-2px;background:linear-gradient(135deg,var(--accent) 0%,var(--blue) 50%,var(--cyan) 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hero .sub{font-size:20px;color:var(--dim);margin-top:12px;font-weight:300;letter-spacing:2px}
+.hero .quote{font-size:14px;color:var(--accent);margin-top:24px;font-style:italic;opacity:.7}
+.scroll-hint{position:absolute;bottom:40px;left:50%;transform:translateX(-50%);color:var(--dim);font-size:11px;animation:bounce 2s infinite;letter-spacing:2px}
+@keyframes bounce{0%,100%{transform:translateX(-50%) translateY(0)}50%{transform:translateX(-50%) translateY(8px)}}
 
-/* Cards */
-.card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
-.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;transition:border-color .2s}
-.card:hover{border-color:var(--accent)}
-.card .title{font-size:14px;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:8px}
-.card .body{font-size:12px;color:var(--dim);line-height:1.6}
-.badge{display:inline-block;font-size:9px;font-weight:700;padding:2px 8px;border-radius:4px;text-transform:uppercase;letter-spacing:.5px}
-.badge-hard{background:rgba(239,68,68,.15);color:var(--red)}
-.badge-soft{background:rgba(63,185,80,.15);color:var(--green)}
-.badge-agent{background:rgba(191,122,240,.15);color:var(--accent)}
-.badge-hook{background:rgba(88,166,255,.15);color:var(--blue)}
+/* Sections */
+section{min-height:100vh;padding:80px 20px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.container{max-width:1200px;width:100%;margin:0 auto}
+.section-title{font-size:14px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:4px;margin-bottom:8px;text-align:center}
+.section-heading{font-size:40px;font-weight:800;text-align:center;margin-bottom:48px;letter-spacing:-1px}
 
-/* Escalation */
-.escalation{display:flex;gap:0;margin:24px 0}
-.esc-step{flex:1;padding:16px;text-align:center;position:relative}
-.esc-step:not(:last-child)::after{content:'→';position:absolute;right:-8px;top:50%;transform:translateY(-50%);color:var(--dim);font-size:20px;z-index:1}
-.esc-step .stage{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
-.esc-step .detail{font-size:11px;color:var(--dim)}
-.esc-1{background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.2);border-radius:12px 0 0 12px}
-.esc-2{background:rgba(191,122,240,.08);border:1px solid rgba(191,122,240,.2)}
-.esc-3{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:0 12px 12px 0}
+/* Circular Loop Diagram */
+.loop-container{position:relative;width:600px;height:600px;margin:0 auto}
+.loop-ring{position:absolute;top:50%;left:50%;width:460px;height:460px;border:2px solid var(--border);border-radius:50%;transform:translate(-50%,-50%)}
+.loop-ring::after{content:'';position:absolute;top:-4px;left:50%;width:8px;height:8px;background:var(--accent);border-radius:50%;animation:orbit 8s linear infinite;box-shadow:0 0 12px var(--accent)}
+@keyframes orbit{0%{transform:rotate(0deg) translateX(230px) rotate(0deg)}100%{transform:rotate(360deg) translateX(230px) rotate(-360deg)}}
+.loop-center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center}
+.loop-center .icon{font-size:48px;margin-bottom:8px}
+.loop-center .label{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:2px}
+.loop-node{position:absolute;width:130px;text-align:center;transform:translate(-50%,-50%)}
+.loop-node .node-icon{width:56px;height:56px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:24px;margin:0 auto 8px;border:1px solid var(--border);backdrop-filter:blur(8px)}
+.loop-node .node-label{font-size:12px;font-weight:700;margin-bottom:2px}
+.loop-node .node-desc{font-size:10px;color:var(--dim);line-height:1.4}
+.ln1{top:5%;left:50%}.ln1 .node-icon{background:rgba(96,165,250,.1);border-color:rgba(96,165,250,.3)}
+.ln2{top:25%;left:93%}.ln2 .node-icon{background:rgba(167,139,250,.1);border-color:rgba(167,139,250,.3)}
+.ln3{top:65%;left:93%}.ln3 .node-icon{background:rgba(74,222,128,.1);border-color:rgba(74,222,128,.3)}
+.ln4{top:90%;left:50%}.ln4 .node-icon{background:rgba(251,146,60,.1);border-color:rgba(251,146,60,.3)}
+.ln5{top:65%;left:7%}.ln5 .node-icon{background:rgba(248,113,113,.1);border-color:rgba(248,113,113,.3)}
+.ln6{top:25%;left:7%}.ln6 .node-icon{background:rgba(34,211,238,.1);border-color:rgba(34,211,238,.3)}
 
-/* Hook Table */
-table{width:100%;border-collapse:collapse;font-size:12px;margin:16px 0}
-th{text-align:left;padding:10px 12px;background:var(--surface);color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--border)}
-td{padding:10px 12px;border-bottom:1px solid var(--border)}
-tr:hover td{background:rgba(191,122,240,.03)}
-.mono{font-family:'SF Mono',Menlo,monospace;font-size:11px;color:var(--blue)}
+/* Escalation Visual */
+.esc-visual{display:flex;align-items:stretch;gap:0;margin:40px 0;max-width:900px;width:100%}
+.esc-step{flex:1;padding:32px 24px;position:relative;display:flex;flex-direction:column;align-items:center;text-align:center}
+.esc-step:not(:last-child)::after{content:'';position:absolute;right:0;top:20%;height:60%;width:2px;background:linear-gradient(180deg,transparent,var(--dim),transparent)}
+.esc-bar{width:100%;height:6px;border-radius:3px;margin-bottom:20px}
+.esc-step:nth-child(1) .esc-bar{background:linear-gradient(90deg,var(--green),var(--green)40%,transparent);width:33%}
+.esc-step:nth-child(2) .esc-bar{background:linear-gradient(90deg,var(--accent),var(--accent)66%,transparent);width:66%}
+.esc-step:nth-child(3) .esc-bar{background:linear-gradient(90deg,var(--red),var(--red));width:100%}
+.esc-num{font-size:48px;font-weight:900;line-height:1;margin-bottom:8px}
+.esc-name{font-size:14px;font-weight:700;text-transform:uppercase;letter-spacing:2px;margin-bottom:12px}
+.esc-desc{font-size:12px;color:var(--dim);line-height:1.6;max-width:220px}
+.esc-tag{display:inline-block;font-size:10px;font-weight:700;padding:3px 10px;border-radius:4px;margin-top:12px}
 
-/* Architecture Layers */
-.layers{display:flex;flex-direction:column;gap:2px;margin:24px 0}
-.layer{display:flex;align-items:stretch;gap:2px}
-.layer-label{width:140px;padding:12px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;display:flex;align-items:center;border-radius:8px 0 0 8px}
-.layer-content{flex:1;padding:12px 16px;border-radius:0 8px 8px 0;font-size:12px}
-.l-user{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.15)}
-.l-user .layer-label{color:var(--red)}
-.l-claude{background:rgba(191,122,240,.08);border:1px solid rgba(191,122,240,.15)}
-.l-claude .layer-label{color:var(--accent)}
-.l-hook{background:rgba(88,166,255,.08);border:1px solid rgba(88,166,255,.15)}
-.l-hook .layer-label{color:var(--blue)}
-.l-memory{background:rgba(63,185,80,.08);border:1px solid rgba(63,185,80,.15)}
-.l-memory .layer-label{color:var(--green)}
-.l-infra{background:rgba(240,136,62,.08);border:1px solid rgba(240,136,62,.15)}
-.l-infra .layer-label{color:var(--orange)}
+/* Layer Stack */
+.stack{display:flex;flex-direction:column;gap:4px;max-width:900px;width:100%;margin:40px 0}
+.stack-layer{display:flex;align-items:center;border-radius:12px;overflow:hidden;transition:transform .2s}
+.stack-layer:hover{transform:scale(1.02)}
+.stack-icon{width:64px;height:64px;display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0}
+.stack-label{width:140px;font-size:13px;font-weight:700;padding:0 16px;flex-shrink:0}
+.stack-content{flex:1;font-size:12px;padding:16px;color:var(--dim);line-height:1.6}
+.stack-badges{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}
+.sb{font-size:9px;font-weight:600;padding:2px 8px;border-radius:4px;background:rgba(255,255,255,.05);color:var(--text)}
+
+.sl-user{background:rgba(248,113,113,.06);border:1px solid rgba(248,113,113,.15)}
+.sl-user .stack-icon{color:var(--red)}
+.sl-user .stack-label{color:var(--red)}
+.sl-claude{background:rgba(167,139,250,.06);border:1px solid rgba(167,139,250,.15)}
+.sl-claude .stack-icon{color:var(--accent)}
+.sl-claude .stack-label{color:var(--accent)}
+.sl-hook{background:rgba(96,165,250,.06);border:1px solid rgba(96,165,250,.15)}
+.sl-hook .stack-icon{color:var(--blue)}
+.sl-hook .stack-label{color:var(--blue)}
+.sl-memory{background:rgba(74,222,128,.06);border:1px solid rgba(74,222,128,.15)}
+.sl-memory .stack-icon{color:var(--green)}
+.sl-memory .stack-label{color:var(--green)}
+.sl-infra{background:rgba(251,146,60,.06);border:1px solid rgba(251,146,60,.15)}
+.sl-infra .stack-icon{color:var(--orange)}
+.sl-infra .stack-label{color:var(--orange)}
+
+/* Stats */
+.stats{display:flex;gap:24px;justify-content:center;margin:48px 0;flex-wrap:wrap}
+.stat{text-align:center;min-width:100px}
+.stat-value{font-size:36px;font-weight:900;font-family:'JetBrains Mono',monospace}
+.stat-label{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:2px;margin-top:4px}
+
+/* Role Cards */
+.role-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;max-width:800px;width:100%;margin:40px 0}
+.role-card{border-radius:16px;padding:32px;position:relative;overflow:hidden}
+.role-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
+.role-do{background:rgba(74,222,128,.04);border:1px solid rgba(74,222,128,.15)}
+.role-do::before{background:linear-gradient(90deg,var(--green),transparent)}
+.role-dont{background:rgba(248,113,113,.04);border:1px solid rgba(248,113,113,.15)}
+.role-dont::before{background:linear-gradient(90deg,var(--red),transparent)}
+.role-title{font-size:16px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.role-list{list-style:none;font-size:13px;color:var(--dim);line-height:2}
+.role-list li::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:10px}
+.role-do .role-list li::before{background:var(--green)}
+.role-dont .role-list li::before{background:var(--red)}
 
 /* Orchestrator */
-.orch-flow{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0;justify-content:center}
-.orch-phase{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;text-align:center;min-width:120px}
-.orch-phase .num{font-size:20px;font-weight:800;color:var(--accent)}
-.orch-phase .name{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
+.orch-visual{display:flex;flex-direction:column;align-items:center;gap:16px;margin:40px 0}
+.orch-row{display:flex;gap:8px;align-items:center}
+.orch-box{padding:12px 20px;border-radius:10px;font-size:12px;font-weight:600;text-align:center;border:1px solid var(--border);background:var(--s1);min-width:100px}
+.orch-box.active{border-color:var(--accent);box-shadow:0 0 20px rgba(167,139,250,.1)}
+.orch-arrow{color:var(--dim);font-size:16px}
+.orch-condition{display:flex;gap:16px;margin:24px 0;flex-wrap:wrap;justify-content:center}
+.orch-cond{padding:16px 24px;border-radius:12px;background:var(--s1);border:1px solid var(--border);text-align:center;flex:1;min-width:200px;max-width:300px}
+.orch-cond .cond-if{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
+.orch-cond .cond-then{font-size:14px;font-weight:700;color:var(--accent)}
 
-.code-block{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:16px;font-family:'SF Mono',Menlo,monospace;font-size:11px;color:var(--green);overflow-x:auto;margin:12px 0;line-height:1.8}
-.dim{color:var(--dim)}
-.highlight{color:var(--accent)}
-footer{text-align:center;padding:40px;color:var(--dim);font-size:11px;border-top:1px solid var(--border)}
+footer{text-align:center;padding:60px 20px;color:var(--dim);font-size:11px;letter-spacing:1px;border-top:1px solid var(--border)}
+footer a{color:var(--accent);text-decoration:none}
 </style>
 </head>
 <body>
 
+<!-- HERO -->
 <div class="hero">
-  <h1>Loopy Era</h1>
-  <div class="sub">Claude Code Autonomous Self-Improving Architecture</div>
-  <div class="tagline">"The human sets direction. The system builds itself."</div>
+  <canvas id="bg"></canvas>
+  <div class="hero-content">
+    <h1>Loopy Era</h1>
+    <div class="sub">AUTONOMOUS SELF-IMPROVING ARCHITECTURE</div>
+    <div class="quote">"The human sets direction. The system builds itself."</div>
+  </div>
+  <div class="scroll-hint">SCROLL TO EXPLORE ↓</div>
 </div>
 
-<div class="container">
-
-<!-- CONCEPT -->
+<!-- LOOP CYCLE -->
 <section>
-  <h2><span class="icon">💡</span> Core Concept</h2>
-  <div class="card-grid">
-    <div class="card">
-      <div class="title">🔄 Self-Improving Loop</div>
-      <div class="body">Every mistake teaches the system. Fix commits are detected → analyzed → new rules are added to project scaffolds → same mistake never happens again. The scaffold evolves autonomously.</div>
-    </div>
-    <div class="card">
-      <div class="title">🤖 Zero Human Intervention</div>
-      <div class="body">30 hooks across 11 events handle everything: validation errors auto-fix via Opus agent hooks, test failures trigger retries with strategy rotation, and HARD blocks send Telegram alerts only when truly stuck.</div>
-    </div>
-    <div class="card">
-      <div class="title">🧠 Cross-Session Memory</div>
-      <div class="body">Memory Bank indexes 50K+ conversations with semantic search. Facts (decisions, preferences, patterns) persist across sessions. Each session starts with context injection from past work.</div>
-    </div>
-  </div>
-</section>
+  <div class="section-title">Core Loop</div>
+  <div class="section-heading">The Self-Improving Cycle</div>
 
-<!-- ARCHITECTURE LAYERS -->
-<section>
-  <h2><span class="icon">🏗️</span> Architecture Layers</h2>
-  <div class="layers">
-    <div class="layer l-user">
-      <div class="layer-label">👤 User Layer</div>
-      <div class="layer-content">Direction setting, feedback, quality information input. Telegram notifications for HARD blocks. The human is the "taste maker" — not the worker.</div>
+  <div class="loop-container">
+    <div class="loop-ring"></div>
+    <div class="loop-center">
+      <div class="icon">♾️</div>
+      <div class="label">Infinite Loop</div>
     </div>
-    <div class="layer l-claude">
-      <div class="layer-label">🧠 Claude Layer</div>
-      <div class="layer-content">Opus 4.6 main thread + orchestrators (manager/team). Skills provide domain knowledge. Agents handle specialized tasks. <code>bypassPermissions</code> mode — no approval prompts.</div>
+
+    <div class="loop-node ln1">
+      <div class="node-icon">📝</div>
+      <div class="node-label" style="color:var(--blue)">Code</div>
+      <div class="node-desc">Claude writes code based on request + scaffold rules</div>
     </div>
-    <div class="layer l-hook">
-      <div class="layer-label">⚡ Hook Layer</div>
-      <div class="layer-content">30 hooks enforce quality gates. <span class="badge badge-hard">HARD</span> gates block bad commits. <span class="badge badge-agent">AGENT</span> hooks (Opus) auto-fix errors. <span class="badge badge-soft">SOFT</span> hooks inject guidance via <code>additionalContext</code>.</div>
+    <div class="loop-node ln2">
+      <div class="node-icon">⚡</div>
+      <div class="node-label" style="color:var(--accent)">Validate</div>
+      <div class="node-desc">30 hooks auto-check types, lint, scaffold violations</div>
     </div>
-    <div class="layer l-memory">
-      <div class="layer-label">💾 Memory Layer</div>
-      <div class="layer-content">Memory Bank (2,600+ facts, semantic search), session state persistence, project scaffolds (NEVER DO rules), error logs (tool-errors.jsonl), self-improve pending queue.</div>
+    <div class="loop-node ln3">
+      <div class="node-icon">🔧</div>
+      <div class="node-label" style="color:var(--green)">Auto-Fix</div>
+      <div class="node-desc">Opus agent hook fixes errors independently</div>
     </div>
-    <div class="layer l-infra">
-      <div class="layer-label">🔧 Infra Layer</div>
-      <div class="layer-content">Git (atomic commits), npm/tsc/vitest (build/test), SQLite + sqlite-vec (vector DB), Telegram bot (notifications), MCP servers (Supabase, Figma, browser).</div>
+    <div class="loop-node ln4">
+      <div class="node-icon">📦</div>
+      <div class="node-label" style="color:var(--orange)">Ship</div>
+      <div class="node-desc">Commit + push + Telegram notification</div>
+    </div>
+    <div class="loop-node ln5">
+      <div class="node-icon">🧠</div>
+      <div class="node-label" style="color:var(--red)">Learn</div>
+      <div class="node-desc">Fix commits detected, facts extracted, scaffold updated</div>
+    </div>
+    <div class="loop-node ln6">
+      <div class="node-icon">💎</div>
+      <div class="node-label" style="color:var(--cyan)">Stronger</div>
+      <div class="node-desc">New NEVER DO rules prevent same mistake forever</div>
     </div>
   </div>
 </section>
 
 <!-- ERROR ESCALATION -->
 <section>
-  <h2><span class="icon">🚨</span> 3-Stage Error Escalation</h2>
-  <p style="font-size:13px;color:var(--dim);margin-bottom:16px">When code has errors, the system escalates automatically — no human needed until Stage 3.</p>
-  <div class="escalation">
-    <div class="esc-step esc-1">
-      <div class="stage" style="color:var(--green)">Stage 1 — Soft</div>
-      <div style="font-size:13px;font-weight:600;margin:6px 0">additionalContext</div>
-      <div class="detail">Error message + "fix this now" injected into Claude's context. Claude usually fixes it immediately.</div>
-      <div style="margin-top:8px"><span class="badge badge-soft">1/3 attempts</span></div>
+  <div class="section-title">Error Handling</div>
+  <div class="section-heading">3-Stage Escalation</div>
+  <p style="text-align:center;color:var(--dim);font-size:14px;margin-bottom:32px;max-width:600px">
+    When code has errors, the system escalates automatically.<br>No human needed until Stage 3.
+  </p>
+
+  <div class="esc-visual">
+    <div class="esc-step">
+      <div class="esc-bar"></div>
+      <div class="esc-num" style="color:var(--green)">1</div>
+      <div class="esc-name" style="color:var(--green)">Soft Nudge</div>
+      <div class="esc-desc">Error message injected into Claude's context via <code>additionalContext</code>. Claude sees it and fixes.</div>
+      <div class="esc-tag" style="background:rgba(74,222,128,.1);color:var(--green)">Auto-recoverable</div>
     </div>
-    <div class="esc-step esc-2">
-      <div class="stage" style="color:var(--accent)">Stage 2 — Agent</div>
-      <div style="font-size:13px;font-weight:600;margin:6px 0">Opus Agent Hook</div>
-      <div class="detail">Independent Opus agent spawned by hook. Reads file, analyzes error, fixes it directly. Runs parallel to main thread.</div>
-      <div style="margin-top:8px"><span class="badge badge-agent">2/3 attempts</span></div>
+    <div class="esc-step">
+      <div class="esc-bar"></div>
+      <div class="esc-num" style="color:var(--accent)">2</div>
+      <div class="esc-name" style="color:var(--accent)">Agent Fix</div>
+      <div class="esc-desc">Independent Opus agent spawned by hook. Reads file, analyzes error, applies fix. Parallel to main thread.</div>
+      <div class="esc-tag" style="background:rgba(167,139,250,.1);color:var(--accent)">Opus-powered</div>
     </div>
-    <div class="esc-step esc-3">
-      <div class="stage" style="color:var(--red)">Stage 3 — Hard Block</div>
-      <div style="font-size:13px;font-weight:600;margin:6px 0">exit 2 + Telegram</div>
-      <div class="detail">Tool execution blocked. Telegram alert sent to user. "Change your approach" message. Counter resets.</div>
-      <div style="margin-top:8px"><span class="badge badge-hard">blocked</span></div>
+    <div class="esc-step">
+      <div class="esc-bar"></div>
+      <div class="esc-num" style="color:var(--red)">3</div>
+      <div class="esc-name" style="color:var(--red)">Hard Block</div>
+      <div class="esc-desc">Tool execution blocked. Telegram alert sent to user. "Change approach" message. Counter resets.</div>
+      <div class="esc-tag" style="background:rgba(248,113,113,.1);color:var(--red)">Human needed</div>
     </div>
   </div>
 </section>
 
-<!-- SELF-IMPROVE LOOP -->
+<!-- ARCHITECTURE LAYERS -->
 <section>
-  <h2><span class="icon">🔄</span> Self-Improvement Loop</h2>
-  <div class="code-block">
-<span class="dim">Session N:</span> Development work
-    ↓
-<span class="highlight">fix: commit detected</span> → Stop hook (self-improve-trigger.sh)
-    → saves ~/.claude/pending/self-improve-{project}.json
-    ↓
-<span class="dim">Session N+1:</span> User sends any prompt
-    → UserPromptSubmit hook (self-improve-check.sh)
-    → pending file found → <span class="highlight">"run /self-improve first"</span> auto-injected
-    ↓
-Claude runs /self-improve → analyzes fix diff → <span class="highlight">adds new NEVER DO rule to scaffold</span>
-    → deletes pending file
-    ↓
-<span class="dim">Session N+2:</span> <span class="highlight">Scaffold is stronger. Same mistake cannot happen again.</span>
-  </div>
-</section>
+  <div class="section-title">Architecture</div>
+  <div class="section-heading">5 Layers</div>
 
-<!-- ORCHESTRATOR STRUCTURE -->
-<section>
-  <h2><span class="icon">🎭</span> Orchestrator Structure</h2>
-  <p style="font-size:13px;color:var(--dim);margin-bottom:16px">Auto-selected based on project scale — no manual choice needed.</p>
-
-  <table>
-    <tr><th>Condition</th><th>Orchestrator</th><th>Agents</th></tr>
-    <tr><td>Bug fix, 1-2 files</td><td class="mono">Direct (no orchestrator)</td><td>—</td></tr>
-    <tr><td>≤2 specialists needed</td><td class="mono">manager-orchestrator</td><td>Sequential dispatch</td></tr>
-    <tr><td>≥3 specialists / full-stack</td><td class="mono">team-orchestrator</td><td>Parallel team (5 roles)</td></tr>
-  </table>
-
-  <h3>Team Orchestrator Phases</h3>
-  <div class="orch-flow">
-    <div class="orch-phase"><div class="num">0</div><div class="name">Analysis</div></div>
-    <div class="orch-phase"><div class="num">1</div><div class="name">Design</div></div>
-    <div class="orch-phase"><div class="num">2</div><div class="name">Database</div></div>
-    <div class="orch-phase"><div class="num">3</div><div class="name">Implement</div></div>
-    <div class="orch-phase"><div class="num">4</div><div class="name">QA</div></div>
-    <div class="orch-phase"><div class="num">5</div><div class="name">Ship</div></div>
-  </div>
-
-  <h3>Specialist Agents</h3>
-  <div class="card-grid">
-    <div class="card"><div class="title">🏛 architect-designer</div><div class="body">Project structure, directory layout, config files, boilerplate</div></div>
-    <div class="card"><div class="title">🎨 frontend-specialist</div><div class="body">React/Next.js/Vue UI, components, state management, Tailwind</div></div>
-    <div class="card"><div class="title">⚙️ backend-specialist</div><div class="body">API endpoints, business logic, auth, middleware</div></div>
-    <div class="card"><div class="title">🗄 supabase-specialist</div><div class="body">Database schema, RLS policies, Edge Functions, migrations</div></div>
-    <div class="card"><div class="title">📱 flutter-developer</div><div class="body">Dart/Flutter mobile apps, Riverpod, GoRouter</div></div>
-    <div class="card"><div class="title">🐛 bug-fixer</div><div class="body">Auto-called on errors. 3 strategies: direct fix → restructure → revert+rebuild</div></div>
-    <div class="card"><div class="title">🔍 code-reviewer</div><div class="body">Duplication, security, performance, best practices audit</div></div>
-  </div>
-</section>
-
-<!-- HOOK TABLE -->
-<section>
-  <h2><span class="icon">⚡</span> Hook System (30 hooks, 11 events)</h2>
-  <table>
-    <tr><th>Event</th><th>Hook</th><th>Type</th><th>Purpose</th></tr>
-    <tr><td>PreToolUse</td><td class="mono">validate-before-commit</td><td><span class="badge badge-hard">HARD</span></td><td>Build + type check before git commit</td></tr>
-    <tr><td>PreToolUse</td><td class="mono">qa-gate-before-push</td><td><span class="badge badge-hard">HARD</span></td><td>QA gate before git push (project-type aware)</td></tr>
-    <tr><td>PreToolUse</td><td class="mono">no-env-commit</td><td><span class="badge badge-hard">HARD</span></td><td>Block .env files from commits</td></tr>
-    <tr><td>PostToolUse</td><td class="mono">auto-validate</td><td><span class="badge badge-soft">SOFT→HARD</span></td><td>Type check after edit (escalates after 3 failures)</td></tr>
-    <tr><td>PostToolUse</td><td class="mono">scaffold-violation-check</td><td><span class="badge badge-soft">SOFT</span></td><td>Detect NEVER DO pattern violations</td></tr>
-    <tr><td>PostToolUse</td><td class="mono">agent auto-fix</td><td><span class="badge badge-agent">AGENT</span></td><td>Opus agent independently fixes validation errors</td></tr>
-    <tr><td>PostToolUseFailure</td><td class="mono">error-tracker</td><td><span class="badge badge-soft">SOFT</span></td><td>Log errors + inject fix instructions</td></tr>
-    <tr><td>PostToolUseFailure</td><td class="mono">agent recovery</td><td><span class="badge badge-agent">AGENT</span></td><td>Opus agent auto-recovers from tool failures</td></tr>
-    <tr><td>UserPromptSubmit</td><td class="mono">self-improve-check</td><td><span class="badge badge-soft">SOFT</span></td><td>Trigger self-improve if pending fixes exist</td></tr>
-    <tr><td>UserPromptSubmit</td><td class="mono">session-resume-check</td><td><span class="badge badge-soft">SOFT</span></td><td>Restore previous session state</td></tr>
-    <tr><td>UserPromptSubmit</td><td class="mono">inject-context</td><td><span class="badge badge-hook">INJECT</span></td><td>Inject top facts + session continuity</td></tr>
-    <tr><td>PreCompact</td><td class="mono">context-snapshot</td><td><span class="badge badge-hook">SAVE</span></td><td>Save work state before context compression</td></tr>
-    <tr><td>PostCompact</td><td class="mono">context-restore</td><td><span class="badge badge-hook">RESTORE</span></td><td>Restore work context after compression</td></tr>
-    <tr><td>Stop</td><td class="mono">self-improve-trigger</td><td><span class="badge badge-hook">DETECT</span></td><td>Detect fix: commits → create pending file</td></tr>
-    <tr><td>Stop</td><td class="mono">session-state-save</td><td><span class="badge badge-hook">SAVE</span></td><td>Save uncommitted changes, last commit for next session</td></tr>
-    <tr><td>Notification</td><td class="mono">telegram-notification</td><td><span class="badge badge-hook">NOTIFY</span></td><td>Send completion/error alerts via Telegram</td></tr>
-  </table>
-</section>
-
-<!-- MEMORY SYSTEM -->
-<section>
-  <h2><span class="icon">🧠</span> Memory System</h2>
-  <div class="card-grid">
-    <div class="card">
-      <div class="title">📚 Memory Bank Plugin</div>
-      <div class="body">
-        <strong>50K+ conversations</strong> indexed with semantic search (all-MiniLM-L6-v2, 384-dim vectors).<br>
-        <strong>2,600+ facts</strong> extracted by Haiku — decisions, preferences, patterns, knowledge, constraints.<br>
-        <strong>Ontology</strong> — 20 domains, auto-classified, with INFLUENCES/SUPPORTS/CONTRADICTS relations.<br>
-        <strong>3D Knowledge Graph</strong> — visual explorer with 4 layers (prompt → user → project → ontology).
+  <div class="stack">
+    <div class="stack-layer sl-user">
+      <div class="stack-icon">👤</div>
+      <div class="stack-label">Human</div>
+      <div class="stack-content">
+        Direction, feedback, quality info. Telegram alerts for HARD blocks only.
+        <div class="stack-badges"><span class="sb">Taste Maker</span><span class="sb">Not Worker</span></div>
       </div>
     </div>
-    <div class="card">
-      <div class="title">📋 Project Scaffolds</div>
-      <div class="body">
-        Per-project SKILL.md files with <strong>NEVER DO</strong> rules extracted from actual fix commits.<br>
-        <code>scaffold-violation-check.sh</code> hook enforces rules at edit time.<br>
-        <code>self-improve</code> adds new rules automatically when patterns are detected.<br>
-        Created by <code>/init-project</code> — analyzes real codebase, not generic templates.
+    <div class="stack-layer sl-claude">
+      <div class="stack-icon">🧠</div>
+      <div class="stack-label">Claude</div>
+      <div class="stack-content">
+        Opus main thread + orchestrators + 65 skills + specialist agents. bypassPermissions — zero approval prompts.
+        <div class="stack-badges"><span class="sb">Opus 4.6</span><span class="sb">Team Orchestrator</span><span class="sb">7 Specialists</span></div>
       </div>
     </div>
-    <div class="card">
-      <div class="title">🔄 Session Continuity</div>
-      <div class="body">
-        <strong>session-state-save</strong> — captures uncommitted changes + last commit at session end.<br>
-        <strong>session-resume-check</strong> — restores state at next session start.<br>
-        <strong>context-snapshot/restore</strong> — preserves work context across compact cycles.<br>
-        <strong>inject-context</strong> — top facts + recent session summary injected before each prompt.
+    <div class="stack-layer sl-hook">
+      <div class="stack-icon">⚡</div>
+      <div class="stack-label">Hooks</div>
+      <div class="stack-content">
+        30 hooks across 11 events. HARD gates block bad commits. Agent hooks auto-fix errors. SOFT hooks inject guidance.
+        <div class="stack-badges"><span class="sb">30 Hooks</span><span class="sb">11 Events</span><span class="sb">Agent + Command</span></div>
       </div>
+    </div>
+    <div class="stack-layer sl-memory">
+      <div class="stack-icon">💾</div>
+      <div class="stack-label">Memory</div>
+      <div class="stack-content">
+        2,600+ facts with semantic search. Session state persistence. Project scaffolds. Error logs feed self-improve.
+        <div class="stack-badges"><span class="sb">Memory Bank</span><span class="sb">2,600+ Facts</span><span class="sb">50K+ Conversations</span></div>
+      </div>
+    </div>
+    <div class="stack-layer sl-infra">
+      <div class="stack-icon">🔧</div>
+      <div class="stack-label">Infrastructure</div>
+      <div class="stack-content">
+        Git, npm/tsc/vitest, SQLite + sqlite-vec, Telegram bot, MCP servers (Supabase, Figma, browser).
+        <div class="stack-badges"><span class="sb">Git</span><span class="sb">SQLite</span><span class="sb">Telegram</span><span class="sb">MCP</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="stat-value" style="color:var(--accent)">30</div><div class="stat-label">Hooks</div></div>
+    <div class="stat"><div class="stat-value" style="color:var(--blue)">11</div><div class="stat-label">Events</div></div>
+    <div class="stat"><div class="stat-value" style="color:var(--green)">65</div><div class="stat-label">Skills</div></div>
+    <div class="stat"><div class="stat-value" style="color:var(--orange)">2.6K</div><div class="stat-label">Facts</div></div>
+    <div class="stat"><div class="stat-value" style="color:var(--cyan)">50K+</div><div class="stat-label">Conversations</div></div>
+  </div>
+</section>
+
+<!-- ORCHESTRATOR -->
+<section>
+  <div class="section-title">Orchestration</div>
+  <div class="section-heading">Auto-Selected by Scale</div>
+
+  <div class="orch-condition">
+    <div class="orch-cond">
+      <div class="cond-if">1-2 files, bug fix</div>
+      <div class="cond-then">Direct (No Orchestrator)</div>
+    </div>
+    <div class="orch-cond">
+      <div class="cond-if">≤2 specialists needed</div>
+      <div class="cond-then">Manager Orchestrator</div>
+    </div>
+    <div class="orch-cond">
+      <div class="cond-if">≥3 specialists / full-stack</div>
+      <div class="cond-then">Team Orchestrator</div>
+    </div>
+  </div>
+
+  <div class="orch-visual">
+    <div class="orch-row">
+      <div class="orch-box active">Phase 0<br><span style="font-size:10px;color:var(--dim)">Analyze</span></div>
+      <div class="orch-arrow">→</div>
+      <div class="orch-box">Phase 1<br><span style="font-size:10px;color:var(--dim)">Design</span></div>
+      <div class="orch-arrow">→</div>
+      <div class="orch-box">Phase 2<br><span style="font-size:10px;color:var(--dim)">Database</span></div>
+      <div class="orch-arrow">→</div>
+      <div class="orch-box">Phase 3<br><span style="font-size:10px;color:var(--dim)">Implement</span></div>
+      <div class="orch-arrow">→</div>
+      <div class="orch-box">Phase 4<br><span style="font-size:10px;color:var(--dim)">QA</span></div>
+      <div class="orch-arrow">→</div>
+      <div class="orch-box" style="border-color:var(--green)">Phase 5<br><span style="font-size:10px;color:var(--green)">Ship</span></div>
     </div>
   </div>
 </section>
 
 <!-- HUMAN ROLE -->
 <section>
-  <h2><span class="icon">👤</span> Human's Role in Loopy Era</h2>
-  <div class="card-grid">
-    <div class="card" style="border-color:var(--green)">
-      <div class="title" style="color:var(--green)">✅ What Humans Do</div>
-      <div class="body">
-        • Set direction and goals<br>
-        • Provide quality feedback<br>
-        • Feed quality information (articles, repos, ideas)<br>
-        • Respond to Telegram HARD-block alerts<br>
-        • Approve/reject self-improve proposals
-      </div>
+  <div class="section-title">Human's Role</div>
+  <div class="section-heading">Taste Maker, Not Worker</div>
+
+  <div class="role-grid">
+    <div class="role-card role-do">
+      <div class="role-title" style="color:var(--green)">✅ What You Do</div>
+      <ul class="role-list">
+        <li>Set direction and goals</li>
+        <li>Provide quality feedback</li>
+        <li>Feed information (articles, repos)</li>
+        <li>Respond to Telegram alerts</li>
+        <li>Review self-improve proposals</li>
+      </ul>
     </div>
-    <div class="card" style="border-color:var(--red)">
-      <div class="title" style="color:var(--red)">❌ What Humans Don't Do</div>
-      <div class="body">
-        • Write code<br>
-        • Create skills manually (skills create skills)<br>
-        • Fix bugs (3-stage escalation handles it)<br>
-        • Run tests (hooks auto-validate)<br>
-        • Approve tool execution (bypassPermissions)
-      </div>
+    <div class="role-card role-dont">
+      <div class="role-title" style="color:var(--red)">❌ What You Don't</div>
+      <ul class="role-list">
+        <li>Write code</li>
+        <li>Create skills (skills create skills)</li>
+        <li>Fix bugs (3-stage handles it)</li>
+        <li>Run tests (hooks auto-validate)</li>
+        <li>Approve tool execution</li>
+      </ul>
     </div>
   </div>
 </section>
-
-<!-- SETTINGS -->
-<section>
-  <h2><span class="icon">⚙️</span> Key Settings</h2>
-  <div class="code-block">
-<span class="dim">// ~/.claude/settings.json</span>
-{
-  "permissions": {
-    "defaultMode": "<span class="highlight">bypassPermissions</span>"  <span class="dim">// No approval prompts</span>
-  },
-  "hooks": {
-    "PostToolUse": [{
-      "matcher": "Edit|Write",
-      "hooks": [
-        { "type": "command", "command": "auto-validate.sh" },       <span class="dim">// Type check</span>
-        { "type": "command", "command": "scaffold-violation-check.sh" }, <span class="dim">// NEVER DO</span>
-        { "type": "<span class="highlight">agent</span>", "model": "<span class="highlight">claude-opus-4-6</span>", "timeout": 120,
-          "prompt": "Check and fix TypeScript errors..." }          <span class="dim">// Auto-fix</span>
-      ]
-    }],
-    "PostToolUseFailure": [{
-      "hooks": [
-        { "type": "command", "command": "error-tracker.sh" },       <span class="dim">// Log + track</span>
-        { "type": "<span class="highlight">agent</span>", "model": "<span class="highlight">claude-opus-4-6</span>", "timeout": 120,
-          "prompt": "Analyze and fix the root cause..." }           <span class="dim">// Auto-recover</span>
-      ]
-    }]
-  }
-}
-  </div>
-</section>
-
-<!-- GETTING STARTED -->
-<section>
-  <h2><span class="icon">🚀</span> Getting Started</h2>
-  <div class="code-block">
-<span class="dim"># 1. Set bypass permissions</span>
-claude config set permissions.defaultMode bypassPermissions
-
-<span class="dim"># 2. Install Memory Bank plugin</span>
-/plugin marketplace add jung-wan-kim/memory-bank
-/plugin install memory-bank@memory-bank-dev
-
-<span class="dim"># 3. Initialize project</span>
-/init-project
-
-<span class="dim"># 4. Run self-improve to start the loop</span>
-/self-improve
-
-<span class="dim"># 5. Start working — the system handles the rest</span>
-  </div>
-</section>
-
-</div>
 
 <footer>
-  Loopy Era Architecture — Built with Claude Code · Inspired by Karpathy's autoresearch<br>
-  30 hooks · 11 events · 65 skills · 2,600+ facts · 50K+ indexed conversations
+  Loopy Era — Built with Claude Code<br>
+  Inspired by <a href="https://github.com/karpathy">Karpathy</a>'s autoresearch
 </footer>
 
+<script>
+// Animated background particles
+var c=document.getElementById('bg'),cx=c.getContext('2d');
+function resize(){c.width=innerWidth;c.height=innerHeight}resize();addEventListener('resize',resize);
+var particles=[];for(var i=0;i<80;i++)particles.push({x:Math.random()*innerWidth,y:Math.random()*innerHeight,vx:(Math.random()-.5)*.3,vy:(Math.random()-.5)*.3,r:Math.random()*1.5+.5});
+function draw(){cx.clearRect(0,0,c.width,c.height);
+for(var i=0;i<particles.length;i++){var p=particles[i];p.x+=p.vx;p.y+=p.vy;
+if(p.x<0)p.x=c.width;if(p.x>c.width)p.x=0;if(p.y<0)p.y=c.height;if(p.y>c.height)p.y=0;
+cx.beginPath();cx.arc(p.x,p.y,p.r,0,Math.PI*2);cx.fillStyle='rgba(167,139,250,.3)';cx.fill();
+for(var j=i+1;j<particles.length;j++){var q=particles[j],dx=p.x-q.x,dy=p.y-q.y,d=Math.sqrt(dx*dx+dy*dy);
+if(d<120){cx.beginPath();cx.moveTo(p.x,p.y);cx.lineTo(q.x,q.y);cx.strokeStyle='rgba(167,139,250,'+(1-d/120)*.08+')';cx.stroke()}}}
+requestAnimationFrame(draw)}draw();
+
+// Scroll reveal
+var sections=document.querySelectorAll('section');
+var observer=new IntersectionObserver(function(entries){entries.forEach(function(e){if(e.isIntersecting){e.target.style.opacity='1';e.target.style.transform='translateY(0)'}})},{threshold:.1});
+sections.forEach(function(s){s.style.opacity='0';s.style.transform='translateY(40px)';s.style.transition='opacity .8s ease,transform .8s ease';observer.observe(s)});
+</script>
 </body>
 </html>
