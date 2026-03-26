@@ -5386,7 +5386,7 @@ function addBarChart(parent,items,color,maxVal){
 }
 
 function addConnections(parent,nodeId){
-  var rels=vE.filter(function(e){return e.s.id===nodeId||e.t.id===nodeId});
+  var rels=E.filter(function(e){return e.s.id===nodeId||e.t.id===nodeId});
   if(!rels.length)return;
   var sec=addSection(parent,t('connections')+' ('+rels.length+')');
   rels.slice(0,10).forEach(function(rl){
