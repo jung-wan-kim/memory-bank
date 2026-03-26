@@ -2,8 +2,11 @@ import { AbsoluteFill, Sequence } from "remotion";
 import { IntroScene } from "./scenes/IntroScene";
 import { LoopScene } from "./scenes/LoopScene";
 import { EscalationScene } from "./scenes/EscalationScene";
+import { ContextStackScene } from "./scenes/ContextStackScene";
+import { DataPipelineScene } from "./scenes/DataPipelineScene";
+import { InitProjectScene } from "./scenes/InitProjectScene";
 import { LayersScene } from "./scenes/LayersScene";
-import { TeamFlowScene } from "./scenes/TeamFlowScene";
+import { TeamDetailScene } from "./scenes/TeamDetailScene";
 import { OutroScene } from "./scenes/OutroScene";
 
 export const LoopyEra = () => {
@@ -24,18 +27,33 @@ export const LoopyEra = () => {
         <EscalationScene />
       </Sequence>
 
-      {/* Scene 4: Architecture Layers — 25-35s, frames 750-1050 */}
+      {/* Scene 4: Context Stack — 25-35s, frames 750-1050 */}
       <Sequence from={750} durationInFrames={300}>
+        <ContextStackScene />
+      </Sequence>
+
+      {/* Scene 5: Data Pipeline — 35-47s, frames 1050-1410 */}
+      <Sequence from={1050} durationInFrames={360}>
+        <DataPipelineScene />
+      </Sequence>
+
+      {/* Scene 6: Init Project — 47-57s, frames 1410-1710 */}
+      <Sequence from={1410} durationInFrames={300}>
+        <InitProjectScene />
+      </Sequence>
+
+      {/* Scene 7: Architecture Layers — 57-67s, frames 1710-2010 */}
+      <Sequence from={1710} durationInFrames={300}>
         <LayersScene />
       </Sequence>
 
-      {/* Scene 5: Team Flow — 35-50s, frames 1050-1500 */}
-      <Sequence from={1050} durationInFrames={450}>
-        <TeamFlowScene />
+      {/* Scene 8: Team Detail — 67-80s, frames 2010-2400 */}
+      <Sequence from={2010} durationInFrames={390}>
+        <TeamDetailScene />
       </Sequence>
 
-      {/* Scene 6: Outro — 50-60s, frames 1500-1800 */}
-      <Sequence from={1500} durationInFrames={300}>
+      {/* Scene 9: Outro — 80-100s, frames 2400-3000 */}
+      <Sequence from={2400} durationInFrames={600}>
         <OutroScene />
       </Sequence>
     </AbsoluteFill>
