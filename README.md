@@ -71,10 +71,8 @@ In Claude Code:
 ## Update
 
 ```
-/plugin install memory-bank
+/plugin update memory-bank
 ```
-
-Re-running the install command pulls the latest version.
 
 ## Quick Start
 
