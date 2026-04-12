@@ -9,6 +9,7 @@ interface InsertFactParams {
   scope_project: string | null;
   source_exchange_ids: string[];
   embedding: number[] | null;  // number[] to match generateEmbedding() return type
+  coding_agent?: string;       // e.g., 'claude-code', 'codex', 'opencode'
 }
 
 interface UpdateFactParams {
@@ -30,8 +31,8 @@ export function insertFact(db: Database.Database, params: InsertFactParams): str
   const now = new Date().toISOString();
 
   db.prepare(`
-    INSERT INTO facts (id, fact, category, scope_type, scope_project, source_exchange_ids, embedding, created_at, updated_at, consolidated_count, is_active)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
+    INSERT INTO facts (id, fact, category, scope_type, scope_project, source_exchange_ids, embedding, created_at, updated_at, consolidated_count, is_active, coding_agent)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?)
   `).run(
     id,
     params.fact,
@@ -42,6 +43,7 @@ export function insertFact(db: Database.Database, params: InsertFactParams): str
     params.embedding ? Buffer.from(new Float32Array(params.embedding).buffer) : null,
     now,
     now,
+    params.coding_agent || 'claude-code',
   );
 
   // Insert into vector index (atomic DELETE+INSERT via transaction)
@@ -275,5 +277,6 @@ function rowToFact(row: Record<string, unknown>): Fact {
     consolidated_count: row['consolidated_count'] as number,
     is_active: Boolean(row['is_active']),
     ontology_category_id: (row['ontology_category_id'] as string | null) ?? null,
+    coding_agent: (row['coding_agent'] as string | null) ?? null,
   };
 }

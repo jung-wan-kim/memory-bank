@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { SUMMARIZER_CONTEXT_MARKER } from './constants.js';
-import { getExcludedProjects } from './paths.js';
+import { getExcludedProjects, detectCodingAgent } from './paths.js';
 
 const EXCLUSION_MARKERS = [
   '<INSTRUCTIONS-TO-EPISODIC-MEMORY>DO NOT INDEX THIS CHAT</INSTRUCTIONS-TO-EPISODIC-MEMORY>',
@@ -31,6 +31,7 @@ export interface SyncOptions {
   skipIndex?: boolean;
   skipSummaries?: boolean;
   summaryLimit?: number; // Max summaries to generate per run (default: 10)
+  codingAgent?: string;  // Override coding agent detection (e.g., 'codex', 'opencode')
 }
 
 function copyIfNewer(src: string, dest: string): boolean {
@@ -84,6 +85,9 @@ export async function syncConversations(
     errors: []
   };
 
+  // Detect coding agent from source directory or use override
+  const codingAgent = options.codingAgent || detectCodingAgent(sourceDir);
+
   // Ensure source directory exists
   if (!fs.existsSync(sourceDir)) {
     return result;
@@ -99,7 +103,7 @@ export async function syncConversations(
 
   for (const project of projects) {
     if (excludedProjects.includes(project)) {
-      console.log("\nSkipping excluded project: " + project);
+      console.error("\nSkipping excluded project: " + project);
       continue;
     }
 
@@ -162,6 +166,9 @@ export async function syncConversations(
         const exchanges = await parseConversation(file, project, file);
 
         for (const exchange of exchanges) {
+          // Tag each exchange with the coding agent
+          exchange.codingAgent = codingAgent;
+
           const toolNames = exchange.toolCalls?.map(tc => tc.toolName);
           const embedding = await generateExchangeEmbedding(
             exchange.userMessage,
@@ -192,12 +199,12 @@ export async function syncConversations(
     const toSummarize = filesToSummarize.slice(0, summaryLimit);
     const remaining = filesToSummarize.length - toSummarize.length;
 
-    console.log(`Generating summaries for ${toSummarize.length} conversation(s)...`);
+    console.error(`Generating summaries for ${toSummarize.length} conversation(s)...`);
     if (remaining > 0) {
-      console.log(`  (${remaining} more need summaries - will process on next sync)`);
+      console.error(`  (${remaining} more need summaries - will process on next sync)`);
     }
 
-    for (const { path: filePath, sessionId } of toSummarize) {
+    for (const { path: filePath } of toSummarize) {
       try {
         const project = path.basename(path.dirname(filePath));
         const exchanges = await parseConversation(filePath, project, filePath);
@@ -206,7 +213,7 @@ export async function syncConversations(
           continue; // Skip empty conversations
         }
 
-        console.log(`  Summarizing ${path.basename(filePath)} (${exchanges.length} exchanges)...`);
+        console.error(`  Summarizing ${path.basename(filePath)} (${exchanges.length} exchanges)...`);
         const summary = await summarizeConversation(exchanges);
 
         const summaryPath = filePath.replace('.jsonl', '-summary.txt');

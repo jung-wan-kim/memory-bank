@@ -7,6 +7,7 @@ interface InsertFactParams {
     scope_project: string | null;
     source_exchange_ids: string[];
     embedding: number[] | null;
+    coding_agent?: string;
 }
 interface UpdateFactParams {
     fact?: string;

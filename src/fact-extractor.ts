@@ -39,9 +39,9 @@ const EXTRACTION_SYSTEM_PROMPT = `You are an expert at extracting long-term fact
 - 0.7-0.9: inferred from behavior
 - Below 0.7: do not extract`;
 
-const BATCH_SIZE = 5;
-const MAX_FACTS_PER_SESSION = 20;
-const CONFIDENCE_THRESHOLD = 0.7;
+const BATCH_SIZE = 5; // configurable-ok
+const MAX_FACTS_PER_SESSION = 20; // configurable-ok
+const CONFIDENCE_THRESHOLD = 0.7; // configurable-ok
 
 export function buildExtractionPrompt(
   exchanges: Array<{ user_message: string; assistant_message: string }>,
@@ -98,6 +98,7 @@ export async function saveExtractedFacts(
   facts: ExtractedFact[],
   project: string,
   sourceExchangeIds: string[],
+  codingAgent?: string,
 ): Promise<string[]> {
   await initEmbeddings();
   const savedIds: string[] = [];
@@ -112,6 +113,7 @@ export async function saveExtractedFacts(
       scope_project: fact.scope_type === 'project' ? project : null,
       source_exchange_ids: sourceExchangeIds,
       embedding,
+      coding_agent: codingAgent,
     });
 
     savedIds.push(id);
@@ -131,6 +133,7 @@ export async function runFactExtraction(
   db: Database.Database,
   sessionId: string,
   project: string,
+  codingAgent?: string,
 ): Promise<{ extracted: number; saved: number }> {
   const facts = await extractFactsFromExchanges(db, sessionId);
 
@@ -138,11 +141,25 @@ export async function runFactExtraction(
     return { extracted: 0, saved: 0 };
   }
 
+  // Detect coding agent from session's exchanges if not provided
+  const agent = codingAgent || detectAgentFromSession(db, sessionId);
+
   const exchangeIds = db.prepare(
     'SELECT id FROM exchanges WHERE session_id = ?'
   ).all(sessionId).map((r: any) => r.id);
 
-  const savedIds = await saveExtractedFacts(db, facts, project, exchangeIds);
+  const savedIds = await saveExtractedFacts(db, facts, project, exchangeIds, agent);
 
   return { extracted: facts.length, saved: savedIds.length };
+}
+
+/**
+ * Detect the coding agent from a session's exchanges.
+ * Returns the coding_agent of the first exchange in the session, or 'claude-code' as default.
+ */
+function detectAgentFromSession(db: Database.Database, sessionId: string): string {
+  const row = db.prepare(
+    'SELECT coding_agent FROM exchanges WHERE session_id = ? LIMIT 1'
+  ).get(sessionId) as { coding_agent: string | null } | undefined;
+  return row?.coding_agent || 'claude-code';
 }

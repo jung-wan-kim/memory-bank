@@ -16,7 +16,7 @@ function validateISODate(dateStr, paramName) {
     }
 }
 export async function searchConversations(query, options = {}) {
-    const { limit = 10, mode = 'both', after, before } = options;
+    const { limit = 10, mode = 'both', after, before, coding_agent } = options;
     // Validate date parameters
     if (after)
         validateISODate(after, '--after');
@@ -25,18 +25,23 @@ export async function searchConversations(query, options = {}) {
     const db = initDatabase();
     let results = [];
     try {
-        // Build time filter clause with parameterized queries
-        const timeFilter = [];
-        const timeParams = [];
+        // Build filter clauses with parameterized queries
+        const filterParts = [];
+        const filterParams = [];
         if (after) {
-            timeFilter.push(`e.timestamp >= ?`);
-            timeParams.push(after);
+            filterParts.push(`e.timestamp >= ?`);
+            filterParams.push(after);
         }
         if (before) {
-            timeFilter.push(`e.timestamp <= ?`);
-            timeParams.push(before);
+            filterParts.push(`e.timestamp <= ?`);
+            filterParams.push(before);
         }
-        const timeClause = timeFilter.length > 0 ? `AND ${timeFilter.join(' AND ')}` : '';
+        if (coding_agent) {
+            filterParts.push(`e.coding_agent = ?`);
+            filterParams.push(coding_agent);
+        }
+        const timeClause = filterParts.length > 0 ? `AND ${filterParts.join(' AND ')}` : '';
+        const timeParams = filterParams;
         if (mode === 'vector' || mode === 'both') {
             // Vector similarity search
             await initEmbeddings();
@@ -51,6 +56,7 @@ export async function searchConversations(query, options = {}) {
           e.archive_path,
           e.line_start,
           e.line_end,
+          e.coding_agent,
           vec.distance
         FROM vec_exchanges AS vec
         JOIN exchanges AS e ON vec.id = e.id
@@ -76,6 +82,7 @@ export async function searchConversations(query, options = {}) {
           e.archive_path,
           e.line_start,
           e.line_end,
+          e.coding_agent,
           0 as distance
         FROM exchanges AS e
         WHERE (e.user_message LIKE ? ESCAPE '\\' OR e.assistant_message LIKE ? ESCAPE '\\')
@@ -110,7 +117,8 @@ export async function searchConversations(query, options = {}) {
             assistantMessage: row.assistant_message,
             archivePath: row.archive_path,
             lineStart: row.line_start,
-            lineEnd: row.line_end
+            lineEnd: row.line_end,
+            codingAgent: row.coding_agent || 'claude-code',
         };
         // Try to load summary if available
         const summaryPath = row.archive_path.replace('.jsonl', '-summary.txt');
@@ -169,8 +177,10 @@ export async function formatResults(results) {
         const result = results[index];
         const date = new Date(result.exchange.timestamp).toISOString().split('T')[0];
         const simPct = result.similarity !== undefined ? Math.round(result.similarity * 100) : null;
-        // Header with match percentage
-        output += `${index + 1}. [${result.exchange.project}, ${date}]`;
+        // Header with match percentage and coding agent
+        const agent = result.exchange.codingAgent || 'claude-code';
+        const agentTag = agent !== 'claude-code' ? ` @${agent}` : '';
+        output += `${index + 1}. [${result.exchange.project}, ${date}${agentTag}]`;
         if (simPct !== null) {
             output += ` - ${simPct}% match`;
         }

@@ -20,19 +20,20 @@ export function migrateSchema(db: Database.Database): void {
     { name: 'thinking_level', sql: 'ALTER TABLE exchanges ADD COLUMN thinking_level TEXT' },
     { name: 'thinking_disabled', sql: 'ALTER TABLE exchanges ADD COLUMN thinking_disabled BOOLEAN' },
     { name: 'thinking_triggers', sql: 'ALTER TABLE exchanges ADD COLUMN thinking_triggers TEXT' },
+    { name: 'coding_agent', sql: "ALTER TABLE exchanges ADD COLUMN coding_agent TEXT DEFAULT 'claude-code'" },
   ];
 
   let migrated = false;
   for (const migration of migrations) {
     if (!columnNames.has(migration.name)) {
-      console.log(`Migrating schema: adding ${migration.name} column...`);
+      console.error(`Migrating schema: adding ${migration.name} column...`);
       db.prepare(migration.sql).run();
       migrated = true;
     }
   }
 
   if (migrated) {
-    console.log('Migration complete.');
+    console.error('Migration complete.');
   }
 }
 
@@ -75,7 +76,8 @@ export function initDatabase(): Database.Database {
       claude_version TEXT,
       thinking_level TEXT,
       thinking_disabled BOOLEAN,
-      thinking_triggers TEXT
+      thinking_triggers TEXT,
+      coding_agent TEXT DEFAULT 'claude-code'
     )
   `);
 
@@ -122,6 +124,9 @@ export function initDatabase(): Database.Database {
   `);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_git_branch ON exchanges(git_branch)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_coding_agent ON exchanges(coding_agent)
   `);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_tool_name ON tool_calls(tool_name)
@@ -213,6 +218,9 @@ export function initDatabase(): Database.Database {
   if (!factColumnNames.has('fact_kr')) {
     db.prepare('ALTER TABLE facts ADD COLUMN fact_kr TEXT').run();
   }
+  if (!factColumnNames.has('coding_agent')) {
+    db.prepare("ALTER TABLE facts ADD COLUMN coding_agent TEXT DEFAULT 'claude-code'").run();
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS ontology_relations (
@@ -228,6 +236,7 @@ export function initDatabase(): Database.Database {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_relations_source ON ontology_relations(source_fact_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_relations_target ON ontology_relations(target_fact_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_facts_ontology ON facts(ontology_category_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_facts_coding_agent ON facts(coding_agent)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_ontology_categories_domain ON ontology_categories(domain_id)`);
 
   return db;
@@ -245,8 +254,8 @@ export function insertExchange(
     INSERT OR REPLACE INTO exchanges
     (id, project, timestamp, user_message, assistant_message, archive_path, line_start, line_end, last_indexed,
      parent_uuid, is_sidechain, session_id, cwd, git_branch, claude_version,
-     thinking_level, thinking_disabled, thinking_triggers)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     thinking_level, thinking_disabled, thinking_triggers, coding_agent)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   stmt.run(
@@ -267,19 +276,16 @@ export function insertExchange(
     exchange.claudeVersion || null,
     exchange.thinkingLevel || null,
     exchange.thinkingDisabled ? 1 : 0,
-    exchange.thinkingTriggers || null
+    exchange.thinkingTriggers || null,
+    exchange.codingAgent || 'claude-code'
   );
 
-  // Insert into vector table (delete first since virtual tables don't support REPLACE)
-  const delStmt = db.prepare(`DELETE FROM vec_exchanges WHERE id = ?`);
-  delStmt.run(exchange.id);
-
-  const vecStmt = db.prepare(`
-    INSERT INTO vec_exchanges (id, embedding)
-    VALUES (?, ?)
-  `);
-
-  vecStmt.run(exchange.id, Buffer.from(new Float32Array(embedding).buffer));
+  // Insert into vector table (atomic DELETE+INSERT via transaction, since virtual tables don't support REPLACE)
+  const upsertVecExchange = db.transaction((vecId: string, buf: Buffer) => {
+    db.prepare('DELETE FROM vec_exchanges WHERE id = ?').run(vecId);
+    db.prepare('INSERT INTO vec_exchanges (id, embedding) VALUES (?, ?)').run(vecId, buf);
+  });
+  upsertVecExchange(exchange.id, Buffer.from(new Float32Array(embedding).buffer));
 
   // Insert tool calls if present
   if (exchange.toolCalls && exchange.toolCalls.length > 0) {

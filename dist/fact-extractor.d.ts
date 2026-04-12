@@ -5,8 +5,8 @@ export declare function buildExtractionPrompt(exchanges: Array<{
     assistant_message: string;
 }>): string;
 export declare function extractFactsFromExchanges(db: Database.Database, sessionId: string): Promise<ExtractedFact[]>;
-export declare function saveExtractedFacts(db: Database.Database, facts: ExtractedFact[], project: string, sourceExchangeIds: string[]): Promise<string[]>;
-export declare function runFactExtraction(db: Database.Database, sessionId: string, project: string): Promise<{
+export declare function saveExtractedFacts(db: Database.Database, facts: ExtractedFact[], project: string, sourceExchangeIds: string[], codingAgent?: string): Promise<string[]>;
+export declare function runFactExtraction(db: Database.Database, sessionId: string, project: string, codingAgent?: string): Promise<{
     extracted: number;
     saved: number;
 }>;

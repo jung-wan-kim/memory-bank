@@ -6884,12 +6884,13 @@ var init_error = __esm({
     AnthropicError = class extends Error {
     };
     APIError = class _APIError extends AnthropicError {
-      constructor(status, error2, message, headers) {
+      constructor(status, error2, message, headers, type) {
         super(`${_APIError.makeMessage(status, error2, message)}`);
         this.status = status;
         this.headers = headers;
         this.requestID = headers?.get("request-id");
         this.error = error2;
+        this.type = type ?? null;
       }
       static makeMessage(status, error2, message) {
         const msg = error2?.message ? typeof error2.message === "string" ? error2.message : JSON.stringify(error2.message) : error2 ? JSON.stringify(error2) : message;
@@ -6909,31 +6910,32 @@ var init_error = __esm({
           return new APIConnectionError({ message, cause: castToError(errorResponse) });
         }
         const error2 = errorResponse;
+        const type = error2?.["error"]?.["type"];
         if (status === 400) {
-          return new BadRequestError(status, error2, message, headers);
+          return new BadRequestError(status, error2, message, headers, type);
         }
         if (status === 401) {
-          return new AuthenticationError(status, error2, message, headers);
+          return new AuthenticationError(status, error2, message, headers, type);
         }
         if (status === 403) {
-          return new PermissionDeniedError(status, error2, message, headers);
+          return new PermissionDeniedError(status, error2, message, headers, type);
         }
         if (status === 404) {
-          return new NotFoundError(status, error2, message, headers);
+          return new NotFoundError(status, error2, message, headers, type);
         }
         if (status === 409) {
-          return new ConflictError(status, error2, message, headers);
+          return new ConflictError(status, error2, message, headers, type);
         }
         if (status === 422) {
-          return new UnprocessableEntityError(status, error2, message, headers);
+          return new UnprocessableEntityError(status, error2, message, headers, type);
         }
         if (status === 429) {
-          return new RateLimitError(status, error2, message, headers);
+          return new RateLimitError(status, error2, message, headers, type);
         }
         if (status >= 500) {
-          return new InternalServerError(status, error2, message, headers);
+          return new InternalServerError(status, error2, message, headers, type);
         }
-        return new _APIError(status, error2, message, headers);
+        return new _APIError(status, error2, message, headers, type);
       }
     };
     APIUserAbortError = class extends APIError {
@@ -7030,7 +7032,7 @@ var init_sleep = __esm({
 var VERSION;
 var init_version = __esm({
   "node_modules/@anthropic-ai/sdk/version.mjs"() {
-    VERSION = "0.78.0";
+    VERSION = "0.82.0";
   }
 });
 
@@ -7261,6 +7263,24 @@ var init_request_options = __esm({
         body: JSON.stringify(body)
       };
     };
+  }
+});
+
+// node_modules/@anthropic-ai/sdk/internal/utils/query.mjs
+function stringifyQuery(query2) {
+  return Object.entries(query2).filter(([_2, value]) => typeof value !== "undefined").map(([key, value]) => {
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      return `${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+    }
+    if (value === null) {
+      return `${encodeURIComponent(key)}=`;
+    }
+    throw new AnthropicError(`Cannot stringify type ${typeof value}; Expected string, number, boolean, or null. If you need to pass nested query parameters, you can manually encode them, e.g. { query: { 'foo[key1]': value1, 'foo[key2]': value2 } }, and please open a GitHub issue requesting better support for your use case.`);
+  }).join("&");
+}
+var init_query = __esm({
+  "node_modules/@anthropic-ai/sdk/internal/utils/query.mjs"() {
+    init_error();
   }
 });
 
@@ -7559,7 +7579,9 @@ var init_streaming = __esm({
                 continue;
               }
               if (sse.event === "error") {
-                throw new APIError(void 0, safeJSON(sse.data) ?? sse.data, void 0, response.headers);
+                const body = safeJSON(sse.data) ?? sse.data;
+                const type = body?.error?.type;
+                throw new APIError(void 0, body, void 0, response.headers, type);
               }
             }
             done = true;
@@ -11492,6 +11514,7 @@ var init_client = __esm({
     init_detect_platform();
     init_shims();
     init_request_options();
+    init_query();
     init_version();
     init_error();
     init_pagination();
@@ -11609,15 +11632,7 @@ var init_client = __esm({
        * Basic re-implementation of `qs.stringify` for primitive types.
        */
       stringifyQuery(query2) {
-        return Object.entries(query2).filter(([_2, value]) => typeof value !== "undefined").map(([key, value]) => {
-          if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-            return `${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
-          }
-          if (value === null) {
-            return `${encodeURIComponent(key)}=`;
-          }
-          throw new AnthropicError(`Cannot stringify type ${typeof value}; Expected string, number, boolean, or null. If you need to pass nested query parameters, you can manually encode them, e.g. { query: { 'foo[key1]': value1, 'foo[key2]': value2 } }, and please open a GitHub issue requesting better support for your use case.`);
-        }).join("&");
+        return stringifyQuery(query2);
       }
       getUserAgent() {
         return `${this.constructor.name}/JS ${VERSION}`;
@@ -11632,8 +11647,9 @@ var init_client = __esm({
         const baseURL = !__classPrivateFieldGet(this, _BaseAnthropic_instances, "m", _BaseAnthropic_baseURLOverridden).call(this) && defaultBaseURL || this.baseURL;
         const url = isAbsoluteURL(path5) ? new URL(path5) : new URL(baseURL + (baseURL.endsWith("/") && path5.startsWith("/") ? path5.slice(1) : path5));
         const defaultQuery = this.defaultQuery();
-        if (!isEmptyObj(defaultQuery)) {
-          query2 = { ...defaultQuery, ...query2 };
+        const pathQuery = Object.fromEntries(url.searchParams);
+        if (!isEmptyObj(defaultQuery) || !isEmptyObj(pathQuery)) {
+          query2 = { ...pathQuery, ...defaultQuery, ...query2 };
         }
         if (typeof query2 === "object" && query2 && !Array.isArray(query2)) {
           url.search = this.stringifyQuery(query2);
@@ -11845,7 +11861,7 @@ var init_client = __esm({
             timeoutMillis = Date.parse(retryAfterHeader) - Date.now();
           }
         }
-        if (!(timeoutMillis && 0 <= timeoutMillis && timeoutMillis < 60 * 1e3)) {
+        if (timeoutMillis === void 0) {
           const maxRetries = options.maxRetries ?? this.maxRetries;
           timeoutMillis = this.calculateDefaultRetryTimeoutMillis(retriesRemaining, maxRetries);
         }
@@ -19864,10 +19880,9 @@ var ProgressTokenSchema = union([string2(), number2().int()]);
 var CursorSchema = string2();
 var TaskCreationParamsSchema = looseObject({
   /**
-   * Time in milliseconds to keep task results available after completion.
-   * If null, the task has unlimited lifetime until manually cleaned up.
+   * Requested duration in milliseconds to retain task from creation.
    */
-  ttl: union([number2(), _null3()]).optional(),
+  ttl: number2().optional(),
   /**
    * Time in milliseconds to wait between task status requests.
    */
@@ -20167,7 +20182,11 @@ var ClientCapabilitiesSchema = object2({
   /**
    * Present if the client supports task creation.
    */
-  tasks: ClientTasksCapabilitySchema.optional()
+  tasks: ClientTasksCapabilitySchema.optional(),
+  /**
+   * Extensions that the client supports. Keys are extension identifiers (vendor-prefix/extension-name).
+   */
+  extensions: record(string2(), AssertObjectSchema).optional()
 });
 var InitializeRequestParamsSchema = BaseRequestParamsSchema.extend({
   /**
@@ -20228,7 +20247,11 @@ var ServerCapabilitiesSchema = object2({
   /**
    * Present if the server supports task creation.
    */
-  tasks: ServerTasksCapabilitySchema.optional()
+  tasks: ServerTasksCapabilitySchema.optional(),
+  /**
+   * Extensions that the server supports. Keys are extension identifiers (vendor-prefix/extension-name).
+   */
+  extensions: record(string2(), AssertObjectSchema).optional()
 });
 var InitializeResultSchema = ResultSchema.extend({
   /**
@@ -20420,6 +20443,12 @@ var ResourceSchema = object2({
    * The MIME type of this resource, if known.
    */
   mimeType: optional(string2()),
+  /**
+   * The size of the raw resource content, in bytes (i.e., before base64 encoding or any tokenization), if known.
+   *
+   * This can be used by Hosts to display file sizes and estimate context window usage.
+   */
+  size: optional(number2()),
   /**
    * Optional annotations for the client.
    */
@@ -21604,6 +21633,10 @@ var Protocol = class {
     this._progressHandlers.clear();
     this._taskProgressTokens.clear();
     this._pendingDebouncedNotifications.clear();
+    for (const info of this._timeoutInfo.values()) {
+      clearTimeout(info.timeoutId);
+    }
+    this._timeoutInfo.clear();
     for (const controller of this._requestHandlerAbortControllers.values()) {
       controller.abort();
     }
@@ -21734,7 +21767,9 @@ var Protocol = class {
         await capturedTransport?.send(errorResponse);
       }
     }).catch((error2) => this._onerror(new Error(`Failed to send response: ${error2}`))).finally(() => {
-      this._requestHandlerAbortControllers.delete(request.id);
+      if (this._requestHandlerAbortControllers.get(request.id) === abortController) {
+        this._requestHandlerAbortControllers.delete(request.id);
+      }
     });
   }
   _onprogress(notification) {
@@ -23184,18 +23219,19 @@ function migrateSchema(db) {
     { name: "claude_version", sql: "ALTER TABLE exchanges ADD COLUMN claude_version TEXT" },
     { name: "thinking_level", sql: "ALTER TABLE exchanges ADD COLUMN thinking_level TEXT" },
     { name: "thinking_disabled", sql: "ALTER TABLE exchanges ADD COLUMN thinking_disabled BOOLEAN" },
-    { name: "thinking_triggers", sql: "ALTER TABLE exchanges ADD COLUMN thinking_triggers TEXT" }
+    { name: "thinking_triggers", sql: "ALTER TABLE exchanges ADD COLUMN thinking_triggers TEXT" },
+    { name: "coding_agent", sql: "ALTER TABLE exchanges ADD COLUMN coding_agent TEXT DEFAULT 'claude-code'" }
   ];
   let migrated = false;
   for (const migration of migrations) {
     if (!columnNames.has(migration.name)) {
-      console.log(`Migrating schema: adding ${migration.name} column...`);
+      console.error(`Migrating schema: adding ${migration.name} column...`);
       db.prepare(migration.sql).run();
       migrated = true;
     }
   }
   if (migrated) {
-    console.log("Migration complete.");
+    console.error("Migration complete.");
   }
 }
 function initDatabase() {
@@ -23228,7 +23264,8 @@ function initDatabase() {
       claude_version TEXT,
       thinking_level TEXT,
       thinking_disabled BOOLEAN,
-      thinking_triggers TEXT
+      thinking_triggers TEXT,
+      coding_agent TEXT DEFAULT 'claude-code'
     )
   `);
   db.exec(`
@@ -23267,6 +23304,9 @@ function initDatabase() {
   `);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_git_branch ON exchanges(git_branch)
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_coding_agent ON exchanges(coding_agent)
   `);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_tool_name ON tool_calls(tool_name)
@@ -23346,6 +23386,9 @@ function initDatabase() {
   if (!factColumnNames.has("fact_kr")) {
     db.prepare("ALTER TABLE facts ADD COLUMN fact_kr TEXT").run();
   }
+  if (!factColumnNames.has("coding_agent")) {
+    db.prepare("ALTER TABLE facts ADD COLUMN coding_agent TEXT DEFAULT 'claude-code'").run();
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS ontology_relations (
       id TEXT PRIMARY KEY,
@@ -23359,6 +23402,7 @@ function initDatabase() {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_relations_source ON ontology_relations(source_fact_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_relations_target ON ontology_relations(target_fact_id)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_facts_ontology ON facts(ontology_category_id)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_facts_coding_agent ON facts(coding_agent)`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_ontology_categories_domain ON ontology_categories(domain_id)`);
   return db;
 }
@@ -23454,7 +23498,8 @@ function rowToFact(row) {
     updated_at: row["updated_at"],
     consolidated_count: row["consolidated_count"],
     is_active: Boolean(row["is_active"]),
-    ontology_category_id: row["ontology_category_id"] ?? null
+    ontology_category_id: row["ontology_category_id"] ?? null,
+    coding_agent: row["coding_agent"] ?? null
   };
 }
 
@@ -23595,23 +23640,28 @@ function validateISODate(dateStr, paramName) {
   }
 }
 async function searchConversations(query2, options = {}) {
-  const { limit = 10, mode = "both", after, before } = options;
+  const { limit = 10, mode = "both", after, before, coding_agent } = options;
   if (after) validateISODate(after, "--after");
   if (before) validateISODate(before, "--before");
   const db = initDatabase();
   let results = [];
   try {
-    const timeFilter = [];
-    const timeParams = [];
+    const filterParts = [];
+    const filterParams = [];
     if (after) {
-      timeFilter.push(`e.timestamp >= ?`);
-      timeParams.push(after);
+      filterParts.push(`e.timestamp >= ?`);
+      filterParams.push(after);
     }
     if (before) {
-      timeFilter.push(`e.timestamp <= ?`);
-      timeParams.push(before);
+      filterParts.push(`e.timestamp <= ?`);
+      filterParams.push(before);
     }
-    const timeClause = timeFilter.length > 0 ? `AND ${timeFilter.join(" AND ")}` : "";
+    if (coding_agent) {
+      filterParts.push(`e.coding_agent = ?`);
+      filterParams.push(coding_agent);
+    }
+    const timeClause = filterParts.length > 0 ? `AND ${filterParts.join(" AND ")}` : "";
+    const timeParams = filterParams;
     if (mode === "vector" || mode === "both") {
       await initEmbeddings();
       const queryEmbedding = await generateEmbedding(query2);
@@ -23625,6 +23675,7 @@ async function searchConversations(query2, options = {}) {
           e.archive_path,
           e.line_start,
           e.line_end,
+          e.coding_agent,
           vec.distance
         FROM vec_exchanges AS vec
         JOIN exchanges AS e ON vec.id = e.id
@@ -23652,6 +23703,7 @@ async function searchConversations(query2, options = {}) {
           e.archive_path,
           e.line_start,
           e.line_end,
+          e.coding_agent,
           0 as distance
         FROM exchanges AS e
         WHERE (e.user_message LIKE ? ESCAPE '\\' OR e.assistant_message LIKE ? ESCAPE '\\')
@@ -23683,7 +23735,8 @@ async function searchConversations(query2, options = {}) {
       assistantMessage: row.assistant_message,
       archivePath: row.archive_path,
       lineStart: row.line_start,
-      lineEnd: row.line_end
+      lineEnd: row.line_end,
+      codingAgent: row.coding_agent || "claude-code"
     };
     const summaryPath = row.archive_path.replace(".jsonl", "-summary.txt");
     let summary;
@@ -23736,7 +23789,9 @@ async function formatResults(results) {
     const result = results[index];
     const date3 = new Date(result.exchange.timestamp).toISOString().split("T")[0];
     const simPct = result.similarity !== void 0 ? Math.round(result.similarity * 100) : null;
-    output += `${index + 1}. [${result.exchange.project}, ${date3}]`;
+    const agent = result.exchange.codingAgent || "claude-code";
+    const agentTag = agent !== "claude-code" ? ` @${agent}` : "";
+    output += `${index + 1}. [${result.exchange.project}, ${date3}${agentTag}]`;
     if (simPct !== null) {
       output += ` - ${simPct}% match`;
     }
@@ -25439,6 +25494,7 @@ var SearchInputSchema = external_exports.object({
   limit: external_exports.number().int().min(1).max(50).default(10).describe("Maximum number of results to return (default: 10)"),
   after: external_exports.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format").optional().describe("Only return conversations after this date (YYYY-MM-DD format)"),
   before: external_exports.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format").optional().describe("Only return conversations before this date (YYYY-MM-DD format)"),
+  coding_agent: external_exports.string().optional().describe('Filter by coding agent (e.g., "claude-code", "codex", "opencode"). Omit to search all agents.'),
   response_format: ResponseFormatEnum.default("markdown").describe(
     'Output format: "markdown" for human-readable or "json" for machine-readable (default: "markdown")'
   )
@@ -25452,6 +25508,7 @@ var SearchFactsInputSchema = external_exports.object({
   query: external_exports.string().min(2, "Query must be at least 2 characters").max(1e4, "Query too long (max 10000 chars)"),
   project: external_exports.string().max(500).optional(),
   category: external_exports.enum(["decision", "preference", "pattern", "knowledge", "constraint"]).optional(),
+  coding_agent: external_exports.string().optional().describe('Filter facts by coding agent (e.g., "claude-code", "codex")'),
   include_revisions: external_exports.boolean().default(false),
   limit: external_exports.number().int().min(1).max(50).default(10)
 }).strict();
@@ -25500,6 +25557,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             limit: { type: "number", minimum: 1, maximum: 50, default: 10 },
             after: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
             before: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+            coding_agent: { type: "string", description: 'Filter by coding agent (e.g., "claude-code", "codex", "opencode")' },
             response_format: { type: "string", enum: ["markdown", "json"], default: "markdown" }
           },
           required: ["query"],
@@ -25547,6 +25605,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               enum: ["decision", "preference", "pattern", "knowledge", "constraint"],
               description: "Filter by fact category"
             },
+            coding_agent: { type: "string", description: 'Filter by coding agent (e.g., "claude-code", "codex", "opencode")' },
             include_revisions: { type: "boolean", description: "Include revision history", default: false },
             limit: { type: "number", minimum: 1, maximum: 50, default: 10, description: "Max results" }
           },
@@ -25695,7 +25754,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const options = {
           limit: params.limit,
           after: params.after,
-          before: params.before
+          before: params.before,
+          coding_agent: params.coding_agent
         };
         const results = await searchMultipleConcepts(params.query, options);
         if (params.response_format === "json") {
@@ -25716,7 +25776,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           mode: params.mode,
           limit: params.limit,
           after: params.after,
-          before: params.before
+          before: params.before,
+          coding_agent: params.coding_agent
         };
         const results = await searchConversations(params.query, options);
         if (params.response_format === "json") {
@@ -25783,11 +25844,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
         const queryEmbedding = await generateEmbedding(params.query);
         const results = searchSimilarFacts(db, queryEmbedding, currentProject, params.limit);
-        const filtered = params.category ? results.filter((r) => r.fact.category === params.category) : results;
+        let filtered = results;
+        if (params.category) {
+          filtered = filtered.filter((r) => r.fact.category === params.category);
+        }
+        if (params.coding_agent) {
+          filtered = filtered.filter((r) => (r.fact.coding_agent || "claude-code") === params.coding_agent);
+        }
+        const agentLabel = params.coding_agent ? ` | Agent: ${params.coding_agent}` : "";
         let output = `# Facts Search Results
 
 Query: "${params.query}"
-Project: ${currentProject}
+Project: ${currentProject}${agentLabel}
 Results: ${filtered.length}
 
 `;
@@ -25805,7 +25873,8 @@ Results: ${filtered.length}
           const catName = catInfo ? catInfo.name : "";
           output += `## [${fact.category}] ${fact.fact}
 `;
-          output += `- Scope: ${fact.scope_type}${fact.scope_project ? ` (${fact.scope_project})` : ""}
+          const factAgent = fact.coding_agent || "claude-code";
+          output += `- Scope: ${fact.scope_type}${fact.scope_project ? ` (${fact.scope_project})` : ""} | Agent: ${factAgent}
 `;
           output += `- Confirmed: ${fact.consolidated_count}x | Similarity: ${similarity}
 `;

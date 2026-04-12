@@ -35,9 +35,9 @@ const EXTRACTION_SYSTEM_PROMPT = `You are an expert at extracting long-term fact
 - 0.9+: explicit decision/declaration
 - 0.7-0.9: inferred from behavior
 - Below 0.7: do not extract`;
-const BATCH_SIZE = 5;
-const MAX_FACTS_PER_SESSION = 20;
-const CONFIDENCE_THRESHOLD = 0.7;
+const BATCH_SIZE = 5; // configurable-ok
+const MAX_FACTS_PER_SESSION = 20; // configurable-ok
+const CONFIDENCE_THRESHOLD = 0.7; // configurable-ok
 export function buildExtractionPrompt(exchanges) {
     return exchanges.map((ex, i) => {
         const userSnippet = ex.user_message.slice(0, 1000);
@@ -77,7 +77,7 @@ export async function extractFactsFromExchanges(db, sessionId) {
     }
     return allFacts;
 }
-export async function saveExtractedFacts(db, facts, project, sourceExchangeIds) {
+export async function saveExtractedFacts(db, facts, project, sourceExchangeIds, codingAgent) {
     await initEmbeddings();
     const savedIds = [];
     for (const fact of facts) {
@@ -89,6 +89,7 @@ export async function saveExtractedFacts(db, facts, project, sourceExchangeIds) 
             scope_project: fact.scope_type === 'project' ? project : null,
             source_exchange_ids: sourceExchangeIds,
             embedding,
+            coding_agent: codingAgent,
         });
         savedIds.push(id);
         // Ontology classification + relation detection (must await to prevent DB close race)
@@ -101,12 +102,22 @@ export async function saveExtractedFacts(db, facts, project, sourceExchangeIds) 
     }
     return savedIds;
 }
-export async function runFactExtraction(db, sessionId, project) {
+export async function runFactExtraction(db, sessionId, project, codingAgent) {
     const facts = await extractFactsFromExchanges(db, sessionId);
     if (facts.length === 0) {
         return { extracted: 0, saved: 0 };
     }
+    // Detect coding agent from session's exchanges if not provided
+    const agent = codingAgent || detectAgentFromSession(db, sessionId);
     const exchangeIds = db.prepare('SELECT id FROM exchanges WHERE session_id = ?').all(sessionId).map((r) => r.id);
-    const savedIds = await saveExtractedFacts(db, facts, project, exchangeIds);
+    const savedIds = await saveExtractedFacts(db, facts, project, exchangeIds, agent);
     return { extracted: facts.length, saved: savedIds.length };
+}
+/**
+ * Detect the coding agent from a session's exchanges.
+ * Returns the coding_agent of the first exchange in the session, or 'claude-code' as default.
+ */
+function detectAgentFromSession(db, sessionId) {
+    const row = db.prepare('SELECT coding_agent FROM exchanges WHERE session_id = ? LIMIT 1').get(sessionId);
+    return row?.coding_agent || 'claude-code';
 }

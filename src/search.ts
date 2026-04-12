@@ -11,6 +11,7 @@ export interface SearchOptions {
   mode?: 'vector' | 'text' | 'both';
   after?: string;  // ISO date string
   before?: string; // ISO date string
+  coding_agent?: string; // Filter by coding agent (e.g., 'claude-code', 'codex', 'opencode')
 }
 
 interface ExchangeRow {
@@ -23,6 +24,7 @@ interface ExchangeRow {
   line_start: number;
   line_end: number;
   distance: number;
+  coding_agent: string | null;
 }
 
 function validateISODate(dateStr: string, paramName: string): void {
@@ -41,7 +43,7 @@ export async function searchConversations(
   query: string,
   options: SearchOptions = {}
 ): Promise<SearchResult[]> {
-  const { limit = 10, mode = 'both', after, before } = options;
+  const { limit = 10, mode = 'both', after, before, coding_agent } = options;
 
   // Validate date parameters
   if (after) validateISODate(after, '--after');
@@ -51,18 +53,23 @@ export async function searchConversations(
   let results: ExchangeRow[] = [];
 
   try {
-    // Build time filter clause with parameterized queries
-    const timeFilter: string[] = [];
-    const timeParams: string[] = [];
+    // Build filter clauses with parameterized queries
+    const filterParts: string[] = [];
+    const filterParams: string[] = [];
     if (after) {
-      timeFilter.push(`e.timestamp >= ?`);
-      timeParams.push(after);
+      filterParts.push(`e.timestamp >= ?`);
+      filterParams.push(after);
     }
     if (before) {
-      timeFilter.push(`e.timestamp <= ?`);
-      timeParams.push(before);
+      filterParts.push(`e.timestamp <= ?`);
+      filterParams.push(before);
     }
-    const timeClause = timeFilter.length > 0 ? `AND ${timeFilter.join(' AND ')}` : '';
+    if (coding_agent) {
+      filterParts.push(`e.coding_agent = ?`);
+      filterParams.push(coding_agent);
+    }
+    const timeClause = filterParts.length > 0 ? `AND ${filterParts.join(' AND ')}` : '';
+    const timeParams = filterParams;
 
     if (mode === 'vector' || mode === 'both') {
       // Vector similarity search
@@ -79,6 +86,7 @@ export async function searchConversations(
           e.archive_path,
           e.line_start,
           e.line_end,
+          e.coding_agent,
           vec.distance
         FROM vec_exchanges AS vec
         JOIN exchanges AS e ON vec.id = e.id
@@ -111,6 +119,7 @@ export async function searchConversations(
           e.archive_path,
           e.line_start,
           e.line_end,
+          e.coding_agent,
           0 as distance
         FROM exchanges AS e
         WHERE (e.user_message LIKE ? ESCAPE '\\' OR e.assistant_message LIKE ? ESCAPE '\\')
@@ -146,7 +155,8 @@ export async function searchConversations(
       assistantMessage: row.assistant_message,
       archivePath: row.archive_path,
       lineStart: row.line_start,
-      lineEnd: row.line_end
+      lineEnd: row.line_end,
+      codingAgent: row.coding_agent || 'claude-code',
     };
 
     // Try to load summary if available
@@ -209,8 +219,10 @@ export async function formatResults(results: Array<SearchResult & { summary?: st
     const date = new Date(result.exchange.timestamp).toISOString().split('T')[0];
     const simPct = result.similarity !== undefined ? Math.round(result.similarity * 100) : null;
 
-    // Header with match percentage
-    output += `${index + 1}. [${result.exchange.project}, ${date}]`;
+    // Header with match percentage and coding agent
+    const agent = result.exchange.codingAgent || 'claude-code';
+    const agentTag = agent !== 'claude-code' ? ` @${agent}` : '';
+    output += `${index + 1}. [${result.exchange.project}, ${date}${agentTag}]`;
     if (simPct !== null) {
       output += ` - ${simPct}% match`;
     }

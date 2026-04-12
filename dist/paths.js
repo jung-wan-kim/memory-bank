@@ -71,6 +71,55 @@ export function getExcludeConfigPath() {
     return path.join(getIndexDir(), 'exclude.txt');
 }
 /**
+ * Get the list of coding agent sources to sync from.
+ * Default: Claude Code only. Additional agents configured via
+ * MEMORY_BANK_AGENT_SOURCES env var (JSON) or agent-sources.json config file.
+ *
+ * Format: [{"name": "codex", "sourceDir": "/path/to/codex/conversations"}]
+ */
+export function getAgentSources() {
+    const home = os.homedir();
+    const defaultSources = [
+        { name: 'claude-code', sourceDir: path.join(home, '.claude', 'projects') },
+    ];
+    // Check env variable for additional sources
+    if (process.env.MEMORY_BANK_AGENT_SOURCES) {
+        try {
+            const extra = JSON.parse(process.env.MEMORY_BANK_AGENT_SOURCES);
+            return [...defaultSources, ...extra];
+        }
+        catch {
+            // Invalid JSON, use defaults only
+        }
+    }
+    // Check for config file
+    const configPath = path.join(getIndexDir(), 'agent-sources.json');
+    if (fs.existsSync(configPath)) {
+        try {
+            const content = fs.readFileSync(configPath, 'utf-8');
+            const extra = JSON.parse(content);
+            return [...defaultSources, ...extra];
+        }
+        catch {
+            // Invalid config, use defaults only
+        }
+    }
+    return defaultSources;
+}
+/**
+ * Detect coding agent from a source directory path.
+ * Returns the agent name if the path matches a known source, 'claude-code' otherwise.
+ */
+export function detectCodingAgent(sourcePath) {
+    const sources = getAgentSources();
+    for (const source of sources) {
+        if (sourcePath.startsWith(source.sourceDir)) {
+            return source.name;
+        }
+    }
+    return 'claude-code';
+}
+/**
  * Get list of projects to exclude from indexing
  * Configurable via env var or config file
  */
