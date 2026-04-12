@@ -40,6 +40,14 @@ Claude Code에서:
 /plugin install memory-bank
 ```
 
+## 업데이트
+
+```
+/plugin install memory-bank
+```
+
+설치 명령을 다시 실행하면 최신 버전으로 업데이트됩니다.
+
 ## 빠른 시작
 
 ```bash

@@ -68,6 +68,14 @@ In Claude Code:
 /plugin install memory-bank
 ```
 
+## Update
+
+```
+/plugin install memory-bank
+```
+
+Re-running the install command pulls the latest version.
+
 ## Quick Start
 
 ```bash
