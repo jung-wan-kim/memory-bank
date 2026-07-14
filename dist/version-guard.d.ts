@@ -39,6 +39,14 @@ export type TakeoverDecision = 'takeover-stale-version' | 'takeover-wedged' | 'd
 export declare function decideTakeover(holder: LockMeta, myVersion: string, holderRunMs: number | null, wedgeMaxMs: number): TakeoverDecision;
 /**
  * If `command` is a memory-bank detached worker from a version OLDER than
- * `myVersion`, return that stale version string; otherwise null.
+ * `myVersion` (judged by the PATH segment), return that stale version string;
+ * otherwise null.
  */
 export declare function staleWorkerVersion(command: string, myVersion: string): string | null;
+/**
+ * The versioned plugin dir a detached worker runs from, or null when the
+ * command is not a memory-bank worker. The sweep judges staleness by the
+ * dir's CONTENT version (package.json) — after live-apply an old-named dir
+ * carries current code, and a worker spawned from it must not be killed.
+ */
+export declare function workerPluginDir(command: string): string | null;

@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.5] - 2026-07-14
+
+### Added
+- **Zero-downtime live plugin updates** — a plugin update now reaches live
+  sessions in real time, with no session restart and no manual /reload-plugins
+  (stdio MCP servers are officially never auto-reconnected, so v1.4.4's
+  "restart required" was the only path until now):
+  - `cli/mcp-server-wrapper.js` became a **supervising stdio proxy**
+    (`src/wrapper-core.ts`, unit-tested): it records the MCP initialize
+    handshake, polls the plugin dir's package.json, and when a new release
+    lands on disk it swaps the server child at an idle moment and replays the
+    handshake — the client keeps one uninterrupted connection (E2E-tested:
+    GEN1→GEN2 over the same pipe, replayed handshake swallowed).
+  - `scripts/live-apply.js` propagates the newest release's code into older
+    versioned cache dirs (backup first; content-version based; idempotent;
+    **node_modules never touched** — dirs with a different dependency set are
+    loudly skipped so native binaries stay known-good). Wired into the
+    SessionStart drift check, so the first session event after an update
+    upgrades every live session's hooks/workers instantly and lets
+    supervising wrappers live-swap their servers.
+  - Startup-crash rescue: a server that dies within seconds of spawn triggers
+    `npm install`, then `npm rebuild` (recompiles broken native binaries) and
+    a retry that re-delivers the still-unanswered initialize. Motivated by a
+    live incident: the v1.4.4 cache's sharp binary
+    (`sharp-darwin-arm64v8.node`) was missing after a fresh cache install, so
+    every new MCP server crashed before answering initialize (fixed on this
+    machine by transplanting the known-good module; the rescue automates it).
+
+### Fixed
+- Worker sweep now judges staleness by the worker dir's **content version**
+  (package.json), not the path segment — after live-apply an old-named dir
+  carries current code and its workers must not be killed.
+
+## [1.4.4] - 2026-07-14
+
+_(release note restored retroactively in the 1.4.5 commit — the entry missed
+the 1.4.4 commit itself)_
+
+### Added
+- **Version drift guard** (`src/version-guard.ts`) — a plugin update must not
+  leave old-version processes running. Incident (2026-07-14): after v1.4.3
+  shipped, the install record stayed at 1.3.3 (every new session kept spawning
+  stale code) and a v1.3.3 sync-cli wedged for 23h held the singleton lock, so
+  every newer sync skipped — indexing frozen for a day on stale code.
+  - The sync lock now records `{pid, version, startedAt}`. A newer-version
+    sync preempts an older or legacy (bare-pid) holder, and any holder running
+    past 6h is preempted as wedged regardless of version. Pid-recycling guard:
+    the holder is only killed when its command line is actually a memory-bank
+    sync-cli.
+  - New SessionStart hook `scripts/version-drift-check.js`: sweeps detached
+    workers running from an older versioned plugin cache dir and emits a loud
+    context warning when the session runs an older version than the newest
+    installed one. MCP servers are never swept — they belong to live sessions.
+
+### Fixed
+- sync-cli released its singleton lock only via the `exit` handler, which does
+  not run on default signal death — a SIGTERM'd sync left a stale lock behind
+  (observed live). SIGTERM/SIGINT now route through `process.exit` so the lock
+  is always released.
+
 ## [1.4.3] - 2026-07-12
 
 ### Fixed

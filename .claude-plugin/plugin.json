@@ -1,6 +1,6 @@
 {
   "name": "memory-bank",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "description": "Semantic search for Claude Code conversations. Remember past discussions, decisions, and patterns.",
   "author": {
     "name": "Jung-Wan Kim"

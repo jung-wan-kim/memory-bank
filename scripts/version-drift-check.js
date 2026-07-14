@@ -24,7 +24,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { staleWorkerVersion, compareVersions } from '../dist/version-guard.js';
+import { staleWorkerVersion, workerPluginDir, compareVersions } from '../dist/version-guard.js';
+import { liveApply } from './live-apply.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -57,6 +58,22 @@ async function main() {
   const version = myVersion();
   if (!version) return;
 
+  // 0) Live-apply: propagate this (newest) release's code into older
+  //    versioned cache dirs — live sessions' hooks/workers run the new code
+  //    from their next event, and supervising wrappers (v1.4.5+) live-swap
+  //    their MCP servers. No restart, no user action.
+  try {
+    const r = liveApply(ROOT);
+    if (r.applied && r.applied.length > 0) {
+      console.log(
+        `[memory-bank] live-applied v${version} to ${r.applied.length} older cache dir(s): ` +
+          r.applied.map((a) => `${a.dir}(${a.from}→${a.to})`).join(', '),
+      );
+    }
+  } catch (e) {
+    console.error(`[memory-bank drift] live-apply failed: ${e && e.message ? e.message : e}`);
+  }
+
   // 1) Sweep stale-version detached workers.
   let psOut = '';
   try {
@@ -70,7 +87,18 @@ async function main() {
     if (!m) continue;
     const pid = parseInt(m[1], 10);
     if (!Number.isFinite(pid) || pid === process.pid) continue;
-    const stale = staleWorkerVersion(m[2], version);
+    // Judge staleness by the worker dir's CONTENT version: after live-apply
+    // an old-named dir carries current code — its workers must not be killed.
+    // Fall back to the path segment when package.json is unreadable.
+    const dir = workerPluginDir(m[2]);
+    if (!dir) continue;
+    let stale = null;
+    try {
+      const v = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version;
+      stale = typeof v === 'string' && compareVersions(v, version) < 0 ? v : null;
+    } catch {
+      stale = staleWorkerVersion(m[2], version);
+    }
     if (!stale) continue;
     const dead = await killAndConfirm(pid);
     swept.push({ pid, stale, dead });

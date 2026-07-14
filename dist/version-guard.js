@@ -80,11 +80,23 @@ export function decideTakeover(holder, myVersion, holderRunMs, wedgeMaxMs) {
 const WORKER_RE = /plugins\/cache\/memory-bank-dev\/memory-bank\/(\d+(?:\.\d+)*)\/(?:dist\/sync-cli\.js|scripts\/(?:backfill-extract-worker|backfill-ontology-worker|fact-consolidate-worker|fact-extract-worker|reembed-worker)\.js)/;
 /**
  * If `command` is a memory-bank detached worker from a version OLDER than
- * `myVersion`, return that stale version string; otherwise null.
+ * `myVersion` (judged by the PATH segment), return that stale version string;
+ * otherwise null.
  */
 export function staleWorkerVersion(command, myVersion) {
     const m = WORKER_RE.exec(command);
     if (!m)
         return null;
     return compareVersions(m[1], myVersion) < 0 ? m[1] : null;
+}
+const WORKER_DIR_RE = /(.*plugins\/cache\/memory-bank-dev\/memory-bank\/\d+(?:\.\d+)*)\/(?:dist\/sync-cli\.js|scripts\/(?:backfill-extract-worker|backfill-ontology-worker|fact-consolidate-worker|fact-extract-worker|reembed-worker)\.js)/;
+/**
+ * The versioned plugin dir a detached worker runs from, or null when the
+ * command is not a memory-bank worker. The sweep judges staleness by the
+ * dir's CONTENT version (package.json) — after live-apply an old-named dir
+ * carries current code, and a worker spawned from it must not be killed.
+ */
+export function workerPluginDir(command) {
+    const m = WORKER_DIR_RE.exec(command);
+    return m ? m[1] : null;
 }
