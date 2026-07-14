@@ -103,8 +103,17 @@ export function liveApply(selfRoot, log = (m) => console.error(m)) {
       const src = path.join(selfRoot, item);
       const dst = path.join(dir, item);
       if (!fs.existsSync(src)) continue;
-      fs.rmSync(dst, { recursive: true, force: true });
-      fs.cpSync(src, dst, { recursive: true });
+      // Near-atomic per item: full copy lands beside the target first, then a
+      // rename swap — a hook process spawning mid-patch must never read a
+      // half-copied dist (review finding 2026-07-14).
+      const tmp = `${dst}.live-apply-tmp`;
+      const old = `${dst}.live-apply-old`;
+      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(old, { recursive: true, force: true });
+      fs.cpSync(src, tmp, { recursive: true });
+      if (fs.existsSync(dst)) fs.renameSync(dst, old);
+      fs.renameSync(tmp, dst);
+      fs.rmSync(old, { recursive: true, force: true });
     }
 
     const after = readPkg(dir);

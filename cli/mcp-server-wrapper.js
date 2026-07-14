@@ -106,6 +106,17 @@ function startChild({ replay, resendInitialize }) {
   if (replaying) {
     // Re-run the handshake privately; its traffic is swallowed below.
     writeToChild(state.initializeLine);
+    // Watchdog: a new child that HANGS (never answers the replayed
+    // initialize) would hold client traffic forever. Kill it; the bounded
+    // crash-respawn budget takes over (review finding 2026-07-14).
+    const watched = child;
+    const replayWatchdog = setTimeout(() => {
+      if (child === watched && replaying) {
+        console.error('memory-bank wrapper: replay handshake timed out — killing hung server');
+        try { watched.kill('SIGKILL'); } catch { /* already gone */ }
+      }
+    }, 20_000);
+    replayWatchdog.unref();
   } else if (resendInitialize && state.initializeLine) {
     // Startup crash before the client got its initialize response: deliver
     // the recorded initialize in NORMAL mode so the response reaches the
@@ -237,11 +248,20 @@ async function main() {
       if (decision === 'swap' && !swapRequested && !replaying) {
         swapRequested = true;
         holdInput = true; // queue client traffic during the swap window
+        const dying = child;
         try {
-          child.kill('SIGTERM');
+          dying.kill('SIGTERM');
         } catch {
           /* exit handler drives the respawn */
         }
+        // A child that ignores SIGTERM would leave the session queueing
+        // forever — escalate to SIGKILL (review finding 2026-07-14).
+        const killTimer = setTimeout(() => {
+          if (child === dying && swapRequested) {
+            try { dying.kill('SIGKILL'); } catch { /* already gone */ }
+          }
+        }, 5_000);
+        killTimer.unref();
       }
     }, POLL_MS);
     timer.unref();

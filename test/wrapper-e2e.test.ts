@@ -28,6 +28,7 @@ if (marker === 'CRASH') {
   if (!fs.existsSync(flag)) { fs.writeFileSync(flag, '1'); process.exit(7); }
 }
 let buf = '';
+let initialized = false;
 process.stdin.on('data', (c) => {
   buf += c.toString('utf8');
   let i;
@@ -35,9 +36,16 @@ process.stdin.on('data', (c) => {
     const line = buf.slice(0, i); buf = buf.slice(i + 1);
     let m; try { m = JSON.parse(line); } catch { continue; }
     if (m.method === 'initialize') {
+      initialized = true;
       process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'fake', version: marker } } }) + '\\n');
     } else if (m.method === 'tools/list') {
-      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: { marker } }) + '\\n');
+      // Like a real MCP SDK server: refuse requests before initialize — so a
+      // wrapper regression that skips the handshake replay fails this test.
+      if (!initialized) {
+        process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, error: { code: -32002, message: 'not initialized' } }) + '\\n');
+      } else {
+        process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: { marker } }) + '\\n');
+      }
     }
   }
 });
