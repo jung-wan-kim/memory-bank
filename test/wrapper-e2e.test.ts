@@ -38,6 +38,9 @@ process.stdin.on('data', (c) => {
     if (m.method === 'initialize') {
       initialized = true;
       process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'fake', version: marker } } }) + '\\n');
+    } else if (m.method === 'crashme') {
+      // Die WITHOUT responding — exercises the in-flight-abort path.
+      process.exit(9);
     } else if (m.method === 'tools/list') {
       // Like a real MCP SDK server: refuse requests before initialize — so a
       // wrapper regression that skips the handshake replay fails this test.
@@ -123,12 +126,12 @@ describe('supervising wrapper', () => {
 
     send(child, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
     const init = await waitFor(() => received.find((m) => m.id === 1));
-    expect((init as any).result.serverInfo.version).toBe('GEN1');
+    expect((init as { result: any }).result.serverInfo.version).toBe('GEN1');
     send(child, { jsonrpc: '2.0', method: 'notifications/initialized' });
 
     send(child, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     const l1 = await waitFor(() => received.find((m) => m.id === 2));
-    expect((l1 as any).result.marker).toBe('GEN1');
+    expect((l1 as { result: any }).result.marker).toBe('GEN1');
 
     // A new release lands on disk (what live-apply does).
     fs.writeFileSync(path.join(root, 'marker.txt'), 'GEN2');
@@ -138,7 +141,7 @@ describe('supervising wrapper', () => {
     await new Promise((r) => setTimeout(r, 1200));
     send(child, { jsonrpc: '2.0', id: 3, method: 'tools/list', params: {} });
     const l2 = await waitFor(() => received.find((m) => m.id === 3));
-    expect((l2 as any).result.marker).toBe('GEN2');
+    expect((l2 as { result: any }).result.marker).toBe('GEN2');
 
     // The replayed handshake must be swallowed: exactly one response for id 1.
     expect(received.filter((m) => m.id === 1).length).toBe(1);
@@ -153,7 +156,27 @@ describe('supervising wrapper', () => {
     // First child exits(7) before responding; the wrapper respawns and
     // re-delivers the recorded initialize so the client finally gets its answer.
     const init = await waitFor(() => received.find((m) => m.id === 1), 15000);
-    expect((init as any).result.serverInfo.version).toBe('CRASH');
+    expect((init as { result: any }).result.serverInfo.version).toBe('CRASH');
     expect(received.filter((m) => m.id === 1).length).toBe(1);
+  }, 30000);
+
+  it('fails an in-flight request back to the client when the child crashes (HIGH 4)', async () => {
+    root = mkPluginRoot('1.0.0', 'GEN1');
+    child = startWrapper(root);
+
+    send(child, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
+    await waitFor(() => received.find((m) => m.id === 1));
+    send(child, { jsonrpc: '2.0', method: 'notifications/initialized' });
+
+    // Send a call that makes the server die without responding.
+    send(child, { jsonrpc: '2.0', id: 42, method: 'crashme', params: {} });
+    // The client must receive a JSON-RPC error for id 42 (not hang forever).
+    const err = await waitFor(() => received.find((m) => m.id === 42), 10000);
+    expect((err as { error: any }).error.code).toBe(-32001);
+
+    // And the session recovers: the replayed handshake lets a new call succeed.
+    send(child, { jsonrpc: '2.0', id: 43, method: 'tools/list', params: {} });
+    const ok = await waitFor(() => received.find((m) => m.id === 43), 10000);
+    expect((ok as { result: any }).result.marker).toBe('GEN1');
   }, 30000);
 });

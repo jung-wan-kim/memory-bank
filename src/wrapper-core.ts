@@ -104,6 +104,22 @@ export class SupervisorState {
   }
 
   /**
+   * Outstanding client→server REQUEST ids, excluding the initialize request
+   * (which the supervisor replays/resends, not errors). On an unexpected child
+   * death the wrapper must fail these back to the client with a JSON-RPC error
+   * — otherwise a caller that sent e.g. tools/call id=7 waits forever
+   * (review finding 2026-07-14 HIGH 4).
+   */
+  outstandingRequestIds(): Array<string | number> {
+    const ids: Array<string | number> = [];
+    for (const id of this.outstanding) {
+      if (this.initializeId !== null && id === this.initializeId) continue;
+      ids.push(id);
+    }
+    return ids;
+  }
+
+  /**
    * A respawn drops whatever the dead child still owed; forget those ids so
    * the new child starts idle (the swap itself only happens at idle, but a
    * crash-respawn may not).
@@ -111,6 +127,19 @@ export class SupervisorState {
   resetOutstanding(): void {
     this.outstanding.clear();
   }
+}
+
+/**
+ * JSON-RPC error line failing an outstanding request that died with a crashed
+ * server child. Unblocks a client that is waiting for a response that will
+ * never come.
+ */
+export function abortedRequestError(id: string | number): string {
+  return JSON.stringify({
+    jsonrpc: '2.0',
+    id,
+    error: { code: -32001, message: 'memory-bank server restarted; in-flight request aborted — please retry' },
+  });
 }
 
 /** True when `line` is the server's response to the recorded initialize. */

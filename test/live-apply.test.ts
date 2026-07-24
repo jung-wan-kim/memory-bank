@@ -77,4 +77,43 @@ describe('liveApply', () => {
     expect(r.applied).toEqual([]);
     expect(r.reason).toBe('not-a-versioned-cache-dir');
   });
+
+  it('skips a symlinked version dir instead of writing through it (MEDIUM 7)', () => {
+    const outside = path.join(marketplace, 'outside');
+    fs.mkdirSync(path.join(outside, 'dist'), { recursive: true });
+    fs.writeFileSync(path.join(outside, 'dist', 'x.js'), 'OUTSIDE');
+    fs.writeFileSync(path.join(outside, 'package.json'), JSON.stringify({ version: '1.0.0', dependencies: { a: '1' } }));
+    fs.symlinkSync(outside, path.join(base, '1.0.0'));
+    const self = mkVersion('2.0.0', '2.0.0', 'NEW', { a: '1' });
+    const r = liveApply(self, () => {});
+    expect(r.applied).toEqual([]);
+    expect(r.skipped.some((s: { reason: string }) => s.reason === 'symlink')).toBe(true);
+    // the symlink target outside the cache is untouched
+    expect(fs.readFileSync(path.join(outside, 'dist', 'x.js'), 'utf8')).toBe('OUTSIDE');
+  });
+
+  it('repairs a dir whose package.json was lost to a crashed prior release (HIGH 3)', () => {
+    const broken = mkVersion('1.0.0', '1.0.0', 'OLD', { a: '1' });
+    fs.rmSync(path.join(broken, 'package.json')); // simulate crash after pkg moved away
+    const self = mkVersion('2.0.0', '2.0.0', 'NEW', { a: '1' });
+    const r = liveApply(self, () => {});
+    expect(r.applied).toEqual([{ dir: '1.0.0', from: null, to: '2.0.0' }]);
+    expect(fs.readFileSync(path.join(base, '1.0.0', 'dist', 'x.js'), 'utf8')).toBe('NEW');
+    expect(JSON.parse(fs.readFileSync(path.join(base, '1.0.0', 'package.json'), 'utf8')).version).toBe('2.0.0');
+  });
+
+  it('defers when the base lock is already held by a live process', () => {
+    mkVersion('1.0.0', '1.0.0', 'OLD', { a: '1' });
+    const self = mkVersion('2.0.0', '2.0.0', 'NEW', { a: '1' });
+    // Simulate a live holder: lock dir with our own (alive) pid.
+    const lockDir = path.join(base, '.live-apply.lock');
+    fs.mkdirSync(lockDir);
+    fs.writeFileSync(path.join(lockDir, 'pid'), String(process.pid));
+    const r = liveApply(self, () => {});
+    expect(r.reason).toBe('lock-held');
+    expect(r.applied).toEqual([]);
+    // OLD dir untouched — no downgrade/clobber while lock held
+    expect(fs.readFileSync(path.join(base, '1.0.0', 'dist', 'x.js'), 'utf8')).toBe('OLD');
+    fs.rmSync(lockDir, { recursive: true, force: true });
+  });
 });

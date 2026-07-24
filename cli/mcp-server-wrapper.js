@@ -24,6 +24,7 @@
 
 import { spawn, spawnSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
+import os from 'os';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -31,7 +32,14 @@ import {
   SupervisorState,
   isInitializeResponse,
   decideSwap,
+  abortedRequestError,
 } from '../dist/wrapper-core.js';
+
+/** Map a signal name to its conventional exit code (128 + signum). */
+function signalExitCode(signal) {
+  const n = (os.constants.signals && os.constants.signals[signal]) || 15;
+  return 128 + n;
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT || join(__dirname, '..');
@@ -128,7 +136,14 @@ function startChild({ replay, resendInitialize }) {
     for (const line of serverSplit.push(chunk.toString('utf8'))) {
       if (replaying) {
         if (isInitializeResponse(line, state.initializeLine)) {
-          if (state.initializedLine) writeToChild(state.initializedLine);
+          if (state.initializedLine) {
+            writeToChild(state.initializedLine);
+            // Drop any queued copy of the initialized notification so the
+            // flush below does not deliver it to the child twice (MEDIUM 6).
+            for (let i = queued.length - 1; i >= 0; i--) {
+              if (queued[i] === state.initializedLine) queued.splice(i, 1);
+            }
+          }
           replaying = false;
           holdInput = false;
           flushQueued();
@@ -147,11 +162,20 @@ function startChild({ replay, resendInitialize }) {
   child.on('exit', (code, signal) => onChildExit(code, signal));
 }
 
+// Fail any in-flight client requests back to the client, so a caller waiting
+// on a response that died with the child does not hang forever (HIGH 4).
+function abortOutstandingToClient() {
+  for (const id of state.outstandingRequestIds()) {
+    process.stdout.write(abortedRequestError(id) + '\n');
+  }
+}
+
 function onChildExit(code, signal) {
   if (shuttingDown) {
-    if (signal) process.kill(process.pid, signal);
-    else process.exit(code || 0);
-    return;
+    // Terminate directly. Re-sending the signal to ourselves would just
+    // re-enter this handler (the listener is still installed) and never exit
+    // (HIGH 5). Exit with the conventional code instead.
+    process.exit(signal ? signalExitCode(signal) : code || 0);
   }
 
   if (swapRequested) {
@@ -177,6 +201,9 @@ function onChildExit(code, signal) {
     if (rescuesLeft === 1) npmInstall('startup crash rescue');
     else runNpm(['rebuild'], 'startup crash rescue — native rebuild');
     const initAnswered = state.initializeAnswered();
+    // If the session was already live (init answered), any in-flight calls
+    // died with the child — fail them back so the client does not hang (HIGH 4).
+    if (initAnswered) abortOutstandingToClient();
     state.resetOutstanding();
     startChild({ replay: initAnswered, resendInitialize: !initAnswered });
     if (!replaying) {
@@ -191,13 +218,16 @@ function onChildExit(code, signal) {
     console.error(
       `memory-bank wrapper: server crashed (code=${code} signal=${signal}) — respawning with handshake replay`,
     );
+    abortOutstandingToClient(); // fail in-flight calls back to the client (HIGH 4)
     state.resetOutstanding(); // in-flight requests died with the child
     startChild({ replay: true, resendInitialize: false });
     return;
   }
 
-  if (signal) process.kill(process.pid, signal);
-  else process.exit(code || 0);
+  // No replay possible / budget exhausted: fail any in-flight calls before we
+  // go, then terminate.
+  abortOutstandingToClient();
+  process.exit(signal ? signalExitCode(signal) : code || 0);
 }
 
 async function main() {
@@ -221,24 +251,31 @@ async function main() {
         else queued.push(line);
       }
     });
-    process.stdin.on('end', () => {
+    // Graceful shutdown: kill the child, then a hard-exit fallback guarantees
+    // the wrapper always dies even if the child ignores the signal (HIGH 5) —
+    // otherwise a session with a stuck child would leave the wrapper wedged.
+    function beginShutdown(exitCode) {
+      if (shuttingDown) return;
       shuttingDown = true;
+      const c = child;
       try {
-        child?.kill('SIGTERM');
+        c?.kill('SIGTERM');
       } catch {
-        process.exit(0);
+        /* already gone — onChildExit / fallback handles exit */
       }
-    });
+      const escalate = setTimeout(() => {
+        try { c?.kill('SIGKILL'); } catch { /* gone */ }
+      }, 3_000);
+      escalate.unref();
+      const hardExit = setTimeout(() => process.exit(exitCode), 6_000);
+      hardExit.unref();
+      if (!c) process.exit(exitCode);
+    }
+
+    process.stdin.on('end', () => beginShutdown(0));
 
     for (const sig of ['SIGTERM', 'SIGINT']) {
-      process.on(sig, () => {
-        shuttingDown = true;
-        try {
-          child?.kill(sig);
-        } catch {
-          process.exit(0);
-        }
-      });
+      process.on(sig, () => beginShutdown(signalExitCode(sig)));
     }
 
     startChild({ replay: false, resendInitialize: false });

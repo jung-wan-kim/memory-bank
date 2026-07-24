@@ -4,6 +4,7 @@ import {
   SupervisorState,
   isInitializeResponse,
   decideSwap,
+  abortedRequestError,
 } from '../src/wrapper-core.js';
 
 const INIT = JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'initialize', params: {} });
@@ -59,6 +60,26 @@ describe('SupervisorState', () => {
     expect(st.idle()).toBe(false);
     st.resetOutstanding();
     expect(st.idle()).toBe(true);
+  });
+
+  it('outstandingRequestIds lists in-flight calls but excludes the initialize id (HIGH 4)', () => {
+    const st = new SupervisorState();
+    st.onClientLine(INIT); // id 0 = initialize
+    st.onClientLine(JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call' }));
+    st.onClientLine(JSON.stringify({ jsonrpc: '2.0', id: 8, method: 'resources/read' }));
+    expect(st.outstandingRequestIds().sort()).toEqual([7, 8]); // 0 (initialize) excluded
+    st.onServerLine(JSON.stringify({ jsonrpc: '2.0', id: 7, result: {} }));
+    expect(st.outstandingRequestIds()).toEqual([8]);
+  });
+});
+
+describe('abortedRequestError', () => {
+  it('is a valid JSON-RPC error bound to the aborted request id', () => {
+    const m = JSON.parse(abortedRequestError(7));
+    expect(m.id).toBe(7);
+    expect(m.error.code).toBe(-32001);
+    expect(typeof m.error.message).toBe('string');
+    expect(m.result).toBeUndefined();
   });
 });
 

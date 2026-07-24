@@ -48,12 +48,26 @@ export declare class SupervisorState {
      */
     initializeAnswered(): boolean;
     /**
+     * Outstanding client→server REQUEST ids, excluding the initialize request
+     * (which the supervisor replays/resends, not errors). On an unexpected child
+     * death the wrapper must fail these back to the client with a JSON-RPC error
+     * — otherwise a caller that sent e.g. tools/call id=7 waits forever
+     * (review finding 2026-07-14 HIGH 4).
+     */
+    outstandingRequestIds(): Array<string | number>;
+    /**
      * A respawn drops whatever the dead child still owed; forget those ids so
      * the new child starts idle (the swap itself only happens at idle, but a
      * crash-respawn may not).
      */
     resetOutstanding(): void;
 }
+/**
+ * JSON-RPC error line failing an outstanding request that died with a crashed
+ * server child. Unblocks a client that is waiting for a response that will
+ * never come.
+ */
+export declare function abortedRequestError(id: string | number): string;
 /** True when `line` is the server's response to the recorded initialize. */
 export declare function isInitializeResponse(line: string, initializeLine: string): boolean;
 export type SwapDecision = 'swap' | 'wait-busy' | 'no-handshake' | 'same-version';

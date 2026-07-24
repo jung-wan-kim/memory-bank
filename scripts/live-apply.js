@@ -25,6 +25,42 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compareVersions } from '../dist/version-guard.js';
 
+/**
+ * Cross-process mutex over the whole cache base: two concurrent SessionStart
+ * runs (from sessions of different versions) must not interleave — otherwise a
+ * slower OLDER run can rename its code over a faster NEWER run's result and
+ * downgrade a dir (HIGH 2). Exclusive-create lock dir; a stale lock (holder
+ * dead or older than TTL) is reclaimed.
+ */
+function acquireBaseLock(base) {
+  const lockDir = path.join(base, '.live-apply.lock');
+  const pidFile = path.join(lockDir, 'pid');
+  const TTL_MS = 5 * 60 * 1000;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      fs.mkdirSync(lockDir);
+      fs.writeFileSync(pidFile, String(process.pid));
+      return lockDir;
+    } catch {
+      let holder = NaN;
+      let mtime = 0;
+      try { holder = parseInt(fs.readFileSync(pidFile, 'utf8').trim(), 10); } catch {}
+      try { mtime = fs.statSync(lockDir).mtimeMs; } catch {}
+      let alive = false;
+      if (Number.isFinite(holder) && holder > 1) {
+        try { process.kill(holder, 0); alive = true; } catch (e) { alive = e && e.code === 'EPERM'; }
+      }
+      if (alive && Date.now() - mtime < TTL_MS) return null; // live holder — defer
+      try { fs.rmSync(lockDir, { recursive: true, force: true }); } catch { return null; }
+      // loop and retry the exclusive create
+    }
+  }
+  return null;
+}
+
+// package.json is applied LAST as the commit marker: a crash mid-release
+// leaves the OLD package.json in place, so the next run still sees the dir as
+// older and re-applies (no permanent skip / mixed-version stranding — HIGH 3).
 const CODE_ITEMS = [
   'dist',
   'scripts',
@@ -33,8 +69,8 @@ const CODE_ITEMS = [
   'commands',
   'agents',
   'skills',
-  'package.json',
   '.claude-plugin',
+  'package.json',
 ];
 
 function readPkg(dir) {
@@ -64,6 +100,16 @@ export function liveApply(selfRoot, log = (m) => console.error(m)) {
   const myVersion = selfPkg && typeof selfPkg.version === 'string' ? selfPkg.version : null;
   if (!myVersion) return { applied: [], skipped: [], reason: 'no-self-version' };
 
+  const lockDir = acquireBaseLock(base);
+  if (!lockDir) return { applied: [], skipped: [], reason: 'lock-held' };
+  try {
+    return applyUnlocked(selfRoot, base, selfName, selfPkg, myVersion, log);
+  } finally {
+    try { fs.rmSync(lockDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+  }
+}
+
+function applyUnlocked(selfRoot, base, selfName, selfPkg, myVersion, log) {
   const applied = [];
   const skipped = [];
   let siblings = [];
@@ -75,13 +121,29 @@ export function liveApply(selfRoot, log = (m) => console.error(m)) {
 
   for (const name of siblings) {
     const dir = path.join(base, name);
+    // Reject a versioned sibling that is a symlink — following it would let
+    // rm/rename/cp operate on files OUTSIDE the cache (MEDIUM 7).
+    try {
+      if (fs.lstatSync(dir).isSymbolicLink()) {
+        log(`[live-apply] SKIP ${name}: symlink — refusing to patch outside cache`);
+        skipped.push({ dir: name, reason: 'symlink' });
+        continue;
+      }
+    } catch {
+      skipped.push({ dir: name, reason: 'lstat-failed' });
+      continue;
+    }
     const pkg = readPkg(dir);
     const theirVersion = pkg && typeof pkg.version === 'string' ? pkg.version : null;
-    if (!theirVersion || compareVersions(theirVersion, myVersion) >= 0) {
+    // null theirVersion = a crashed prior release left this dir without a
+    // readable package.json → it needs REPAIR, not a permanent skip (HIGH 3).
+    if (theirVersion && compareVersions(theirVersion, myVersion) >= 0) {
       skipped.push({ dir: name, reason: 'same-or-newer-content' });
       continue;
     }
-    if (depsKey(pkg) !== depsKey(selfPkg)) {
+    // deps check needs a readable pkg; a null-pkg repair dir reuses self's deps
+    // (its node_modules predates the crash and matches the same release line).
+    if (pkg && depsKey(pkg) !== depsKey(selfPkg)) {
       // Different dependency set — patched code could require modules the old
       // node_modules lacks. Loudly skip; this dir needs a real install.
       log(`[live-apply] SKIP ${name}: dependency set differs from ${myVersion} — needs full install`);
@@ -90,24 +152,36 @@ export function liveApply(selfRoot, log = (m) => console.error(m)) {
     }
 
     // One-time backup of the dir's current code (outside the version listing).
-    const backupRoot = path.join(path.dirname(base), '.live-apply-backup', `${name}-${theirVersion}`);
+    // Complete the backup under a temp name then rename in — a crash mid-backup
+    // must not leave a partial backup that later reads as "already backed up".
+    const backupTag = theirVersion || 'unknown';
+    const backupRoot = path.join(path.dirname(base), '.live-apply-backup', `${name}-${backupTag}`);
     if (!fs.existsSync(backupRoot)) {
-      fs.mkdirSync(backupRoot, { recursive: true });
+      const backupTmp = `${backupRoot}.tmp.${process.pid}`;
+      fs.rmSync(backupTmp, { recursive: true, force: true });
+      fs.mkdirSync(backupTmp, { recursive: true });
       for (const item of CODE_ITEMS) {
         const src = path.join(dir, item);
-        if (fs.existsSync(src)) fs.cpSync(src, path.join(backupRoot, item), { recursive: true });
+        if (fs.existsSync(src)) fs.cpSync(src, path.join(backupTmp, item), { recursive: true });
       }
+      try { fs.renameSync(backupTmp, backupRoot); }
+      catch { fs.rmSync(backupTmp, { recursive: true, force: true }); }
     }
 
+    // pid-scoped temp names so concurrent runs never clobber each other's
+    // in-progress swaps (HIGH 2 — the base lock already serializes, this is
+    // belt-and-suspenders against a stale-lock reclaim overlap).
+    const sfx = `.live-apply.${process.pid}`;
     for (const item of CODE_ITEMS) {
       const src = path.join(selfRoot, item);
       const dst = path.join(dir, item);
       if (!fs.existsSync(src)) continue;
       // Near-atomic per item: full copy lands beside the target first, then a
       // rename swap — a hook process spawning mid-patch must never read a
-      // half-copied dist (review finding 2026-07-14).
-      const tmp = `${dst}.live-apply-tmp`;
-      const old = `${dst}.live-apply-old`;
+      // half-copied dist. package.json is LAST (CODE_ITEMS order) so its
+      // presence-at-new-version means every other item already swapped.
+      const tmp = `${dst}${sfx}.tmp`;
+      const old = `${dst}${sfx}.old`;
       fs.rmSync(tmp, { recursive: true, force: true });
       fs.rmSync(old, { recursive: true, force: true });
       fs.cpSync(src, tmp, { recursive: true });
@@ -118,7 +192,7 @@ export function liveApply(selfRoot, log = (m) => console.error(m)) {
 
     const after = readPkg(dir);
     if (after && after.version === myVersion) {
-      log(`[live-apply] ${name}: ${theirVersion} -> ${myVersion} (live sessions pick this up without restart)`);
+      log(`[live-apply] ${name}: ${theirVersion || 'broken'} -> ${myVersion} (live sessions pick this up without restart)`);
       applied.push({ dir: name, from: theirVersion, to: myVersion });
     } else {
       log(`[live-apply] ${name}: patch verification FAILED`);
