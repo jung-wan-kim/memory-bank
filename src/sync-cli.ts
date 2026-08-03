@@ -52,7 +52,8 @@ if (isBackground) {
     ...filteredArgs
   ], {
     detached: true,
-    stdio: 'ignore'
+    stdio: 'ignore',
+    windowsHide: true
   });
 
   child.unref(); // Allow parent to exit

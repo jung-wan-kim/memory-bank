@@ -2,7 +2,7 @@
   "status": "fail",
   "executed": true,
   "scope": "feature",
-  "scenario": "database-state",
+  "scenario": "hard-interaction-contract",
   "evidence_class": "BLOCKED",
   "failure_reason": "missing browser E2E dependency/runner (Playwright/Cypress/WebDriver/Puppeteer not present); create/update/delete CRUD mutation flow not implemented/detected; file upload flow not implemented/detected; modal/layer/popup flow not implemented/detected; confirm cancel/accept flow not implemented/detected",
   "blocker_count": 5,
@@ -71,7 +71,7 @@
     "screenshot_evidence": [],
     "human_review_artifacts": []
   },
-  "generated_at": "2026-05-10T14:52:09+00:00",
+  "generated_at": "2026-07-04T22:21:38+00:00",
   "policy": {
     "contract_type": "hard",
     "smoke_only_is_pass": false,

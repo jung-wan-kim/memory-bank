@@ -4,6 +4,9 @@ import path from 'path';
 import { getDbPath } from './paths.js';
 import { canonicalArchiveName } from './archive-io.js';
 import { slugifyPath } from './project-canon.js';
+import {
+  EXTRACTION_STATE, pendingExtractionCoreQuery, getExtractionConfig,
+} from './pending-extraction.js';
 
 /**
  * Full-history analysis over the conversation index.
@@ -42,7 +45,8 @@ export interface AnalysisReport {
     totalExchanges: number;
     projectCount: number;
     dateRange: { earliest: string; latest: string } | null;
-    extraction: { processed: number; seeded: number; errors: number; pending: number };
+    /** retrying: 내부 실패 후 재시도 예산이 남아 아직 pending 인 세션 수 */
+    extraction: { processed: number; seeded: number; errors: number; retrying: number; pending: number };
     /** Summary coverage over main conversations only */
     summaries: { withSummary: number; withoutSummary: number };
   };
@@ -97,7 +101,7 @@ function emptyReport(): AnalysisReport {
       totalExchanges: 0,
       projectCount: 0,
       dateRange: null,
-      extraction: { processed: 0, seeded: 0, errors: 0, pending: 0 },
+      extraction: { processed: 0, seeded: 0, errors: 0, retrying: 0, pending: 0 },
       summaries: { withSummary: 0, withoutSummary: 0 },
     },
     facts: { active: 0, inactive: 0, byCategory: [], byScope: [] },
@@ -161,24 +165,43 @@ export async function analyzeHistory(options: AnalyzeOptions = {}): Promise<Anal
       const ext = db.prepare(`
         SELECT
           SUM(CASE WHEN extracted >= 0 THEN 1 ELSE 0 END) AS processed,
-          SUM(CASE WHEN extracted = -1 THEN 1 ELSE 0 END) AS seeded,
-          SUM(CASE WHEN extracted = -2 THEN 1 ELSE 0 END) AS errors
+          SUM(CASE WHEN extracted = ${EXTRACTION_STATE.SEED} THEN 1 ELSE 0 END) AS seeded,
+          SUM(CASE WHEN extracted = ${EXTRACTION_STATE.PERMANENT} THEN 1 ELSE 0 END) AS errors,
+          SUM(CASE WHEN extracted = ${EXTRACTION_STATE.RETRIABLE_INTERNAL} THEN 1 ELSE 0 END) AS retrying
         FROM extraction_log
-      `).get() as { processed: number | null; seeded: number | null; errors: number | null };
+      `).get() as {
+        processed: number | null; seeded: number | null;
+        errors: number | null; retrying: number | null;
+      };
       report.coverage.extraction.processed = ext.processed ?? 0;
       report.coverage.extraction.seeded = ext.seeded ?? 0;
       report.coverage.extraction.errors = ext.errors ?? 0;
+      report.coverage.extraction.retrying = ext.retrying ?? 0;
 
-      const pending = db.prepare(`
-        SELECT COUNT(*) AS n FROM (
-          SELECT e.session_id
-          FROM exchanges e
-          WHERE e.is_sidechain = 0 AND e.session_id IS NOT NULL
-            AND NOT EXISTS (SELECT 1 FROM extraction_log l WHERE l.session_id = e.session_id)
-          GROUP BY e.session_id
-        )
-      `).get() as { n: number };
-      report.coverage.extraction.pending = pending.n;
+      // 🚨 손으로 복제하지 않는다. 이 자리에 사본을 두면 반드시 드리프트한다 —
+      // 실제로 -4(재시도 예산) 예외만 반영하고 -3(만료 리스 회수) 예외가 빠져서,
+      // 주석은 "워커/훅과 같은 의미"라고 주장하는데 35분 된 claim 세션을 '처리됨'
+      // 으로 세어 백로그를 과소보고했다(Codex R24 MEDIUM). 단일 소스를 그대로 쓴다.
+      //
+      // 의미 변화 고지: 공유 쿼리는 최소 교환수·제외 프로젝트 필터를 포함하므로
+      // 이 수치는 "워커가 실제로 집을 세션 수"가 된다(이전에는 그 필터가 없는
+      // 원시 집계였다). 리포트 목적상 이쪽이 더 정확하다.
+      const { sql: pendingSql, params: pendingParams } = pendingExtractionCoreQuery(getExtractionConfig());
+      try {
+        const pending = db.prepare(`SELECT COUNT(*) AS n FROM (${pendingSql})`)
+          .get(...pendingParams) as { n: number };
+        report.coverage.extraction.pending = pending.n;
+      } catch (e) {
+        // 공유 쿼리는 cwd 컬럼을 요구한다(정본 스키마에 있고 initDatabase 가
+        // 마이그레이션한다). analyze 는 readonly 로 열어 마이그레이션하지 않으므로,
+        // 아주 오래된 미마이그레이션 DB 에서는 실패할 수 있다 — 그때는 사본을
+        // 만들어 드리프트를 재생산하는 대신 **측정 불가를 표면화**한다.
+        console.error(
+          `analyze: pending 집계 불가(구버전 스키마 추정) — 0 으로 보고하지 않습니다: `
+          + `${e instanceof Error ? e.message : String(e)}`,
+        );
+        report.coverage.extraction.pending = cov.sessions;
+      }
     } else {
       report.coverage.extraction.pending = cov.sessions;
     }

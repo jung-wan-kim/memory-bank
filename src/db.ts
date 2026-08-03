@@ -495,6 +495,56 @@ export function initDatabase(): Database.Database {
     )
   `);
 
+  // Dead-letter marker for extraction (Codex 적대 리뷰 2026-07-17). A batch whose
+  // LLM call fails DETERMINISTICALLY (400/413/max_tokens — the same input always
+  // fails) is dropped so one bad batch can't wedge the session queue forever, but
+  // dropping it silently means those exchanges' facts are lost with no record.
+  // The count is persisted so the loss is queryable instead of invisible:
+  //   SELECT session_id, dropped_batches FROM extraction_log WHERE dropped_batches > 0;
+  // check-then-ALTER 는 경쟁 상태다 — hook 과 MCP 서버가 동시에 초기화하면 한쪽이
+  // duplicate column 으로 실패해 DB 초기화 전체가 죽는다. 이미 있으면 성공으로
+  // 흡수하고, 그 외 에러만 전파한다 (Codex 리뷰 R3 MEDIUM).
+  {
+    const cols = db.prepare(`SELECT name FROM pragma_table_info('extraction_log')`)
+      .all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === 'dropped_batches')) {
+      try {
+        db.prepare('ALTER TABLE extraction_log ADD COLUMN dropped_batches INTEGER NOT NULL DEFAULT 0').run();
+      } catch (e) {
+        // 실패를 3분류한다 (Codex 리뷰 R3/R4 MEDIUM). duplicate 만 흡수하고 전부
+        // 던지면, 다른 프로세스가 쓰기 락을 쥔 순간의 초기화가 통째로 죽어
+        // 훅/워커가 그 세션을 아예 처리하지 못한다 — 일시적 경합이 기능 정지가 된다.
+        const msg = (e as Error)?.message ?? '';
+        if (/duplicate column name/i.test(msg)) {
+          /* 이미 있음 — 다른 프로세스가 먼저 추가 */
+        } else if (/database is locked|database table is locked|SQLITE_BUSY/i.test(msg)) {
+          // 일시적 경합: 이 컬럼은 선택적 메타데이터(폐기 배치 카운터)이므로 다음
+          // 초기화가 추가한다. 그때까지 이 컬럼을 쓰는 INSERT 는 자체 catch 로
+          // 마커를 남기지 않을 뿐이고, 세션은 pending 에 남아 재처리된다(손실 없음).
+          console.error('[db] extraction_log.dropped_batches 마이그레이션 지연 — 락 경합, 다음 초기화에서 재시도');
+        } else {
+          throw e; // 진짜 스키마 이상은 조용히 넘기지 않는다
+        }
+      }
+    }
+    // claim_owner: 세션 선점의 **소유권 토큰**. 상태(-3)만으로는 "내 claim"을 SQL 로
+    // 식별할 수 없어 한 러너의 롤백이 다른 러너의 살아있는 claim 을 덮는다(R7 HIGH-2).
+    if (!cols.some((c) => c.name === 'claim_owner')) {
+      try {
+        db.prepare('ALTER TABLE extraction_log ADD COLUMN claim_owner TEXT').run();
+      } catch (e) {
+        const msg = (e as Error)?.message ?? '';
+        if (/duplicate column name/i.test(msg)) {
+          /* 다른 프로세스가 먼저 추가 */
+        } else if (/database is locked|database table is locked|SQLITE_BUSY/i.test(msg)) {
+          console.error('[db] extraction_log.claim_owner 마이그레이션 지연 — 락 경합, 다음 초기화에서 재시도');
+        } else {
+          throw e;
+        }
+      }
+    }
+  }
+
   // Self-heal slug-format scope_project rows (cheap probe; no-op when clean).
   // Keeps the canonical path format intact even when other devices sync in
   // facts written by older code.

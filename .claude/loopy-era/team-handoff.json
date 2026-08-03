@@ -7,11 +7,11 @@
   "project": "memory-bank",
   "hard_contract_path": ".claude/loopy-era/hard-process-contract.json",
   "validator_command": "python3 ~/.claude/scripts/validate-hard-process-contract.py --project-root \"$(pwd)\" --require-project-contract --json",
-  "team_runtime_plan_command": "Skill(\"team\") plan: memory-bank-cloud 2026-07-11 검색 perf keeps(행-텍스트 캐시/indexOf 카운트/snippet 지연)의 대응 JS 경로 이식 + 잔여 개선 측정 수렴",
+  "team_runtime_plan_command": "Skill(\"team\") plan: 형제 비공개 프로젝트 2026-07-11 검색 perf keeps(행-텍스트 캐시/indexOf 카운트/snippet 지연)의 대응 JS 경로 이식 + 잔여 개선 측정 수렴",
   "team_runtime_execute_command": "Skill(\"team\")",
   "team_launch_hint": "/team memory-bank 검색 JS 핫패스 이식+수렴 — 의미 불변 증거(결과 동등성/recall 무하락) 없이 keep 금지, vitest 전 스위트 + dist 재빌드 커밋까지",
   "downstream_objective": {
-    "objective": "memory-bank-cloud에서 검증된 검색 핫패스 최적화를 memory-bank의 대응 JS-측 경로에 이식하고 추가 개선점을 측정 기반으로 수렴. SQL(FTS5/vec)측은 별개 — JS 재랭크/스캔 경로만 대상.",
+    "objective": "형제 비공개 프로젝트에서 검증된 검색 핫패스 최적화를 memory-bank의 대응 JS-측 경로에 이식하고 추가 개선점을 측정 기반으로 수렴. SQL(FTS5/vec)측은 별개 — JS 재랭크/스캔 경로만 대상.",
     "success_criteria": [
       "대응 경로 존재 시 각 keep 이식 + 측정 실증 (부재 시 부재 사유 기록)",
       "vitest 전 스위트 회귀 0 + 의미 불변(결과 동등성/recall 무하락) 증거",

@@ -35,10 +35,12 @@ export interface AnalysisReport {
             earliest: string;
             latest: string;
         } | null;
+        /** retrying: 내부 실패 후 재시도 예산이 남아 아직 pending 인 세션 수 */
         extraction: {
             processed: number;
             seeded: number;
             errors: number;
+            retrying: number;
             pending: number;
         };
         /** Summary coverage over main conversations only */

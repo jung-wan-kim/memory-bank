@@ -34,7 +34,7 @@
     {
       "id": "team-runtime-contract",
       "type": "hard",
-      "description": "team 목표 = memory-bank-cloud 2026-07-11 perf keeps의 대응 JS 경로 이식 + 잔여 개선 수렴 (신규 기능 아님)"
+      "description": "team 목표 = 형제 비공개 프로젝트 2026-07-11 perf keeps의 대응 JS 경로 이식 + 잔여 개선 수렴 (신규 기능 아님)"
     },
     {
       "id": "team-handoff-contract",

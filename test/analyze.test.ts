@@ -17,7 +17,8 @@ function createSchema(db: Database.Database) {
       line_start INTEGER NOT NULL,
       line_end INTEGER NOT NULL,
       is_sidechain BOOLEAN DEFAULT 0,
-      session_id TEXT
+      session_id TEXT,
+      cwd TEXT
     );
     CREATE TABLE extraction_log (
       session_id TEXT PRIMARY KEY,
@@ -140,7 +141,10 @@ describe('analyze', () => {
     writeFileSync(convC, '{}');
     writeFileSync(agentConv, '{}');
     insert.run('e4', '-tmp-proj-b', '2026-06-15T10:00:00Z', 'q4', 'a4', convC, 1, 2, 0, 'sess-3');
-    insert.run('e5', '-tmp-proj-b', '2026-06-15T11:00:00Z', 'q5', 'a5', agentConv, 1, 2, 1, 'sess-3');
+    // is_sidechain=0 — sess-3 이 워커의 최소 교환수(기본 2)를 충족해야 pending 이다.
+    // pending 판정이 단일 소스로 바뀌면서 이 수치는 "로그 행 없는 세션"이 아니라
+    // "워커가 실제로 집을 세션"이 됐으므로, 픽스처도 그 조건을 갖춰야 의미가 유지된다.
+    insert.run('e5', '-tmp-proj-b', '2026-06-15T11:00:00Z', 'q5', 'a5', agentConv, 1, 2, 0, 'sess-3');
 
     // Extraction: sess-1 processed, sess-2 seeded, sess-3 pending
     db.prepare("INSERT INTO extraction_log VALUES ('sess-1', '2026-06-01T00:00:00Z', 3, 2)").run();

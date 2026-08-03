@@ -1,4 +1,6 @@
 import { callHaiku, parseJsonResponse } from './llm.js';
+// 값 사용분은 별도 import — `export … from` 은 재수출만 하고 로컬 바인딩을 만들지 않는다.
+import { LlmCallError, classifyLlmError } from './llm-error-class.js';
 import { getNewFactsSince, getAllNewFactsSince, searchSimilarFactsSameScope, updateFact, deactivateFact, insertRevision, } from './fact-db.js';
 export const CONSOLIDATION_SYSTEM_PROMPT = `Compare two facts and determine their relationship.
 
@@ -28,105 +30,7 @@ const SIMILARITY_THRESHOLD = 0.95;
 export function buildConsolidationPrompt(existingFact, newFact) {
     return `Existing fact: "${existingFact}"\nNew fact: "${newFact}"`;
 }
-/**
- * Extract an HTTP status from the common provider-error shapes: a top-level
- * `status`/`statusCode` (Anthropic SDK APIError) OR a nested `response.status`/
- * `response.statusCode` (axios / fetch-wrapper style). Reading only the top
- * level misses nested shapes and misclassifies a real 400/413 as 'unknown'.
- */
-function extractStatus(x) {
-    const o = x;
-    for (const c of [o?.status, o?.statusCode, o?.response?.status, o?.response?.statusCode]) {
-        if (typeof c === 'number')
-            return c;
-    }
-    return undefined;
-}
-/**
- * Wraps a rejection from the LLM provider call (callHaiku) so the drain loop can
- * tell a provider error apart from an internal bug (parser/DB/mutation). ONLY a
- * provider error is eligible for classification + bounded skip; an internal
- * error must hold, never advance the cursor.
- */
-export class LlmCallError extends Error {
-    reason;
-    status;
-    constructor(reason) {
-        const r = reason;
-        super(r?.message ?? String(reason));
-        this.name = 'LlmCallError';
-        this.reason = reason;
-        this.status = extractStatus(reason);
-    }
-}
-/**
- * Classify a callHaiku rejection into three states so the drain loop can satisfy
- * BOTH "an outage must never silently skip the backlog" AND "one un-processable
- * fact must never wedge the cursor forever" — a binary flag cannot do both under
- * a single monotonic cursor with imperfect error recognition:
- *
- *   - 'transient'     recognized outage/auth (429/5xx/401/403/404, rate-limit,
- *                     timeout, network...). The provider — not the fact — is at
- *                     fault, so the caller HOLDS the cursor and retries; it
- *                     resumes cleanly on recovery, never skipping during an
- *                     outage however long it lasts.
- *   - 'deterministic' recognized per-request rejection (400/413/422, too-long,
- *                     max_tokens, bad request...). Only THIS fact is at fault, so
- *                     the caller burns an attempt and advances after MAX.
- *   - 'unknown'       neither recognized. Treated like 'deterministic' by the
- *                     caller (bounded retry → advance) so an UNRECOGNIZED error
- *                     can never wedge the whole backlog forever. This is safe:
- *                     "skipping" a fact only means it isn't consolidated/deduped
- *                     — the fact stays active and searchable, it is never deleted
- *                     — whereas an unbounded hold halts ALL future consolidation.
- *
- * Numbers are read from the STRUCTURED status, or from a status number that is
- * explicitly LABELLED in the message ("status code 400"). A bare incidental
- * number ("retry after 400 ms") is never read as a status — it falls through to
- * phrase matching or 'unknown'.
- */
-export function classifyLlmError(err) {
-    // Classify the underlying provider rejection, not the wrapper.
-    const e = (err instanceof LlmCallError ? err.reason : err);
-    const byCode = (code) => {
-        if (code === 401 || code === 403 || code === 404)
-            return 'transient'; // systemic/config — hold, resumes on fix
-        if (code === 429 || code >= 500)
-            return 'transient'; // rate limit / server error
-        if (code === 400 || code === 413 || code === 422)
-            return 'deterministic'; // per-request bad/oversized
-        return 'unknown';
-    };
-    const structured = extractStatus(err instanceof LlmCallError ? err.reason : err);
-    if (structured !== undefined)
-        return byCode(structured);
-    const m = (e?.message ?? String(err)).toLowerCase();
-    // A status number LABELLED in the message ("status code 400", "status: 503") —
-    // but never a bare incidental number ("retry after 400 ms").
-    const labelled = m.match(/status(?:\s*code)?\s*[:=]?\s*(\d{3})\b/);
-    if (labelled)
-        return byCode(parseInt(labelled[1], 10));
-    // DETERMINISTIC (per-request) phrases checked FIRST so a specific request-size
-    // / param error isn't swallowed by the broader transient phrases below.
-    if (/too (large|long)|prompt is too long|context length|maximum.*token|max_?tokens|content.*too|invalid[_ ]?request|bad request|unprocessable/.test(m)) {
-        return 'deterministic';
-    }
-    // TRANSIENT phrases: rate limit / server / network / outage, plus auth-KEY
-    // errors (kept narrow — "invalid api key", not "invalid api request").
-    if (/unauthor|forbidden|invalid.*(api.?key|access.?token|credential)|timeout|etimedout|econnreset|econnrefused|enotfound|socket hang up|network|overloaded|temporarily|rate.?limit|too many requests|service unavailable|bad gateway|gateway timeout/.test(m)) {
-        return 'transient';
-    }
-    return 'unknown'; // unrecognized → caller bounds it (retry MAX then advance)
-}
-/**
- * Back-compat boolean: true only for a RECOGNIZED transient (outage/auth). An
- * 'unknown' error is NOT a recognized transient, so this returns false for it —
- * the drain loop uses classifyLlmError directly and bounds 'unknown' rather than
- * holding on it.
- */
-export function isTransientLlmError(err) {
-    return classifyLlmError(err) === 'transient';
-}
+export { LlmCallError, EmptyLlmResponseError, classifyLlmError, isTransientLlmError } from './llm-error-class.js';
 /**
  * Consolidate ONE driver fact against a same-scope neighbour (if any).
  * Shared by consolidateAllPending and the back-compat consolidateFacts wrapper.

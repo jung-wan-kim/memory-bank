@@ -47,6 +47,7 @@ async function main() {
   const child = spawn(process.execPath, [worker], {
     detached: true,
     stdio: 'ignore',
+    windowsHide: true,
     env: { ...process.env, SESSION_ID: sessionId, CWD: project },
   });
   child.unref();

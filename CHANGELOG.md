@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-08-02
+
+### Fixed — LLM 호출 실패·빈 응답에 재시도·복구가 없던 문제 (사용자 피드백)
+
+`callHaiku` 가 실패·빈 응답에서 `''` 를 반환해 호출자가 실패를 인지하지 못했다. 그 배치를
+버린 뒤 세션을 완료로 기록했고, 기록된 세션은 pending 에서 영구 제외되므로 **그 대화의
+fact 가 다시는 추출되지 않았다**. 재시도 부재가 곧 데이터 손실이었다.
+
+- 유계 재시도(기본 2회, `MEMORY_BANK_LLM_RETRIES`) + 지수 백오프(상한 5s/30s)
+- 빈 응답을 `EmptyLlmResponseError` 로 승격 — 실패를 성공(빈 결과)으로 위장하지 않는다
+- 실패 3분류(transient/deterministic/unknown)를 단일 소스 모듈로 분리
+- deterministic 배치 폐기를 `extraction_log.dropped_batches` 에 dead-letter 로 기록
+
+### Fixed — 추출 파이프라인 정합성 (적대 리뷰 25라운드에서 발견)
+
+- **세션 영구 손실**: 내부 실패에 재시도 예산을 가진 제3 상태(`-4`) 도입. 예산 소진 시
+  영구 마커로 승격해 큐가 물리지 않는다
+- **훅↔워커 중복 추출**: LLM 호출 전 세션 선점(claim) + 소유권 토큰(`claim_owner`) +
+  리스 갱신. fact 삽입과 완료 마커를 **단일 트랜잭션**으로 묶어, 선점을 잃으면 fact 도
+  남지 않는다
+- **리스 만료 미작동**: ISO-8601 값을 SQLite `datetime()` 출력과 문자 비교해 같은 UTC
+  날짜의 만료 claim 이 항상 fresh 로 판정됐다(실효 리스 최대 ~24.5시간) → `datetime()`
+  파싱 비교로 수정. 손상 타임스탬프도 회수 대상으로 명시
+- **형제 프로젝트 영구 배제**: 제외 목록이 raw prefix 라 `memory-bank` 로 시작하는
+  **별개 프로젝트**까지 함께 삼켰다(적격 8세션 영구 미추출) → 경로 경계 매칭으로 수정
+- 실패 분류·라우팅·보고를 한 표에서 파생해 "예산은 타는데 재시도된다고 보고" 모순 제거
+- pending 판정 사본 제거 — 단일 소스만 사용
+
+### Changed
+
+- `analyze` 의 `coverage.extraction.pending` 이 "로그 행 없는 세션"에서 **"워커가 실제로
+  집을 세션"**으로 변경(최소 교환수·제외 프로젝트 필터 포함). `retrying` 지표 추가
+- `runFactExtraction` 이 건너뛴 사유(`skipped`)를 반환 — 호출자가 claim 미획득을 정상
+  처리와 구분할 수 있다
+
+### Migration
+
+`extraction_log` 에 `dropped_batches`, `claim_owner` 컬럼이 멱등 마이그레이션으로 추가된다
+(락 경합 시 다음 초기화에서 재시도).
+
 ## [1.4.5] - 2026-07-14
 
 ### Added
@@ -40,30 +80,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.4.4] - 2026-07-14
 
-_(release note restored retroactively in the 1.4.5 commit — the entry missed
-the 1.4.4 commit itself)_
+### Fixed — 플러그인 업데이트 후 구버전 프로세스 잔존 (버전 드리프트)
+
+- sync 싱글톤 락에 `{pid, version, startedAt}` 기록 — 신버전이 구버전·legacy 홀더를
+  선점한다. 6시간 이상 wedge 된 홀더는 버전과 무관하게 선점(실측: v1.3.3 sync 가 23시간
+  wedge 되어 인덱싱이 하루 동안 동결됐다)
+- `sync-cli` 가 시그널 종료 시 락을 해제하지 않던 문제 수정
 
 ### Added
-- **Version drift guard** (`src/version-guard.ts`) — a plugin update must not
-  leave old-version processes running. Incident (2026-07-14): after v1.4.3
-  shipped, the install record stayed at 1.3.3 (every new session kept spawning
-  stale code) and a v1.3.3 sync-cli wedged for 23h held the singleton lock, so
-  every newer sync skipped — indexing frozen for a day on stale code.
-  - The sync lock now records `{pid, version, startedAt}`. A newer-version
-    sync preempts an older or legacy (bare-pid) holder, and any holder running
-    past 6h is preempted as wedged regardless of version. Pid-recycling guard:
-    the holder is only killed when its command line is actually a memory-bank
-    sync-cli.
-  - New SessionStart hook `scripts/version-drift-check.js`: sweeps detached
-    workers running from an older versioned plugin cache dir and emits a loud
-    context warning when the session runs an older version than the newest
-    installed one. MCP servers are never swept — they belong to live sessions.
 
-### Fixed
-- sync-cli released its singleton lock only via the `exit` handler, which does
-  not run on default signal death — a SIGTERM'd sync left a stale lock behind
-  (observed live). SIGTERM/SIGINT now route through `process.exit` so the lock
-  is always released.
+- SessionStart hook `scripts/version-drift-check.js` — 구버전 detached 워커 sweep +
+  드리프트 경고 주입. MCP 서버는 라이브 세션을 소유하므로 sweep 대상에서 제외
+
 
 ## [1.4.3] - 2026-07-12
 

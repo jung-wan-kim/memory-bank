@@ -355,28 +355,6 @@ open docs/graph-3d.html   # Interactive 3D graph (local)
         └── vec_facts           # Vector index (384-dim)
 ```
 
-## Cloud (private alpha, opt-in)
-
-Local memory-bank is the default and is unaffected by cloud mode. A separate,
-issuer-bound **private** cloud plane (Supabase-backed) is available as an opt-in
-server — it is not auto-registered in the plugin and exposes no public tools.
-
-```bash
-# Server-only: never ship the service token to clients/browsers.
-export MEMORY_BANK_CLOUD_SUPABASE_URL="https://<ref>.supabase.co"
-export SUPABASE_SERVICE_ROLE_TOKEN="<service_role_key>"
-memory-bank-cloud-mcp-server          # client profile (no issue_token)
-memory-bank-cloud-mcp-server --admin  # control-plane profile (issue_token enabled)
-
-# Sidecar spool → cloud sync:
-memory-bank-cloud-sync status
-memory-bank-cloud-sync doctor
-memory-bank-cloud-sync push           # needs MEMORY_BANK_CLOUD_TOKEN or _SESSION_TOKEN
-```
-
-Deployment status and the remaining operator steps (project creation, `db push`,
-RLS, smoke) are tracked in [`docs/memory-bank-cloud-deploy-runbook.md`](docs/memory-bank-cloud-deploy-runbook.md).
-
 ## Development
 
 ```bash

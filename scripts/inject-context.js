@@ -46,7 +46,10 @@ function selfHealDeps(pluginRoot) {
   }
   try {
     const child = spawn('npm', ['install', '--no-audit', '--no-fund'], {
-      cwd: pluginRoot, detached: true, stdio: 'ignore',
+      // windowsHide: 콘솔을 상속하지 않는 detached 프로세스는 Windows 에서 새 conhost
+      // 창을 띄운다. 이 self-heal 은 프롬프트 주입 경로라 창이 반복해 깜빡인다.
+      // (비-Windows 에서는 no-op — PR #3 이 정렬한 나머지 5개 spawn 과 동일 계약)
+      cwd: pluginRoot, detached: true, stdio: 'ignore', windowsHide: true,
     });
     child.unref();
     process.stderr.write('inject-context: missing deps detected — spawned background npm install (one-shot)\n');

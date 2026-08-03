@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { LLM_WORKDIR_BASENAME, getProjectsDir } from './paths.js';
+import { classifyLlmError, EmptyLlmResponseError } from './llm-error-class.js';
 // Isolated working directory for headless Agent SDK sessions. The CLI that
 // query() spawns persists a transcript under ~/.claude/projects/<cwd-slug>/;
 // running it from the caller's cwd drops worker transcripts into that
@@ -110,13 +111,29 @@ export function pruneLlmTranscripts(now = Date.now()) {
         /* pruning is best-effort housekeeping — never break the LLM call */
     }
 }
+/** 재시도 횟수(= 총 시도 - 1). 0 이면 재시도 없음. 상한 5 — 무한 폭주 방지. */
+function retryBudget() {
+    const raw = process.env.MEMORY_BANK_LLM_RETRIES;
+    if (raw != null && /^\d+$/.test(raw.trim()))
+        return Math.min(5, parseInt(raw.trim(), 10));
+    return 2; // 기본 총 3회 시도
+}
 /**
- * Call Haiku via Claude Agent SDK (no API key needed inside Claude Code —
- * billed to the local subscription, NOT a metered API key).
- * Falls back to direct Anthropic SDK only if ANTHROPIC_API_KEY is set
- * (standalone use outside Claude Code).
+ * 지수 백오프(500ms → 1500ms …). 테스트는 MEMORY_BANK_LLM_RETRY_BASE_MS=0 으로 즉시.
+ * base 와 결과 모두 상한을 둔다 — 오타 하나(예: 500000)로 워커가 사실상 정지하는
+ * 것을 막기 위해서다 (Codex 리뷰 MEDIUM 2026-07-17).
  */
-export async function callHaiku(systemPrompt, userMessage, maxTokens = 2048) {
+const MAX_BACKOFF_BASE_MS = 5_000;
+const MAX_BACKOFF_MS = 30_000;
+function backoffMs(attempt) {
+    const raw = process.env.MEMORY_BANK_LLM_RETRY_BASE_MS;
+    const parsed = raw != null && /^\d+$/.test(raw.trim()) ? parseInt(raw.trim(), 10) : 500;
+    const base = Math.min(parsed, MAX_BACKOFF_BASE_MS);
+    return Math.min(base * Math.pow(3, attempt), MAX_BACKOFF_MS);
+}
+const sleep = (ms) => (ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve());
+/** 단발 호출 — Agent SDK 우선, 실패 시(그리고 키가 있을 때만) Anthropic SDK 폴백. */
+async function callOnce(systemPrompt, userMessage, maxTokens) {
     const model = process.env.MEMORY_BANK_FACT_MODEL || 'haiku';
     // Try Claude Agent SDK first (works inside Claude Code without API key)
     try {
@@ -139,13 +156,16 @@ export async function callHaiku(systemPrompt, userMessage, maxTokens = 2048) {
                 return message.result || '';
             }
         }
+        // 스트림이 result 메시지 없이 끝남 — 호출 실패이지 "빈 답변"이 아니다.
         return '';
     }
     catch (agentSdkError) {
         // Fallback to direct Anthropic SDK if agent SDK fails (standalone mode)
         const apiKey = process.env.ANTHROPIC_API_KEY || process.env.MEMORY_BANK_API_TOKEN;
         if (!apiKey) {
-            throw new Error(`LLM call failed: ${agentSdkError instanceof Error ? agentSdkError.message : agentSdkError}`);
+            // 키 없음 = 폴백 불가. 원인 에러를 그대로 전파해야 분류기가 transient/deterministic
+            // 을 읽을 수 있다 (문자열로 감싸면 status 등 구조가 소실된다).
+            throw agentSdkError;
         }
         const { default: Anthropic } = await import('@anthropic-ai/sdk');
         const baseURL = process.env.MEMORY_BANK_API_BASE_URL;
@@ -159,6 +179,49 @@ export async function callHaiku(systemPrompt, userMessage, maxTokens = 2048) {
         const textBlock = response.content.find((b) => b.type === 'text');
         return textBlock?.text || '';
     }
+}
+/**
+ * Call Haiku via Claude Agent SDK (no API key needed inside Claude Code —
+ * billed to the local subscription, NOT a metered API key).
+ * Falls back to direct Anthropic SDK only if ANTHROPIC_API_KEY is set
+ * (standalone use outside Claude Code).
+ *
+ * 복구 계약 (2026-07-17 — 사용자 피드백 "에러나거나 0바이트인데 재시도·복구가 없다"):
+ *  - **빈 응답('')도 실패**다. 모든 호출자가 JSON 을 요구하므로 빈 본문은 유효한 답이
+ *    될 수 없는데, 예전엔 '' 를 반환해 호출자가 "정상적으로 아무것도 없음"으로 소비했다
+ *    (consolidator 는 verdict 'none' 으로 확정+예산 소모, fact-extractor 는 배치를 조용히
+ *    버리고 세션을 extraction_log 에 완료 기록 → 그 대화의 fact 영구 손실).
+ *  - transient(빈 응답·429/5xx/네트워크/타임아웃)와 unknown 은 **유한 재시도**(기본 2회,
+ *    지수 백오프)로 일회성 flake 를 흡수한다. 같은 파일 계열의 임베딩 경로는 이미
+ *    probe+재시도로 flake 를 흡수하고 있었고(ontology-classifier), LLM 경로만 없었다.
+ *  - deterministic(400/413/max_tokens 등 이 요청 자체가 잘못됨)은 **재시도하지 않는다** —
+ *    같은 입력은 같은 결과이고 재시도는 예산 낭비다.
+ *  - 재시도를 소진하면 '' 가 아니라 **throw** 한다. 그래야 호출자의 3분류(transient 는
+ *    보류·재시도, deterministic 은 attempt 소모)가 비로소 작동한다 (fail-loud).
+ * 호출자 계약: 성공 반환값은 **비어있지 않음이 보장**된다.
+ */
+export async function callHaiku(systemPrompt, userMessage, maxTokens = 2048) {
+    const retries = retryBudget();
+    let lastError;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            const text = await callOnce(systemPrompt, userMessage, maxTokens);
+            if (text && text.trim() !== '')
+                return text;
+            lastError = new EmptyLlmResponseError(`LLM returned an empty response (attempt ${attempt + 1}/${retries + 1})`);
+        }
+        catch (error) {
+            lastError = error;
+            // 이 요청 자체가 잘못된 경우는 재시도해도 동일 — 즉시 표면화.
+            if (classifyLlmError(error) === 'deterministic')
+                throw error;
+        }
+        if (attempt < retries) {
+            console.error(`callHaiku: attempt ${attempt + 1}/${retries + 1} failed (${lastError instanceof Error ? lastError.message : lastError}) — retrying`);
+            await sleep(backoffMs(attempt));
+        }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 export function parseJsonResponse(text) {
     const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/)

@@ -267,8 +267,15 @@ describe('consolidateAllPending', () => {
     let cursor: { createdAt: string; id: string } | null = null;
     for (let r = 0; r < 4; r++) cursor = (await consolidateAllPending(db, cursor)).cursor;
 
-    const bad = db.prepare("SELECT consolidation_attempts FROM facts WHERE fact = 'oversized driver'").get() as { consolidation_attempts: number };
-    expect(bad.consolidation_attempts).toBeGreaterThanOrEqual(3);
+    // 두 fact 는 같은 밀리초에 생성돼 created_at 이 동일하고, 커서 tiebreak 은
+    // randomUUID 인 id 다 — 어느 쪽이 driver 가 되는지가 실행마다 달라진다.
+    // 그래서 특정 fact 를 지목하면 flaky 하다(실측: 동일 트리에서 1/3 실패).
+    // 주장은 그대로 두고("deterministic 거절은 MAX 후 skip, wedge 없음") 어느
+    // fact 가 driver 였는지에 의존하지 않게만 바꾼다.
+    const maxAttempts = (db.prepare(
+      "SELECT MAX(consolidation_attempts) AS m FROM facts WHERE fact IN ('oversized driver', 'oversized sibling')"
+    ).get() as { m: number }).m;
+    expect(maxAttempts).toBeGreaterThanOrEqual(3); // MAX 까지 burn 되고 skip 됨
     expect(cursor).not.toBeNull(); // advanced past the un-processable fact
   });
 

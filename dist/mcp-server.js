@@ -23643,6 +23643,35 @@ function initDatabase() {
       saved INTEGER NOT NULL DEFAULT 0
     )
   `);
+  {
+    const cols = db.prepare(`SELECT name FROM pragma_table_info('extraction_log')`).all();
+    if (!cols.some((c) => c.name === "dropped_batches")) {
+      try {
+        db.prepare("ALTER TABLE extraction_log ADD COLUMN dropped_batches INTEGER NOT NULL DEFAULT 0").run();
+      } catch (e) {
+        const msg = e?.message ?? "";
+        if (/duplicate column name/i.test(msg)) {
+        } else if (/database is locked|database table is locked|SQLITE_BUSY/i.test(msg)) {
+          console.error("[db] extraction_log.dropped_batches \uB9C8\uC774\uADF8\uB808\uC774\uC158 \uC9C0\uC5F0 \u2014 \uB77D \uACBD\uD569, \uB2E4\uC74C \uCD08\uAE30\uD654\uC5D0\uC11C \uC7AC\uC2DC\uB3C4");
+        } else {
+          throw e;
+        }
+      }
+    }
+    if (!cols.some((c) => c.name === "claim_owner")) {
+      try {
+        db.prepare("ALTER TABLE extraction_log ADD COLUMN claim_owner TEXT").run();
+      } catch (e) {
+        const msg = e?.message ?? "";
+        if (/duplicate column name/i.test(msg)) {
+        } else if (/database is locked|database table is locked|SQLITE_BUSY/i.test(msg)) {
+          console.error("[db] extraction_log.claim_owner \uB9C8\uC774\uADF8\uB808\uC774\uC158 \uC9C0\uC5F0 \u2014 \uB77D \uACBD\uD569, \uB2E4\uC74C \uCD08\uAE30\uD654\uC5D0\uC11C \uC7AC\uC2DC\uB3C4");
+        } else {
+          throw e;
+        }
+      }
+    }
+  }
   autoHealScopeProjects(db);
   return db;
 }
@@ -26224,6 +26253,59 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import fs8 from "node:fs";
 import path7 from "node:path";
 import os2 from "node:os";
+
+// src/llm-error-class.ts
+function extractStatus(x2) {
+  const o = x2;
+  for (const c of [o?.status, o?.statusCode, o?.response?.status, o?.response?.statusCode]) {
+    if (typeof c === "number") return c;
+  }
+  return void 0;
+}
+var LlmCallError = class extends Error {
+  reason;
+  status;
+  constructor(reason) {
+    const r = reason;
+    super(r?.message ?? String(reason));
+    this.name = "LlmCallError";
+    this.reason = reason;
+    this.status = extractStatus(reason);
+  }
+};
+var EmptyLlmResponseError = class extends Error {
+  constructor(detail = "LLM returned an empty response") {
+    super(detail);
+    this.name = "EmptyLlmResponseError";
+  }
+};
+function classifyLlmError(err) {
+  const unwrapped = err instanceof LlmCallError ? err.reason : err;
+  if (unwrapped instanceof EmptyLlmResponseError) return "transient";
+  const e = unwrapped;
+  const byCode = (code) => {
+    if (code === 401 || code === 403 || code === 404) return "transient";
+    if (code === 429 || code >= 500) return "transient";
+    if (code === 400 || code === 413 || code === 422) return "deterministic";
+    return "unknown";
+  };
+  const structured = extractStatus(unwrapped);
+  if (structured !== void 0) return byCode(structured);
+  const m2 = (e?.message ?? String(err)).toLowerCase();
+  const labelled = m2.match(/status(?:\s*code)?\s*[:=]?\s*(\d{3})\b/);
+  if (labelled) return byCode(parseInt(labelled[1], 10));
+  const prefixed = m2.match(/\b(?:api|http|request|response|server)\s+(?:error|failure|code)\s*[:=-]?\s*(\d{3})\b/);
+  if (prefixed) return byCode(parseInt(prefixed[1], 10));
+  if (/too (large|long)|prompt is too long|context length|maximum.*token|max_?tokens|content.*too|invalid[_ ]?request|bad request|unprocessable/.test(m2)) {
+    return "deterministic";
+  }
+  if (/unauthor|forbidden|invalid.*(api.?key|access.?token|credential)|timeout|etimedout|econnreset|econnrefused|enotfound|epipe|socket hang up|network|fetch failed|stream (disconnect|closed|ended|aborted)|premature close|overloaded|temporarily|rate.?limit|too many requests|internal server error|server error|service unavailable|bad gateway|gateway timeout/.test(m2)) {
+    return "transient";
+  }
+  return "unknown";
+}
+
+// src/llm.ts
 var LLM_WORKDIR = path7.join(os2.tmpdir(), LLM_WORKDIR_BASENAME);
 function llmWorkdir() {
   try {
@@ -26292,7 +26374,21 @@ function pruneLlmTranscripts(now = Date.now()) {
   } catch {
   }
 }
-async function callHaiku(systemPrompt, userMessage, maxTokens = 2048) {
+function retryBudget() {
+  const raw = process.env.MEMORY_BANK_LLM_RETRIES;
+  if (raw != null && /^\d+$/.test(raw.trim())) return Math.min(5, parseInt(raw.trim(), 10));
+  return 2;
+}
+var MAX_BACKOFF_BASE_MS = 5e3;
+var MAX_BACKOFF_MS = 3e4;
+function backoffMs(attempt) {
+  const raw = process.env.MEMORY_BANK_LLM_RETRY_BASE_MS;
+  const parsed = raw != null && /^\d+$/.test(raw.trim()) ? parseInt(raw.trim(), 10) : 500;
+  const base = Math.min(parsed, MAX_BACKOFF_BASE_MS);
+  return Math.min(base * Math.pow(3, attempt), MAX_BACKOFF_MS);
+}
+var sleep2 = (ms) => ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve();
+async function callOnce(systemPrompt, userMessage, maxTokens) {
   const model = process.env.MEMORY_BANK_FACT_MODEL || "haiku";
   try {
     for await (const message of query({
@@ -26320,7 +26416,7 @@ ${userMessage}`,
   } catch (agentSdkError) {
     const apiKey = process.env.ANTHROPIC_API_KEY || process.env.MEMORY_BANK_API_TOKEN;
     if (!apiKey) {
-      throw new Error(`LLM call failed: ${agentSdkError instanceof Error ? agentSdkError.message : agentSdkError}`);
+      throw agentSdkError;
     }
     const { default: Anthropic2 } = await Promise.resolve().then(() => (init_sdk(), sdk_exports));
     const baseURL = process.env.MEMORY_BANK_API_BASE_URL;
@@ -26334,6 +26430,29 @@ ${userMessage}`,
     const textBlock = response.content.find((b2) => b2.type === "text");
     return textBlock?.text || "";
   }
+}
+async function callHaiku(systemPrompt, userMessage, maxTokens = 2048) {
+  const retries = retryBudget();
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const text = await callOnce(systemPrompt, userMessage, maxTokens);
+      if (text && text.trim() !== "") return text;
+      lastError = new EmptyLlmResponseError(
+        `LLM returned an empty response (attempt ${attempt + 1}/${retries + 1})`
+      );
+    } catch (error2) {
+      lastError = error2;
+      if (classifyLlmError(error2) === "deterministic") throw error2;
+    }
+    if (attempt < retries) {
+      console.error(
+        `callHaiku: attempt ${attempt + 1}/${retries + 1} failed (${lastError instanceof Error ? lastError.message : lastError}) \u2014 retrying`
+      );
+      await sleep2(backoffMs(attempt));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 function parseJsonResponse(text) {
   const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/(\[[\s\S]*\])/) || text.match(/(\{[\s\S]*\})/);
@@ -26425,11 +26544,22 @@ async function askAvatar(db, question, project) {
     "Past decisions and knowledge:",
     ...factContextLines
   ].join("\n");
-  const response = await callHaiku(AVATAR_SYSTEM_PROMPT, prompt, 1024);
+  let response;
+  try {
+    response = await callHaiku(AVATAR_SYSTEM_PROMPT, prompt, 1024);
+  } catch (error2) {
+    console.error("ask_avatar: LLM call failed after retries:", error2);
+    return {
+      answer: `\u26A0\uFE0F LLM \uD638\uCD9C\uC774 \uC7AC\uC2DC\uB3C4 \uD6C4\uC5D0\uB3C4 \uC2E4\uD328\uD574 \uB2F5\uBCC0\uC744 \uC0DD\uC131\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4 (${classifyLlmError(error2)}). \uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694.`,
+      sources: [],
+      confidence: 0,
+      relatedDecisions
+    };
+  }
   const parsed = parseJsonResponse(response);
   if (!parsed) {
     return {
-      answer: response || "\uC751\uB2F5\uC744 \uC0DD\uC131\uD560 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.",
+      answer: response,
       sources: [],
       confidence: 0,
       relatedDecisions

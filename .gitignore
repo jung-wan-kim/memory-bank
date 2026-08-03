@@ -16,3 +16,5 @@ supabase/.temp/
 ui/relations/data.json
 galaxy-*.png
 /tmp/mbgalaxy-server.log
+.codex-review-output
+.codex-review-passed

@@ -24,6 +24,6 @@ a6ac138	tests	207	keep	formatKnowledgeContext 테스트 - 도메인/카테고리
 7f9eec7	tests	210	keep	fact-extractor 테스트 보강 - 빈 배열, 단일 교환, 특수 문자
 0d8bdb4	tests	212	keep	consolidator 방어 로직 테스트 - 빈 merged_fact 폴백
 1a819e7	tests	218	keep	parseJsonResponse 테스트 보강 - 빈 문자열, null, 배열 우선순위
-f4ddb23	cloud-port	-	skip	cloud E4(행-텍스트 캐시)/E5(indexOf 카운트) 대응 경로 부재 — JS측 부분문자열 채점 풀스캔 0건(grep), 스캔은 SQL(FTS5 BM25+sqlite-vec)측
-f4ddb23	cloud-port	-	skip	cloud E8(snippet 지연) 이미 적용됨 — search.ts 최종 map(반환 행 ≤limit)에서만 snippet 계산
+f4ddb23	sibling-port	-	skip	별개 프로젝트 E4(행-텍스트 캐시)/E5(indexOf 카운트) 대응 경로 부재 — JS측 부분문자열 채점 풀스캔 0건(grep), 스캔은 SQL(FTS5 BM25+sqlite-vec)측
+f4ddb23	sibling-port	-	skip	별개 프로젝트 E8(snippet 지연) 이미 적용됨 — search.ts 최종 map(반환 행 ≤limit)에서만 snippet 계산
 f4ddb23	profile	26ms/search	locked	JS측 수렴 — V8 프로파일(180 searches): onnx 임베딩 41%(모델 잠금) + SQLite native .all() 37%(recall-결합, 자체 recall-게이트 루프 소관) + JS 10.9%(단독 핫스팟 없음, stmt 재-prepare <2% 노이즈 미만)

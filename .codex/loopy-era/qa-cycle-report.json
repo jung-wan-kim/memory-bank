@@ -9,8 +9,8 @@
       "command": "npm run build",
       "status": "pass",
       "returncode": 0,
-      "stdout_tail": "> tsc && npm run bundle && npm run bundle:cloud\n\n\n> memory-bank@1.1.0 bundle\n> esbuild src/mcp-server.ts --bundle --platform=node --format=esm --outfile=dist/mcp-server.js --external:fsevents --external:@anthropic-ai/claude-agent-sdk --external:sharp --external:onnxruntime-node --external:better-sqlite3 --external:@xenova/transformers --external:sqlite-vec\n\n\n> memory-bank@1.1.0 bundle:cloud\n> esbuild src/memory-bank-cloud-server.ts --bundle --platform=node --format=esm --outfile=dist/memory-bank-cloud-server.js\n",
-      "stderr_tail": "\n  dist/mcp-server.js  925.4kb\n\n⚡ Done in 22ms\n\n  dist/memory-bank-cloud-server.js  660.1kb\n\n⚡ Done in 14ms",
+      "stdout_tail": "> tsc && npm run bundle && npm run bundle:[removed]\n\n\n> memory-bank@1.1.0 bundle\n> esbuild src/mcp-server.ts --bundle --platform=node --format=esm --outfile=dist/mcp-server.js --external:fsevents --external:@anthropic-ai/claude-agent-sdk --external:sharp --external:onnxruntime-node --external:better-sqlite3 --external:@xenova/transformers --external:sqlite-vec\n\n\n> memory-bank@1.1.0 bundle:[removed]\n> esbuild src/[removed]-server.ts --bundle --platform=node --format=esm --outfile=dist/[removed]-server.js\n",
+      "stderr_tail": "\n  dist/mcp-server.js  925.4kb\n\n⚡ Done in 22ms\n\n  dist/[removed]-server.js  660.1kb\n\n⚡ Done in 14ms",
       "label": "build",
       "phase": "build"
     },
@@ -902,8 +902,8 @@
           "command": "npm run build",
           "status": "pass",
           "returncode": 0,
-          "stdout_tail": "> tsc && npm run bundle && npm run bundle:cloud\n\n\n> memory-bank@1.1.0 bundle\n> esbuild src/mcp-server.ts --bundle --platform=node --format=esm --outfile=dist/mcp-server.js --external:fsevents --external:@anthropic-ai/claude-agent-sdk --external:sharp --external:onnxruntime-node --external:better-sqlite3 --external:@xenova/transformers --external:sqlite-vec\n\n\n> memory-bank@1.1.0 bundle:cloud\n> esbuild src/memory-bank-cloud-server.ts --bundle --platform=node --format=esm --outfile=dist/memory-bank-cloud-server.js\n",
-          "stderr_tail": "\n  dist/mcp-server.js  925.4kb\n\n⚡ Done in 22ms\n\n  dist/memory-bank-cloud-server.js  660.1kb\n\n⚡ Done in 14ms",
+          "stdout_tail": "> tsc && npm run bundle && npm run bundle:[removed]\n\n\n> memory-bank@1.1.0 bundle\n> esbuild src/mcp-server.ts --bundle --platform=node --format=esm --outfile=dist/mcp-server.js --external:fsevents --external:@anthropic-ai/claude-agent-sdk --external:sharp --external:onnxruntime-node --external:better-sqlite3 --external:@xenova/transformers --external:sqlite-vec\n\n\n> memory-bank@1.1.0 bundle:[removed]\n> esbuild src/[removed]-server.ts --bundle --platform=node --format=esm --outfile=dist/[removed]-server.js\n",
+          "stderr_tail": "\n  dist/mcp-server.js  925.4kb\n\n⚡ Done in 22ms\n\n  dist/[removed]-server.js  660.1kb\n\n⚡ Done in 14ms",
           "label": "build",
           "phase": "build"
         },
