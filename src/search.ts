@@ -54,6 +54,7 @@ export interface SearchOptions {
   after?: string;  // ISO date string
   before?: string; // ISO date string
   coding_agent?: string; // Filter by coding agent (e.g., 'claude-code', 'codex', 'opencode')
+  project?: string;
 }
 
 interface ExchangeRow {
@@ -85,7 +86,7 @@ export async function searchConversations(
   query: string,
   options: SearchOptions = {}
 ): Promise<SearchResult[]> {
-  const { limit = 10, mode = 'both', after, before, coding_agent } = options;
+  const { limit = 10, mode = 'both', after, before, coding_agent, project } = options;
 
   // Validate date parameters
   if (after) validateISODate(after, '--after');
@@ -109,6 +110,14 @@ export async function searchConversations(
     if (coding_agent) {
       filterParts.push(`e.coding_agent = ?`);
       filterParams.push(coding_agent);
+    }
+    if (project) {
+      const escapedProject = project
+        .replace(/\\/g, '\\\\')
+        .replace(/%/g, '\\%')
+        .replace(/_/g, '\\_');
+      filterParts.push("e.project LIKE ? ESCAPE '\\'");
+      filterParams.push(`%${escapedProject}%`);
     }
     const timeClause = filterParts.length > 0 ? `AND ${filterParts.join(' AND ')}` : '';
     const timeParams = filterParams;

@@ -7,6 +7,7 @@ export interface SearchOptions {
     after?: string;
     before?: string;
     coding_agent?: string;
+    project?: string;
 }
 export declare function searchConversations(query: string, options?: SearchOptions): Promise<SearchResult[]>;
 export declare function formatResults(results: Array<SearchResult & {

@@ -1,68 +1,24 @@
 import { searchConversations, formatResults, searchMultipleConcepts, formatMultiConceptResults } from './search.js';
+import { parseSearchArgs, SearchArgError, SEARCH_HELP_TEXT } from './search-args.js';
 const args = process.argv.slice(2);
-// Parse arguments
-let mode = 'both';
-let after;
-let before;
-let limit = 10;
-const queries = [];
-for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--help' || arg === '-h') {
-        console.log(`
-Usage: memory-bank search [OPTIONS] <query>
-
-Search indexed conversations using semantic similarity or exact text matching.
-
-MODES:
-  (default)      Combined vector + text search
-  --vector       Vector similarity only (semantic)
-  --text         Exact string matching only (for git SHAs, error codes)
-
-OPTIONS:
-  --after DATE   Only conversations after YYYY-MM-DD
-  --before DATE  Only conversations before YYYY-MM-DD
-  --limit N      Max results (default: 10)
-  --help, -h     Show this help
-
-EXAMPLES:
-  # Semantic search
-  memory-bank search "React Router authentication errors"
-
-  # Find exact string
-  memory-bank search --text "a1b2c3d4e5f6"
-
-  # Time filtering
-  memory-bank search --after 2025-09-01 "refactoring"
-
-  # Combine modes
-  memory-bank search --both "React Router data loading"
-
-  # Multi-concept search (AND - all concepts must match)
-  memory-bank search "React Router" "authentication" "JWT"
-`);
-        process.exit(0);
+const parsed = (() => {
+    try {
+        return parseSearchArgs(args);
     }
-    else if (arg === '--vector') {
-        mode = 'vector';
+    catch (error) {
+        if (error instanceof SearchArgError) {
+            console.error(error.message);
+            console.error('Try: memory-bank search --help');
+            process.exit(2);
+        }
+        throw error;
     }
-    else if (arg === '--text') {
-        mode = 'text';
-    }
-    else if (arg === '--after') {
-        after = args[++i];
-    }
-    else if (arg === '--before') {
-        before = args[++i];
-    }
-    else if (arg === '--limit') {
-        limit = parseInt(args[++i]);
-    }
-    else {
-        // All non-flag args are query terms
-        queries.push(arg);
-    }
+})();
+if (parsed.help) {
+    console.log(SEARCH_HELP_TEXT);
+    process.exit(0);
 }
+const { mode, after, before, limit, project, queries } = parsed;
 if (queries.length === 0) {
     console.error('Usage: memory-bank search [OPTIONS] <query> [query2] [query3]...');
     console.error('Try: memory-bank search --help');
@@ -70,7 +26,7 @@ if (queries.length === 0) {
 }
 // Multi-concept search if multiple queries provided
 if (queries.length > 1) {
-    const options = { limit, after, before };
+    const options = { limit, after, before, project };
     searchMultipleConcepts(queries, options)
         .then(async (results) => {
         console.log(await formatMultiConceptResults(results, queries));
@@ -86,7 +42,8 @@ else {
         mode,
         limit,
         after,
-        before
+        before,
+        project
     };
     searchConversations(queries[0], options)
         .then(async (results) => {
