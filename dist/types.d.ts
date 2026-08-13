@@ -30,7 +30,18 @@ export interface ConversationExchange {
 }
 export interface SearchResult {
     exchange: ConversationExchange;
-    similarity: number;
+    /**
+     * Backward-compatible aggregate score for vector-backed rows. Literal text
+     * search does not currently calculate a comparable ranked score, so those
+     * rows return null instead of the former synthetic 1.0 placeholder.
+     */
+    similarity: number | null;
+    /** Which retrieval surface(s) produced this row. */
+    matchSource: 'text' | 'vector' | 'both';
+    /** Literal-search score, or null when the text backend is unranked. */
+    textScore: number | null;
+    /** Semantic vector similarity, or null when no vector matched this row. */
+    vectorScore: number | null;
     snippet: string;
 }
 export interface MultiConceptResult {

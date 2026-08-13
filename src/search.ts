@@ -69,6 +69,16 @@ interface ExchangeRow {
   coding_agent: string | null;
 }
 
+interface ResultProvenance {
+  text: boolean;
+  vector: boolean;
+  // The current text backends (FTS and LIKE) return an ordered match set but
+  // no stable, cross-backend numeric score. Keep that absence explicit rather
+  // than reusing distance=0 as a fake 100% similarity.
+  textScore: number | null;
+  vectorScore: number | null;
+}
+
 function validateISODate(dateStr: string, paramName: string): void {
   const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
   if (!isoDateRegex.test(dateStr)) {
@@ -93,6 +103,7 @@ export async function searchConversations(
 
   const db = getSearchDb();
   let results: ExchangeRow[] = [];
+  const provenanceById = new Map<string, ResultProvenance>();
 
   {
     // Build filter clauses with parameterized queries
@@ -166,6 +177,15 @@ export async function searchConversations(
         if (fresh === vecDtype) throw e;
         vecDtype = fresh;
         results = vecQuery(vecDtype);
+      }
+      for (const row of results) {
+        provenanceById.set(row.id, {
+          text: false,
+          vector: true,
+          textScore: null,
+          // Preserve the existing searchConversations similarity contract.
+          vectorScore: 1 - row.distance,
+        });
       }
     }
 
@@ -433,12 +453,31 @@ export async function searchConversations(
         // Merge and deduplicate by ID
         const seenIds = new Set(results.map(r => r.id));
         for (const textResult of textResults) {
-          if (!seenIds.has(textResult.id)) {
+          const existing = provenanceById.get(textResult.id);
+          if (existing) {
+            existing.text = true;
+            existing.textScore = null;
+          } else if (!seenIds.has(textResult.id)) {
             results.push(textResult);
+            seenIds.add(textResult.id);
+            provenanceById.set(textResult.id, {
+              text: true,
+              vector: false,
+              textScore: null,
+              vectorScore: null,
+            });
           }
         }
       } else {
         results = textResults;
+        for (const row of textResults) {
+          provenanceById.set(row.id, {
+            text: true,
+            vector: false,
+            textScore: null,
+            vectorScore: null,
+          });
+        }
       }
     }
   }
@@ -467,9 +506,27 @@ export async function searchConversations(
     const snippetText = exchange.userMessage.substring(0, 200).replace(/\s+/g, ' ').trim();
     const snippet = snippetText + (exchange.userMessage.length > 200 ? '...' : '');
 
+    const provenance = provenanceById.get(row.id) ?? {
+      text: mode === 'text',
+      vector: mode !== 'text',
+      textScore: null,
+      vectorScore: mode === 'text' ? null : 1 - row.distance,
+    };
+    const matchSource = provenance.text && provenance.vector
+      ? 'both'
+      : provenance.text
+        ? 'text'
+        : 'vector';
+
     return {
       exchange,
-      similarity: mode === 'text' ? undefined : 1 - row.distance,
+      // Keep the legacy field for vector-backed rows. Text-only rows used to
+      // become 1.0 in `both` mode solely because SQL supplied distance=0;
+      // returning null makes the absence of a comparable score explicit.
+      similarity: provenance.vectorScore,
+      matchSource,
+      textScore: provenance.textScore,
+      vectorScore: provenance.vectorScore,
       snippet,
       summary
     } as SearchResult & { summary?: string };
@@ -548,14 +605,24 @@ export async function formatResults(results: Array<SearchResult & { summary?: st
   for (let index = 0; index < results.length; index++) {
     const result = results[index];
     const date = new Date(result.exchange.timestamp).toISOString().split('T')[0];
-    const simPct = result.similarity !== undefined ? Math.round(result.similarity * 100) : null;
+    const vectorPct = result.vectorScore !== null && result.vectorScore !== undefined
+      ? Math.round(result.vectorScore * 100)
+      : null;
 
     // Header with match percentage and coding agent
     const agent = result.exchange.codingAgent || 'claude-code';
     const agentTag = agent !== 'claude-code' ? ` @${agent}` : '';
     output += `${index + 1}. [${result.exchange.project}, ${date}${agentTag}]`;
-    if (simPct !== null) {
-      output += ` - ${simPct}% match`;
+    if (result.matchSource === 'both') {
+      output += vectorPct === null
+        ? ' - vector + text match'
+        : ` - ${vectorPct}% vector + text match`;
+    } else if (result.matchSource === 'text') {
+      output += result.textScore === null
+        ? ' - text match (score unavailable)'
+        : ` - ${Math.round(result.textScore * 100)}% text match`;
+    } else if (vectorPct !== null) {
+      output += ` - ${vectorPct}% vector match`;
     }
     output += '\n';
 
@@ -589,6 +656,22 @@ export async function formatResults(results: Array<SearchResult & { summary?: st
   }
 
   return output;
+}
+
+/**
+ * Stable JSON projection shared by the MCP response path and tests. Keeping
+ * provenance in this projection prevents the transport layer from silently
+ * dropping fields that searchConversations correctly computed.
+ */
+export function serializeSearchResult(result: SearchResult) {
+  return {
+    exchange: result.exchange,
+    similarity: result.similarity ?? null,
+    matchSource: result.matchSource,
+    textScore: result.textScore,
+    vectorScore: result.vectorScore,
+    snippet: result.snippet,
+  };
 }
 
 export async function searchMultipleConcepts(
@@ -797,4 +880,3 @@ export async function formatMultiConceptResults(
 
   return output;
 }
-

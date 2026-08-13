@@ -24205,6 +24205,7 @@ async function searchConversations(query2, options = {}) {
   if (before) validateISODate(before, "--before");
   const db = getSearchDb();
   let results = [];
+  const provenanceById = /* @__PURE__ */ new Map();
   {
     const filterParts = [];
     const filterParams = [];
@@ -24263,6 +24264,14 @@ async function searchConversations(query2, options = {}) {
         if (fresh === vecDtype) throw e;
         vecDtype = fresh;
         results = vecQuery(vecDtype);
+      }
+      for (const row of results) {
+        provenanceById.set(row.id, {
+          text: false,
+          vector: true,
+          textScore: null,
+          vectorScore: 1 - row.distance
+        });
       }
     }
     if (mode === "text" || mode === "both") {
@@ -24427,12 +24436,31 @@ async function searchConversations(query2, options = {}) {
       if (mode === "both") {
         const seenIds = new Set(results.map((r) => r.id));
         for (const textResult of textResults) {
-          if (!seenIds.has(textResult.id)) {
+          const existing = provenanceById.get(textResult.id);
+          if (existing) {
+            existing.text = true;
+            existing.textScore = null;
+          } else if (!seenIds.has(textResult.id)) {
             results.push(textResult);
+            seenIds.add(textResult.id);
+            provenanceById.set(textResult.id, {
+              text: true,
+              vector: false,
+              textScore: null,
+              vectorScore: null
+            });
           }
         }
       } else {
         results = textResults;
+        for (const row of textResults) {
+          provenanceById.set(row.id, {
+            text: true,
+            vector: false,
+            textScore: null,
+            vectorScore: null
+          });
+        }
       }
     }
   }
@@ -24456,9 +24484,19 @@ async function searchConversations(query2, options = {}) {
     }
     const snippetText = exchange.userMessage.substring(0, 200).replace(/\s+/g, " ").trim();
     const snippet = snippetText + (exchange.userMessage.length > 200 ? "..." : "");
+    const provenance = provenanceById.get(row.id) ?? {
+      text: mode === "text",
+      vector: mode !== "text",
+      textScore: null,
+      vectorScore: mode === "text" ? null : 1 - row.distance
+    };
+    const matchSource = provenance.text && provenance.vector ? "both" : provenance.text ? "text" : "vector";
     return {
       exchange,
-      similarity: mode === "text" ? void 0 : 1 - row.distance,
+      similarity: provenance.vectorScore,
+      matchSource,
+      textScore: provenance.textScore,
+      vectorScore: provenance.vectorScore,
       snippet,
       summary
     };
@@ -24519,12 +24557,16 @@ async function formatResults(results) {
   for (let index = 0; index < results.length; index++) {
     const result = results[index];
     const date3 = new Date(result.exchange.timestamp).toISOString().split("T")[0];
-    const simPct = result.similarity !== void 0 ? Math.round(result.similarity * 100) : null;
+    const vectorPct = result.vectorScore !== null && result.vectorScore !== void 0 ? Math.round(result.vectorScore * 100) : null;
     const agent = result.exchange.codingAgent || "claude-code";
     const agentTag = agent !== "claude-code" ? ` @${agent}` : "";
     output += `${index + 1}. [${result.exchange.project}, ${date3}${agentTag}]`;
-    if (simPct !== null) {
-      output += ` - ${simPct}% match`;
+    if (result.matchSource === "both") {
+      output += vectorPct === null ? " - vector + text match" : ` - ${vectorPct}% vector + text match`;
+    } else if (result.matchSource === "text") {
+      output += result.textScore === null ? " - text match (score unavailable)" : ` - ${Math.round(result.textScore * 100)}% text match`;
+    } else if (vectorPct !== null) {
+      output += ` - ${vectorPct}% vector match`;
     }
     output += "\n";
     if (result.summary && result.summary.length < 300) {
@@ -24550,6 +24592,16 @@ async function formatResults(results) {
 `;
   }
   return output;
+}
+function serializeSearchResult(result) {
+  return {
+    exchange: result.exchange,
+    similarity: result.similarity ?? null,
+    matchSource: result.matchSource,
+    textScore: result.textScore,
+    vectorScore: result.vectorScore,
+    snippet: result.snippet
+  };
 }
 async function searchMultipleConcepts(concepts, options = {}) {
   const { limit = 10 } = options;
@@ -27091,11 +27143,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (params.response_format === "json") {
           resultText = JSON.stringify(
             {
-              results: results.map((r) => ({
-                exchange: r.exchange,
-                similarity: r.similarity,
-                snippet: r.snippet
-              })),
+              results: results.map(serializeSearchResult),
               count: results.length,
               mode: params.mode
             },

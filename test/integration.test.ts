@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { initDatabase } from '../src/db.js';
-import { searchConversations } from '../src/search.js';
+import { initDatabase, insertExchange } from '../src/db.js';
+import { searchConversations, formatResults } from '../src/search.js';
+import { generateExchangeEmbedding } from '../src/embeddings.js';
+import type { ConversationExchange } from '../src/types.js';
 import { parseConversationFile } from '../src/parser.js';
 import { createTestDb, getFixturePath } from './test-utils.js';
 import { indexTestFiles } from './test-indexer.js';
@@ -199,6 +201,87 @@ describe('Integration Tests', () => {
       const uniqueIds = new Set(ids);
 
       expect(ids.length).toBe(uniqueIds.size); // No duplicates
+    });
+
+    it('should preserve row-level text/vector provenance without a fake 100% text score', async () => {
+      const query = 'provenancealpha';
+      const exchanges: ConversationExchange[] = [
+        {
+          id: 'provenance-both',
+          project: 'provenance-fixture',
+          timestamp: '2026-08-13T00:00:01.000Z',
+          userMessage: `${query} exact match with a vector`,
+          assistantMessage: 'Both retrieval surfaces should find this exchange.',
+          archivePath: path.join(path.dirname(testDbPath), 'provenance-both.jsonl'),
+          lineStart: 1,
+          lineEnd: 2,
+        },
+        {
+          id: 'provenance-text-only',
+          project: 'provenance-fixture',
+          timestamp: '2026-08-13T00:00:02.000Z',
+          userMessage: `${query} exact match without a stored vector`,
+          assistantMessage: 'Only literal retrieval should find this exchange.',
+          archivePath: path.join(path.dirname(testDbPath), 'provenance-text-only.jsonl'),
+          lineStart: 1,
+          lineEnd: 2,
+        },
+        {
+          id: 'provenance-vector-only',
+          project: 'provenance-fixture',
+          timestamp: '2026-08-13T00:00:03.000Z',
+          userMessage: 'semantic retrieval origin metadata',
+          assistantMessage: 'This row deliberately omits the literal query token.',
+          archivePath: path.join(path.dirname(testDbPath), 'provenance-vector-only.jsonl'),
+          lineStart: 1,
+          lineEnd: 2,
+        },
+      ];
+
+      const db = initDatabase();
+      for (const exchange of exchanges) {
+        const embedding = await generateExchangeEmbedding(
+          exchange.userMessage,
+          exchange.assistantMessage
+        );
+        insertExchange(db, exchange, embedding);
+      }
+      db.prepare('DELETE FROM vec_exchanges WHERE id = ?').run('provenance-text-only');
+      db.close();
+
+      const results = await searchConversations(query, { mode: 'both', limit: 1000 });
+      const byId = new Map(
+        results
+          .filter((result) => result.exchange.id.startsWith('provenance-'))
+          .map((result) => [result.exchange.id, result])
+      );
+
+      expect([...byId.keys()].sort()).toEqual([
+        'provenance-both',
+        'provenance-text-only',
+        'provenance-vector-only',
+      ]);
+
+      const both = byId.get('provenance-both')!;
+      expect(both.matchSource).toBe('both');
+      expect(both.textScore).toBeNull();
+      expect(both.vectorScore).toBe(both.similarity);
+
+      const textOnly = byId.get('provenance-text-only')!;
+      expect(textOnly.matchSource).toBe('text');
+      expect(textOnly.textScore).toBeNull();
+      expect(textOnly.vectorScore).toBeNull();
+      expect(textOnly.similarity).toBeNull();
+
+      const vectorOnly = byId.get('provenance-vector-only')!;
+      expect(vectorOnly.matchSource).toBe('vector');
+      expect(vectorOnly.textScore).toBeNull();
+      expect(vectorOnly.vectorScore).toBe(vectorOnly.similarity);
+
+      const formatted = await formatResults([textOnly, both]);
+      expect(formatted).toContain('text match (score unavailable)');
+      expect(formatted).toContain('vector + text match');
+      expect(formatted).not.toContain('100% match');
     });
   });
 
