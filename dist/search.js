@@ -90,7 +90,7 @@ export async function searchConversations(query, options = {}) {
             // dtype-aware: int8 tables need vec_int8()-wrapped quantized query blobs,
             // and their distances come back ×127-scaled (normalized below).
             const vecQuery = (vecDtype) => {
-                const stmt = db.prepare(`
+                const knnStmt = db.prepare(`
           SELECT
             e.id,
             e.project,
@@ -113,7 +113,37 @@ export async function searchConversations(query, options = {}) {
                 // embedding_version filter: old-model vectors are incomparable with the
                 // current-model query embedding — exclude rows the re-embed worker has
                 // not upgraded yet (newest sessions are upgraded first).
-                const rows = stmt.all(embeddingToVecBlob(queryEmbedding, vecDtype), limit, EMBEDDING_VERSION, ...timeParams);
+                const queryBlob = embeddingToVecBlob(queryEmbedding, vecDtype);
+                let rows = knnStmt.all(queryBlob, limit, EMBEDDING_VERSION, ...timeParams);
+                // vec0 chooses its global top-k before joined-table predicates can
+                // discard rows. If any filtered candidate was discarded, k=limit can
+                // therefore return fewer than `limit` even though valid rows exist
+                // outside the global top-k. Preserve the fast KNN path when it fills
+                // the requested page; otherwise rank the already-filtered population
+                // exactly. This is bounded by the filter itself and cannot silently
+                // starve a recent/coding-agent match behind unfiltered neighbours.
+                if (filterParts.length > 0 && rows.length < limit) {
+                    const filteredStmt = db.prepare(`
+            SELECT
+              e.id,
+              e.project,
+              e.timestamp,
+              e.user_message,
+              e.assistant_message,
+              e.archive_path,
+              e.line_start,
+              e.line_end,
+              e.coding_agent,
+              vec_distance_l2(vec.embedding, ${vecParamSql(vecDtype)}) AS distance
+            FROM vec_exchanges AS vec
+            JOIN exchanges AS e ON vec.id = e.id
+            WHERE e.embedding_version = ?
+              ${timeClause}
+            ORDER BY distance ASC
+            LIMIT ?
+          `);
+                    rows = filteredStmt.all(queryBlob, EMBEDDING_VERSION, ...timeParams, limit);
+                }
                 for (const r of rows)
                     r.distance = normalizeVecDistance(r.distance, vecDtype);
                 return rows;
@@ -485,7 +515,7 @@ export async function searchConversations(query, options = {}) {
             exchange,
             // Keep the legacy field for vector-backed rows. Text-only rows used to
             // become 1.0 in `both` mode solely because SQL supplied distance=0;
-            // omitting it makes the absence of a comparable score explicit.
+            // returning null makes the absence of a comparable score explicit.
             similarity: provenance.vectorScore,
             matchSource,
             textScore: provenance.textScore,

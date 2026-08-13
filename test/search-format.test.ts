@@ -43,6 +43,18 @@ describe('search formatting', () => {
     expect(bundle.includes('similarity: provenance.vectorScore')).toBe(true);
   });
 
+  it('should keep the filter-starvation fallback in source and shipped bundles', () => {
+    const source = fs.readFileSync('src/search.ts', 'utf-8');
+    const distSearch = fs.readFileSync('dist/search.js', 'utf-8');
+    const bundle = fs.readFileSync('dist/mcp-server.js', 'utf-8');
+
+    for (const artifact of [source, distSearch, bundle]) {
+      expect(artifact).toContain('if (filterParts.length > 0 && rows.length < limit)');
+      expect(artifact).toContain('vec_distance_l2(vec.embedding');
+      expect(artifact).toContain('ORDER BY distance ASC');
+    }
+  });
+
   describe('formatKnowledgeContext', () => {
     it('should return empty string for no facts', () => {
       expect(formatKnowledgeContext({ facts: [] })).toBe('');

@@ -24227,7 +24227,7 @@ async function searchConversations(query2, options = {}) {
       await initEmbeddings();
       const queryEmbedding = await generateEmbedding(query2, "query");
       const vecQuery = (vecDtype2) => {
-        const stmt = db.prepare(`
+        const knnStmt = db.prepare(`
           SELECT
             e.id,
             e.project,
@@ -24247,12 +24247,40 @@ async function searchConversations(query2, options = {}) {
             ${timeClause}
           ORDER BY vec.distance ASC
         `);
-        const rows = stmt.all(
-          embeddingToVecBlob(queryEmbedding, vecDtype2),
+        const queryBlob = embeddingToVecBlob(queryEmbedding, vecDtype2);
+        let rows = knnStmt.all(
+          queryBlob,
           limit,
           EMBEDDING_VERSION,
           ...timeParams
         );
+        if (filterParts.length > 0 && rows.length < limit) {
+          const filteredStmt = db.prepare(`
+            SELECT
+              e.id,
+              e.project,
+              e.timestamp,
+              e.user_message,
+              e.assistant_message,
+              e.archive_path,
+              e.line_start,
+              e.line_end,
+              e.coding_agent,
+              vec_distance_l2(vec.embedding, ${vecParamSql(vecDtype2)}) AS distance
+            FROM vec_exchanges AS vec
+            JOIN exchanges AS e ON vec.id = e.id
+            WHERE e.embedding_version = ?
+              ${timeClause}
+            ORDER BY distance ASC
+            LIMIT ?
+          `);
+          rows = filteredStmt.all(
+            queryBlob,
+            EMBEDDING_VERSION,
+            ...timeParams,
+            limit
+          );
+        }
         for (const r of rows) r.distance = normalizeVecDistance(r.distance, vecDtype2);
         return rows;
       };

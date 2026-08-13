@@ -132,7 +132,7 @@ export async function searchConversations(
       // dtype-aware: int8 tables need vec_int8()-wrapped quantized query blobs,
       // and their distances come back ×127-scaled (normalized below).
       const vecQuery = (vecDtype: 'float32' | 'int8'): ExchangeRow[] => {
-        const stmt = db.prepare(`
+        const knnStmt = db.prepare(`
           SELECT
             e.id,
             e.project,
@@ -156,12 +156,48 @@ export async function searchConversations(
         // embedding_version filter: old-model vectors are incomparable with the
         // current-model query embedding — exclude rows the re-embed worker has
         // not upgraded yet (newest sessions are upgraded first).
-        const rows = stmt.all(
-          embeddingToVecBlob(queryEmbedding, vecDtype),
+        const queryBlob = embeddingToVecBlob(queryEmbedding, vecDtype);
+        let rows = knnStmt.all(
+          queryBlob,
           limit,
           EMBEDDING_VERSION,
           ...timeParams
         ) as ExchangeRow[];
+
+        // vec0 chooses its global top-k before joined-table predicates can
+        // discard rows. If any filtered candidate was discarded, k=limit can
+        // therefore return fewer than `limit` even though valid rows exist
+        // outside the global top-k. Preserve the fast KNN path when it fills
+        // the requested page; otherwise rank the already-filtered population
+        // exactly. This is bounded by the filter itself and cannot silently
+        // starve a recent/coding-agent match behind unfiltered neighbours.
+        if (filterParts.length > 0 && rows.length < limit) {
+          const filteredStmt = db.prepare(`
+            SELECT
+              e.id,
+              e.project,
+              e.timestamp,
+              e.user_message,
+              e.assistant_message,
+              e.archive_path,
+              e.line_start,
+              e.line_end,
+              e.coding_agent,
+              vec_distance_l2(vec.embedding, ${vecParamSql(vecDtype)}) AS distance
+            FROM vec_exchanges AS vec
+            JOIN exchanges AS e ON vec.id = e.id
+            WHERE e.embedding_version = ?
+              ${timeClause}
+            ORDER BY distance ASC
+            LIMIT ?
+          `);
+          rows = filteredStmt.all(
+            queryBlob,
+            EMBEDDING_VERSION,
+            ...timeParams,
+            limit
+          ) as ExchangeRow[];
+        }
         for (const r of rows) r.distance = normalizeVecDistance(r.distance, vecDtype);
         return rows;
       };
