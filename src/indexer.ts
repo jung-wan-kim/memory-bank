@@ -193,7 +193,28 @@ export async function indexConversations(
   console.log(`\n✅ Indexing complete! Conversations: ${conversationsProcessed}, Exchanges: ${totalExchanges}`);
 }
 
-export async function indexSession(sessionId: string, concurrency: number = 1, noSummaries: boolean = false): Promise<void> {
+export type IndexSessionResult =
+  | {
+      status: 'indexed';
+      sessionId: string;
+      startedAt: number;
+      sourcePath: string;
+      expectedExchangeCount: number;
+      expectedFrontier: number;
+    }
+  | {
+      status: 'not_found' | 'no_indexable_exchanges';
+      sessionId: string;
+      startedAt: number;
+      sourcePath?: string;
+    };
+
+export async function indexSession(
+  sessionId: string,
+  concurrency: number = 1,
+  noSummaries: boolean = false
+): Promise<IndexSessionResult> {
+  const startedAt = Date.now();
   console.log(`Indexing session: ${sessionId}`);
 
   // Find the conversation file for this session
@@ -201,7 +222,6 @@ export async function indexSession(sessionId: string, concurrency: number = 1, n
   const ARCHIVE_DIR = getArchiveDir(); // Now uses paths.ts
   const projects = fs.readdirSync(PROJECTS_DIR);
   const excludedProjects = getExcludedProjects();
-  let found = false;
 
   for (const project of projects) {
     if (isExcludedProject(project, excludedProjects)) continue;
@@ -212,25 +232,37 @@ export async function indexSession(sessionId: string, concurrency: number = 1, n
     const files = fs.readdirSync(projectPath).filter(f => f.includes(sessionId) && f.endsWith('.jsonl'));
 
     if (files.length > 0) {
-      found = true;
       const file = files[0];
       const sourcePath = path.join(projectPath, file);
-
       const db = initDatabase();
-      await initEmbeddings();
 
-      const projectArchive = path.join(ARCHIVE_DIR, project);
-      fs.mkdirSync(projectArchive, { recursive: true });
+      try {
+        await initEmbeddings();
 
-      const archivePath = path.join(projectArchive, file);
+        const projectArchive = path.join(ARCHIVE_DIR, project);
+        fs.mkdirSync(projectArchive, { recursive: true });
 
-      // Archive
-      archiveIfStale(sourcePath, archivePath);
+        const archivePath = path.join(projectArchive, file);
 
-      // Parse and summarize
-      const exchanges = await parseConversation(sourcePath, project, archivePath);
+        // Archive
+        archiveIfStale(sourcePath, archivePath);
 
-      if (exchanges.length > 0) {
+        // Parse and summarize
+        const exchanges = await parseConversation(sourcePath, project, archivePath);
+        const indexableExchanges = exchanges.filter(
+          exchange => !isWorkerPromptMessage(exchange.userMessage)
+        );
+
+        if (indexableExchanges.length === 0) {
+          console.log(`Session ${sessionId} has no indexable exchanges`);
+          return {
+            status: 'no_indexable_exchanges',
+            sessionId,
+            startedAt,
+            sourcePath,
+          };
+        }
+
         // Generate summary (unless --no-summaries)
         const summaryPath = archivePath.replace('.jsonl', '-summary.txt');
         if (!noSummaries && !archiveFileExists(summaryPath)) {
@@ -240,8 +272,7 @@ export async function indexSession(sessionId: string, concurrency: number = 1, n
         }
 
         // Index
-        for (const exchange of exchanges) {
-          if (isWorkerPromptMessage(exchange.userMessage)) continue; // worker prompt = ephemeral state, not knowledge
+        for (const exchange of indexableExchanges) {
           const toolNames = exchange.toolCalls?.map(tc => tc.toolName);
           const embedding = await generateExchangeEmbedding(
             exchange.userMessage,
@@ -251,17 +282,24 @@ export async function indexSession(sessionId: string, concurrency: number = 1, n
           insertExchange(db, exchange, embedding, toolNames);
         }
 
-        console.log(`✅ Indexed session ${sessionId}: ${exchanges.length} exchanges`);
+        const expectedFrontier = Math.max(...indexableExchanges.map(exchange => exchange.lineEnd));
+        console.log(`✅ Indexed session ${sessionId}: ${indexableExchanges.length} exchanges`);
+        return {
+          status: 'indexed',
+          sessionId,
+          startedAt,
+          sourcePath,
+          expectedExchangeCount: indexableExchanges.length,
+          expectedFrontier,
+        };
+      } finally {
+        db.close();
       }
-
-      db.close();
-      break;
     }
   }
 
-  if (!found) {
-    console.log(`Session ${sessionId} not found`);
-  }
+  console.log(`Session ${sessionId} not found`);
+  return { status: 'not_found', sessionId, startedAt };
 }
 
 export async function indexUnprocessed(concurrency: number = 1, noSummaries: boolean = false): Promise<void> {
