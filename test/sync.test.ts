@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, statSync, utimesSync, ex
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { syncConversations } from '../src/sync.js';
+import { SUMMARIZER_CONTEXT_MARKER } from '../src/constants.js';
 import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 
@@ -207,5 +208,140 @@ describe('sync command', () => {
     dbCheck.close();
 
     expect(count.count).toBe(1); // Only normal conversation indexed
+  });
+
+  it('should scope exclusion markers to the first direct user prompt', async () => {
+    mkdirSync(join(sourceDir, 'project-a'), { recursive: true });
+
+    const quotedMarkerConversation = [
+      {
+        type: 'user',
+        uuid: 'quoted-user-1',
+        parentUuid: null,
+        timestamp: '2026-08-13T01:00:00Z',
+        isSidechain: false,
+        message: { role: 'user', content: 'Inspect a saved transcript.' }
+      },
+      {
+        type: 'assistant',
+        uuid: 'quoted-assistant-1',
+        parentUuid: 'quoted-user-1',
+        timestamp: '2026-08-13T01:00:01Z',
+        isSidechain: false,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'I will inspect the transcript.' },
+            {
+              type: 'tool_use',
+              id: 'tool-1',
+              name: 'Read',
+              input: { expected: SUMMARIZER_CONTEXT_MARKER }
+            }
+          ]
+        }
+      },
+      {
+        type: 'user',
+        uuid: 'quoted-tool-result',
+        parentUuid: 'quoted-assistant-1',
+        timestamp: '2026-08-13T01:00:02Z',
+        isSidechain: false,
+        message: {
+          role: 'user',
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'tool-1',
+              content: `Saved prompt: ${SUMMARIZER_CONTEXT_MARKER}`
+            }
+          ]
+        }
+      },
+      {
+        type: 'assistant',
+        uuid: 'quoted-assistant-2',
+        parentUuid: 'quoted-tool-result',
+        timestamp: '2026-08-13T01:00:03Z',
+        isSidechain: false,
+        message: { role: 'assistant', content: 'The quoted marker is data, not session provenance.' }
+      },
+      {
+        type: 'user',
+        uuid: 'quoted-user-2',
+        parentUuid: 'quoted-assistant-2',
+        timestamp: '2026-08-13T01:00:04Z',
+        isSidechain: false,
+        message: { role: 'user', content: 'UNIQUE_AFTER_MARKER_QUOTE' }
+      },
+      {
+        type: 'assistant',
+        uuid: 'quoted-assistant-3',
+        parentUuid: 'quoted-user-2',
+        timestamp: '2026-08-13T01:00:05Z',
+        isSidechain: false,
+        message: { role: 'assistant', content: 'This later exchange must remain searchable.' }
+      }
+    ].map(entry => JSON.stringify(entry)).join('\n');
+
+    const summarizerConversation = [
+      {
+        type: 'user',
+        uuid: 'summarizer-user',
+        parentUuid: null,
+        timestamp: '2026-08-13T02:00:00Z',
+        isSidechain: false,
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: `${SUMMARIZER_CONTEXT_MARKER}.\nSummarize this conversation.` }]
+        }
+      },
+      {
+        type: 'assistant',
+        uuid: 'summarizer-assistant',
+        parentUuid: 'summarizer-user',
+        timestamp: '2026-08-13T02:00:01Z',
+        isSidechain: false,
+        message: { role: 'assistant', content: '<summary>Internal summary.</summary>' }
+      }
+    ].map(entry => JSON.stringify(entry)).join('\n');
+
+    writeFileSync(join(sourceDir, 'project-a', 'quoted-marker.jsonl'), quotedMarkerConversation, 'utf-8');
+    writeFileSync(join(sourceDir, 'project-a', 'summarizer.jsonl'), summarizerConversation, 'utf-8');
+
+    const db = new Database(dbPath);
+    sqliteVec.load(db);
+    db.exec(`
+      CREATE TABLE exchanges (
+        id TEXT PRIMARY KEY,
+        project TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        user_message TEXT NOT NULL,
+        assistant_message TEXT NOT NULL,
+        archive_path TEXT NOT NULL,
+        line_start INTEGER NOT NULL,
+        line_end INTEGER NOT NULL,
+        last_indexed INTEGER
+      )
+    `);
+    db.exec(`
+      CREATE VIRTUAL TABLE vec_exchanges USING vec0(
+        id TEXT PRIMARY KEY,
+        embedding FLOAT[384]
+      )
+    `);
+    db.close();
+
+    const result = await syncConversations(sourceDir, destDir, { skipSummaries: true });
+
+    expect(result.copied).toBe(2);
+    expect(result.indexed).toBe(1);
+
+    const dbCheck = new Database(dbPath, { readonly: true });
+    const rows = dbCheck.prepare('SELECT user_message FROM exchanges ORDER BY line_start').all() as Array<{ user_message: string }>;
+    dbCheck.close();
+
+    expect(rows.map(row => row.user_message)).toContain('UNIQUE_AFTER_MARKER_QUOTE');
+    expect(rows.some(row => row.user_message.includes(SUMMARIZER_CONTEXT_MARKER))).toBe(false);
   });
 });

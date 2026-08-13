@@ -13,7 +13,44 @@ const EXCLUSION_MARKERS = [
 function shouldSkipConversation(filePath: string): boolean {
   try {
     const content = readArchiveFile(filePath);
-    return EXCLUSION_MARKERS.some(marker => content.includes(marker));
+    for (const line of content.split(/\r?\n/)) {
+      let entry: {
+        type?: unknown;
+        message?: { role?: unknown; content?: unknown };
+      };
+
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      if (entry.type !== 'user' || entry.message?.role !== 'user') {
+        continue;
+      }
+
+      const messageContent = entry.message.content;
+      const directText = typeof messageContent === 'string'
+        ? messageContent
+        : Array.isArray(messageContent)
+          ? messageContent
+              .filter(block => block?.type === 'text' && typeof block.text === 'string')
+              .map(block => block.text)
+              .join('\n')
+          : '';
+
+      // A Claude tool result is also encoded as a `user` event. Only a direct
+      // text prompt can establish that the session itself belongs to an
+      // internal summarizer; quoted markers in tool results or assistant data
+      // must not suppress the rest of an ordinary conversation.
+      if (!directText.trim()) {
+        continue;
+      }
+
+      return EXCLUSION_MARKERS.some(marker => directText.includes(marker));
+    }
+
+    return false;
   } catch (error) {
     // If we can't read the file, don't skip it
     return false;
