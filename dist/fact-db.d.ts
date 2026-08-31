@@ -105,4 +105,65 @@ export declare function searchAllFacts(db: Database.Database, embedding: number[
     fact: Fact;
     distance: number;
 }>;
+/** Max characters in one tag. Long enough for "needs-verification", short
+ *  enough that a tag stays a label rather than a sentence. */
+export declare const MAX_TAG_LENGTH = 64;
+/** Max tags on one fact. Bounds the JSON column and keeps LIKE scans cheap. */
+export declare const MAX_TAGS_PER_FACT = 32;
+/**
+ * Normalize one user-supplied tag: trim, collapse inner whitespace to '-',
+ * lowercase. Returns null when the result is empty, too long, or contains a
+ * disallowed character — callers must treat null as "reject", never as "skip
+ * silently", so a typo surfaces instead of vanishing.
+ */
+export declare function normalizeTag(raw: string): string | null;
+/**
+ * Parse the stored tags column. A row written by this module is always valid
+ * JSON; a row hand-edited via sqlite3 may not be. Rather than throwing inside
+ * every read path (which would take down search for one bad row), an
+ * unparseable value degrades to [] — the fact stays fully searchable, it just
+ * shows no tags. Use `memory-bank tags --verify` to find such rows.
+ */
+export declare function parseTags(raw: unknown): string[];
+/** Tags currently on a fact. Throws when the fact does not exist. */
+export declare function getFactTags(db: Database.Database, factId: string): string[];
+/**
+ * Add tags to a fact (set union, order-stable). Rejects the whole call when any
+ * input tag is invalid or the result would exceed MAX_TAGS_PER_FACT — a partial
+ * apply would leave the user unsure which tags landed.
+ */
+export declare function addFactTags(db: Database.Database, factId: string, rawTags: string[]): {
+    tags: string[];
+    added: string[];
+};
+/** Remove tags from a fact. Tags that were not present are reported, not an error. */
+export declare function removeFactTags(db: Database.Database, factId: string, rawTags: string[]): {
+    tags: string[];
+    removed: string[];
+    absent: string[];
+};
+/** Replace a fact's tags wholesale. Passing [] clears them. */
+export declare function setFactTags(db: Database.Database, factId: string, rawTags: string[]): string[];
+/**
+ * All tags in use with their fact counts, most used first. Scans only rows that
+ * actually carry tags, so cost tracks tagged facts rather than total facts.
+ */
+export declare function listTags(db: Database.Database, opts?: {
+    project?: string;
+    includeInactive?: boolean;
+}): Array<{
+    tag: string;
+    count: number;
+}>;
+/**
+ * Facts carrying the given tags. `match: 'all'` (default) requires every tag,
+ * 'any' requires at least one. Matching is done on the JSON text with the
+ * surrounding quotes included, so "api" never matches "api-v2".
+ */
+export declare function findFactsByTags(db: Database.Database, rawTags: string[], opts?: {
+    project?: string;
+    match?: 'all' | 'any';
+    limit?: number;
+    includeInactive?: boolean;
+}): Fact[];
 export {};

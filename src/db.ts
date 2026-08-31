@@ -435,6 +435,15 @@ export function initDatabase(): Database.Database {
   if (!factColumnNames.has('ontology_last_attempt_at')) {
     db.prepare('ALTER TABLE facts ADD COLUMN ontology_last_attempt_at TEXT').run();
   }
+  // User-assigned tags (JSON array of strings, same storage shape as
+  // source_exchange_ids). The ontology overlay is LLM-generated and therefore
+  // not addressable by the user; tags are the one axis a person controls
+  // directly — arbitrary labels for review layers ("verified"), cross-project
+  // grouping ("mobile"), or case collection ("bug-report"). NULL means
+  // untagged; the column is never written by the automatic pipeline.
+  if (!factColumnNames.has('tags')) {
+    db.prepare('ALTER TABLE facts ADD COLUMN tags TEXT').run();
+  }
   const exchangeColumns = db.prepare(
     `SELECT name FROM pragma_table_info('exchanges')`
   ).all() as Array<{ name: string }>;

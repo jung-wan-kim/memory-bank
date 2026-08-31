@@ -73,6 +73,8 @@ export interface Fact {
   is_active: boolean;
   ontology_category_id?: string | null;
   coding_agent?: string | null; // e.g., 'claude-code', 'codex', 'opencode'
+  /** User-assigned free-form labels. Never written by the automatic pipeline. */
+  tags?: string[];
 }
 
 export interface FactRevision {

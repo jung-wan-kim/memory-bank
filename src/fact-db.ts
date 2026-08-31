@@ -510,5 +510,225 @@ function rowToFact(row: Record<string, unknown>): Fact {
     is_active: Boolean(row['is_active']),
     ontology_category_id: (row['ontology_category_id'] as string | null) ?? null,
     coding_agent: (row['coding_agent'] as string | null) ?? null,
+    tags: parseTags(row['tags']),
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// User tags
+//
+// The ontology overlay (domain/category) is LLM-generated: useful, but the user
+// cannot address it. Tags are the one labelling axis a person controls directly.
+// The automatic pipeline (fact-extractor, consolidator, ontology-classifier)
+// never writes this column, so a tag survives re-classification and re-embedding.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Max characters in one tag. Long enough for "needs-verification", short
+ *  enough that a tag stays a label rather than a sentence. */
+export const MAX_TAG_LENGTH = 64;
+/** Max tags on one fact. Bounds the JSON column and keeps LIKE scans cheap. */
+export const MAX_TAGS_PER_FACT = 32;
+
+/** Characters allowed in a tag: any unicode letter/number (Korean included)
+ *  plus - _ . / : — deliberately excluding " and \ so a tag can never break
+ *  the JSON encoding or the LIKE matcher below. */
+const TAG_ALLOWED = /^[\p{L}\p{N}\-_./:]+$/u;
+
+/**
+ * Normalize one user-supplied tag: trim, collapse inner whitespace to '-',
+ * lowercase. Returns null when the result is empty, too long, or contains a
+ * disallowed character — callers must treat null as "reject", never as "skip
+ * silently", so a typo surfaces instead of vanishing.
+ */
+export function normalizeTag(raw: string): string | null {
+  if (typeof raw !== 'string') return null;
+  const collapsed = raw.trim().replace(/\s+/g, '-').toLowerCase();
+  if (!collapsed) return null;
+  if (collapsed.length > MAX_TAG_LENGTH) return null;
+  if (!TAG_ALLOWED.test(collapsed)) return null;
+  return collapsed;
+}
+
+/**
+ * Parse the stored tags column. A row written by this module is always valid
+ * JSON; a row hand-edited via sqlite3 may not be. Rather than throwing inside
+ * every read path (which would take down search for one bad row), an
+ * unparseable value degrades to [] — the fact stays fully searchable, it just
+ * shows no tags. Use `memory-bank tags --verify` to find such rows.
+ */
+export function parseTags(raw: unknown): string[] {
+  if (typeof raw !== 'string' || !raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((t): t is string => typeof t === 'string' && t.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function requireFactRow(db: Database.Database, factId: string): { tags: string[] } {
+  const row = db.prepare('SELECT tags FROM facts WHERE id = ?').get(factId) as
+    | { tags: string | null }
+    | undefined;
+  if (!row) throw new Error(`fact not found: ${factId}`);
+  return { tags: parseTags(row.tags) };
+}
+
+function writeTags(db: Database.Database, factId: string, tags: string[]): void {
+  db.prepare('UPDATE facts SET tags = ? WHERE id = ?').run(
+    tags.length ? JSON.stringify(tags) : null,
+    factId
+  );
+}
+
+/** Tags currently on a fact. Throws when the fact does not exist. */
+export function getFactTags(db: Database.Database, factId: string): string[] {
+  return requireFactRow(db, factId).tags;
+}
+
+/**
+ * Add tags to a fact (set union, order-stable). Rejects the whole call when any
+ * input tag is invalid or the result would exceed MAX_TAGS_PER_FACT — a partial
+ * apply would leave the user unsure which tags landed.
+ */
+export function addFactTags(
+  db: Database.Database,
+  factId: string,
+  rawTags: string[]
+): { tags: string[]; added: string[] } {
+  const normalized: string[] = [];
+  for (const raw of rawTags) {
+    const tag = normalizeTag(raw);
+    if (!tag) throw new Error(`invalid tag: ${JSON.stringify(raw)}`);
+    normalized.push(tag);
+  }
+  const current = requireFactRow(db, factId).tags;
+  const seen = new Set(current);
+  const added: string[] = [];
+  for (const tag of normalized) {
+    if (seen.has(tag)) continue;
+    seen.add(tag);
+    added.push(tag);
+  }
+  const next = [...current, ...added];
+  if (next.length > MAX_TAGS_PER_FACT) {
+    throw new Error(
+      `too many tags on ${factId}: ${next.length} > ${MAX_TAGS_PER_FACT}`
+    );
+  }
+  if (added.length) writeTags(db, factId, next);
+  return { tags: next, added };
+}
+
+/** Remove tags from a fact. Tags that were not present are reported, not an error. */
+export function removeFactTags(
+  db: Database.Database,
+  factId: string,
+  rawTags: string[]
+): { tags: string[]; removed: string[]; absent: string[] } {
+  const targets = new Set<string>();
+  const absentInput: string[] = [];
+  for (const raw of rawTags) {
+    const tag = normalizeTag(raw);
+    if (!tag) { absentInput.push(raw); continue; }
+    targets.add(tag);
+  }
+  const current = requireFactRow(db, factId).tags;
+  const next = current.filter((t) => !targets.has(t));
+  const removed = current.filter((t) => targets.has(t));
+  const absent = [...targets].filter((t) => !current.includes(t)).concat(absentInput);
+  if (removed.length) writeTags(db, factId, next);
+  return { tags: next, removed, absent };
+}
+
+/** Replace a fact's tags wholesale. Passing [] clears them. */
+export function setFactTags(
+  db: Database.Database,
+  factId: string,
+  rawTags: string[]
+): string[] {
+  const next: string[] = [];
+  for (const raw of rawTags) {
+    const tag = normalizeTag(raw);
+    if (!tag) throw new Error(`invalid tag: ${JSON.stringify(raw)}`);
+    if (!next.includes(tag)) next.push(tag);
+  }
+  if (next.length > MAX_TAGS_PER_FACT) {
+    throw new Error(`too many tags: ${next.length} > ${MAX_TAGS_PER_FACT}`);
+  }
+  requireFactRow(db, factId); // existence check — fail loud on a bad id
+  writeTags(db, factId, next);
+  return next;
+}
+
+/**
+ * All tags in use with their fact counts, most used first. Scans only rows that
+ * actually carry tags, so cost tracks tagged facts rather than total facts.
+ */
+export function listTags(
+  db: Database.Database,
+  opts: { project?: string; includeInactive?: boolean } = {}
+): Array<{ tag: string; count: number }> {
+  const where: string[] = ['tags IS NOT NULL'];
+  const params: unknown[] = [];
+  if (!opts.includeInactive) where.push('is_active = 1');
+  if (opts.project) {
+    const canon = canonicalizeProject(db, opts.project);
+    where.push("((scope_type = 'project' AND scope_project = ?) OR scope_type = 'global')");
+    params.push(canon);
+  }
+  const rows = db
+    .prepare(`SELECT tags FROM facts WHERE ${where.join(' AND ')}`)
+    .all(...params) as Array<{ tags: string | null }>;
+
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    for (const tag of parseTags(row.tags)) {
+      counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+}
+
+/**
+ * Facts carrying the given tags. `match: 'all'` (default) requires every tag,
+ * 'any' requires at least one. Matching is done on the JSON text with the
+ * surrounding quotes included, so "api" never matches "api-v2".
+ */
+export function findFactsByTags(
+  db: Database.Database,
+  rawTags: string[],
+  opts: { project?: string; match?: 'all' | 'any'; limit?: number; includeInactive?: boolean } = {}
+): Fact[] {
+  const tags: string[] = [];
+  for (const raw of rawTags) {
+    const tag = normalizeTag(raw);
+    if (!tag) throw new Error(`invalid tag: ${JSON.stringify(raw)}`);
+    if (!tags.includes(tag)) tags.push(tag);
+  }
+  if (!tags.length) return [];
+
+  const where: string[] = ['tags IS NOT NULL'];
+  const params: unknown[] = [];
+  if (!opts.includeInactive) where.push('is_active = 1');
+  if (opts.project) {
+    const canon = canonicalizeProject(db, opts.project);
+    where.push("((scope_type = 'project' AND scope_project = ?) OR scope_type = 'global')");
+    params.push(canon);
+  }
+  const joiner = opts.match === 'any' ? ' OR ' : ' AND ';
+  const tagClauses = tags.map(() => `tags LIKE '%"' || ? || '"%'`);
+  where.push(`(${tagClauses.join(joiner)})`);
+  params.push(...tags);
+
+  const limit = Math.max(1, Math.min(opts.limit ?? 50, 500));
+  const rows = db
+    .prepare(
+      `SELECT * FROM facts WHERE ${where.join(' AND ')} ORDER BY updated_at DESC LIMIT ?`
+    )
+    .all(...params, limit) as Array<Record<string, unknown>>;
+  return rows.map((row) => rowToFact(row));
 }

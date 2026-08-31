@@ -25,7 +25,16 @@ import {
 } from './search.js';
 import { formatConversationAsMarkdown } from './show.js';
 import { initDatabase } from './db.js';
-import { searchSimilarFacts, searchAllFacts, getRevisions } from './fact-db.js';
+import {
+  searchSimilarFacts,
+  searchAllFacts,
+  getRevisions,
+  addFactTags,
+  removeFactTags,
+  setFactTags,
+  listTags,
+  findFactsByTags,
+} from './fact-db.js';
 import { generateEmbedding, initEmbeddings } from './embeddings.js';
 import { getOntologyTree, listDomains, listCategories, getRelatedFacts } from './ontology-db.js';
 import { askAvatar } from './avatar-responder.js';
@@ -110,8 +119,39 @@ const SearchFactsInputSchema = z
     project: z.string().max(500).optional(),
     category: z.enum(['decision', 'preference', 'pattern', 'knowledge', 'constraint']).optional(),
     coding_agent: z.string().optional().describe('Filter facts by coding agent (e.g., "claude-code", "codex")'),
+    tags: z
+      .array(z.string().min(1).max(64))
+      .max(32)
+      .optional()
+      .describe('Filter to facts carrying these user tags (all must match)'),
     include_revisions: z.boolean().default(false),
     limit: z.number().int().min(1).max(50).default(10),
+  })
+  .strict();
+
+const TagFactInputSchema = z
+  .object({
+    fact_id: z.string().min(1).max(200).describe('Fact id from a search_facts result'),
+    add: z.array(z.string().min(1).max(64)).max(32).optional(),
+    remove: z.array(z.string().min(1).max(64)).max(32).optional(),
+    set: z
+      .array(z.string().min(1).max(64))
+      .max(32)
+      .optional()
+      .describe('Replace all tags with this list; [] clears them'),
+  })
+  .strict();
+
+const ListTagsInputSchema = z
+  .object({
+    project: z.string().max(500).optional(),
+    tags: z
+      .array(z.string().min(1).max(64))
+      .max(32)
+      .optional()
+      .describe('When given, list the facts carrying these tags instead of the tag index'),
+    match: z.enum(['all', 'any']).default('all'),
+    limit: z.number().int().min(1).max(200).default(50),
   })
   .strict();
 
@@ -227,6 +267,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: 'Filter by fact category',
             },
             coding_agent: { type: 'string', description: 'Filter by coding agent (e.g., "claude-code", "codex", "opencode")' },
+            tags: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Filter to facts carrying ALL of these user tags (see list_tags)',
+            },
             include_revisions: { type: 'boolean', description: 'Include revision history', default: false },
             limit: { type: 'number', minimum: 1, maximum: 50, default: 10, description: 'Max results' },
           },
@@ -235,6 +280,51 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
         annotations: {
           title: 'Search Facts',
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      {
+        name: 'tag_fact',
+        description:
+          'Attach or remove user tags on a fact. Tags are the one labelling axis the user controls directly — the ontology (domain/category) is LLM-generated and not user-addressable. Use for review layers ("verified", "needs-check"), grouping that crosses project scope ("mobile", "billing"), or case collection ("bug-report"). Get fact ids from search_facts.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            fact_id: { type: 'string', description: 'Fact id shown in search_facts results' },
+            add: { type: 'array', items: { type: 'string' }, description: 'Tags to add' },
+            remove: { type: 'array', items: { type: 'string' }, description: 'Tags to remove' },
+            set: { type: 'array', items: { type: 'string' }, description: 'Replace all tags; [] clears' },
+          },
+          required: ['fact_id'],
+          additionalProperties: false,
+        },
+        annotations: {
+          title: 'Tag Fact',
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      {
+        name: 'list_tags',
+        description:
+          'Browse user tags. With no arguments, returns the tag index (tag -> fact count). With `tags`, returns the facts carrying them — this is how a tag becomes a custom group that ignores project scope.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            project: { type: 'string', description: 'Project path to scope by (defaults to cwd)' },
+            tags: { type: 'array', items: { type: 'string' }, description: 'List facts carrying these tags' },
+            match: { type: 'string', enum: ['all', 'any'], default: 'all' },
+            limit: { type: 'number', minimum: 1, maximum: 200, default: 50 },
+          },
+          additionalProperties: false,
+        },
+        annotations: {
+          title: 'List Tags',
           readOnlyHint: true,
           destructiveHint: false,
           idempotentHint: true,
@@ -518,6 +608,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (params.coding_agent) {
           filtered = filtered.filter(r => (r.fact.coding_agent || 'claude-code') === params.coding_agent);
         }
+        if (params.tags && params.tags.length) {
+          // Normalize the same way the writer does, so "Mobile" matches "mobile".
+          const wanted = params.tags
+            .map(t => t.trim().replace(/\s+/g, '-').toLowerCase())
+            .filter(Boolean);
+          filtered = filtered.filter(r => {
+            const have = new Set(r.fact.tags ?? []);
+            return wanted.every(t => have.has(t));
+          });
+        }
 
         const agentLabel = params.coding_agent ? ` | Agent: ${params.coding_agent}` : '';
         let output = `# Facts Search Results\n\nQuery: "${params.query}"\nProject: ${currentProject}${agentLabel}\nResults: ${filtered.length}\n\n`;
@@ -539,6 +639,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           const catName = catInfo ? catInfo.name : '';
 
           output += `## [${fact.category}] ${fact.fact}\n`;
+          output += `- ID: ${fact.id}\n`;
+          if (fact.tags && fact.tags.length) output += `- Tags: ${fact.tags.join(', ')}\n`;
           const factAgent = fact.coding_agent || 'claude-code';
           output += `- Scope: ${fact.scope_type}${fact.scope_project ? ` (${fact.scope_project})` : ''} | Agent: ${factAgent}\n`;
           output += `- Confirmed: ${fact.consolidated_count}x | Similarity: ${similarity}\n`;
@@ -575,6 +677,80 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [{ type: 'text', text: handleError(error) }],
           isError: true,
         };
+      } finally {
+        db.close();
+      }
+    }
+
+    if (name === 'tag_fact') {
+      const params = TagFactInputSchema.parse(args);
+      if (!params.add && !params.remove && !params.set) {
+        return {
+          content: [{ type: 'text', text: 'Nothing to do: pass add, remove, or set.' }],
+          isError: true,
+        };
+      }
+      const db = initDatabase();
+      try {
+        const lines: string[] = [];
+        let tags: string[] = [];
+        if (params.set) {
+          tags = setFactTags(db, params.fact_id, params.set);
+          lines.push(`Set tags: ${tags.length ? tags.join(', ') : '(cleared)'}`);
+        }
+        if (params.add) {
+          const r = addFactTags(db, params.fact_id, params.add);
+          tags = r.tags;
+          lines.push(r.added.length ? `Added: ${r.added.join(', ')}` : 'Added: (already present)');
+        }
+        if (params.remove) {
+          const r = removeFactTags(db, params.fact_id, params.remove);
+          tags = r.tags;
+          lines.push(r.removed.length ? `Removed: ${r.removed.join(', ')}` : 'Removed: (none matched)');
+          if (r.absent.length) lines.push(`Not present: ${r.absent.join(', ')}`);
+        }
+        const text = `# Tagged ${params.fact_id}\n\n${lines.join('\n')}\n\nCurrent tags: ${tags.length ? tags.join(', ') : '(none)'}\n`;
+        return { content: [{ type: 'text', text }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: handleError(error) }], isError: true };
+      } finally {
+        db.close();
+      }
+    }
+
+    if (name === 'list_tags') {
+      const params = ListTagsInputSchema.parse(args);
+      const currentProject = params.project || process.cwd();
+      const db = initDatabase();
+      try {
+        if (params.tags && params.tags.length) {
+          const facts = findFactsByTags(db, params.tags, {
+            project: currentProject,
+            match: params.match,
+            limit: params.limit,
+          });
+          let output = `# Facts tagged ${params.tags.join(params.match === 'any' ? ' OR ' : ' AND ')}\n\nProject: ${currentProject}\nResults: ${facts.length}\n\n`;
+          if (!facts.length) output += '_No facts carry these tags._\n';
+          for (const fact of facts) {
+            output += `## [${fact.category}] ${fact.fact}\n`;
+            output += `- ID: ${fact.id}\n`;
+            output += `- Tags: ${(fact.tags ?? []).join(', ')}\n`;
+            output += `- Scope: ${fact.scope_type}${fact.scope_project ? ` (${fact.scope_project})` : ''}\n\n`;
+          }
+          return { content: [{ type: 'text', text: output }] };
+        }
+
+        const tagIndex = listTags(db, { project: currentProject });
+        let output = `# Tag index\n\nProject: ${currentProject}\nDistinct tags: ${tagIndex.length}\n\n`;
+        if (!tagIndex.length) {
+          output += '_No tags yet. Tags are user-assigned — the automatic pipeline never creates them._\n';
+        }
+        for (const { tag, count } of tagIndex) {
+          output += `- ${tag} (${count})\n`;
+        }
+        return { content: [{ type: 'text', text: output }] };
+      } catch (error) {
+        return { content: [{ type: 'text', text: handleError(error) }], isError: true };
       } finally {
         db.close();
       }

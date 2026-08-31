@@ -89,6 +89,16 @@ async function main() {
         await runScript(join(distDir, 'sync-cli.js'), args);
         break;
 
+      // Tags: the one labelling axis the user controls directly.
+      // 'tag' writes, 'tags' browses (same script, --browse selects the mode).
+      case 'tag':
+        await runScript(join(distDir, 'tag-cli.js'), args);
+        break;
+
+      case 'tags':
+        await runScript(join(distDir, 'tag-cli.js'), ['--browse', ...args]);
+        break;
+
       case '--help':
       case '-h':
       case undefined:

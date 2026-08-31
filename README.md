@@ -27,8 +27,9 @@
 - **Cross-Project Insights** -- Find similar decisions from other projects
 - **Fact Provenance** -- Trace any fact back to its source conversation
 - **Scope Isolation** -- Project facts stay in their project, global facts are shared
+- **User Tags** -- The one labelling axis you control: free-form tags that the automatic pipeline never overwrites. Use them for review layers (`verified`), grouping that crosses project scope (`billing`), or case collection (`bug-report`). See the [tagging guide](docs/tagging-guide.md)
 - **Compressed Archive Support** -- Transparent `.jsonl.zst` reads across every path (parser, `read` tool, search, sync, stats, verify) using Node's built-in zstd (Node >= 22.15) — archives compressed out-of-band keep working
-- **MCP Integration** -- 9 tools: `search`, `read`, `search_facts`, `search_ontology`, `ask_avatar`, `trace_fact`, `explore_graph`, `cross_project_insights`, `graph_stats`
+- **MCP Integration** -- 11 tools: `search`, `read`, `search_facts`, `search_ontology`, `ask_avatar`, `trace_fact`, `explore_graph`, `cross_project_insights`, `graph_stats`, `tag_fact`, `list_tags`
 - **3D Visualization** -- Interactive neon-style knowledge graph with data flow animation
 - **Web UI** -- Dark-theme web interface for browsing and searching conversations
 

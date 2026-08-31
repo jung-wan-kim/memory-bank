@@ -23601,6 +23601,9 @@ function initDatabase() {
   if (!factColumnNames.has("ontology_last_attempt_at")) {
     db.prepare("ALTER TABLE facts ADD COLUMN ontology_last_attempt_at TEXT").run();
   }
+  if (!factColumnNames.has("tags")) {
+    db.prepare("ALTER TABLE facts ADD COLUMN tags TEXT").run();
+  }
   const exchangeColumns = db.prepare(
     `SELECT name FROM pragma_table_info('exchanges')`
   ).all();
@@ -23767,8 +23770,141 @@ function rowToFact(row) {
     consolidated_count: row["consolidated_count"],
     is_active: Boolean(row["is_active"]),
     ontology_category_id: row["ontology_category_id"] ?? null,
-    coding_agent: row["coding_agent"] ?? null
+    coding_agent: row["coding_agent"] ?? null,
+    tags: parseTags(row["tags"])
   };
+}
+var MAX_TAG_LENGTH = 64;
+var MAX_TAGS_PER_FACT = 32;
+var TAG_ALLOWED = /^[\p{L}\p{N}\-_./:]+$/u;
+function normalizeTag(raw) {
+  if (typeof raw !== "string") return null;
+  const collapsed = raw.trim().replace(/\s+/g, "-").toLowerCase();
+  if (!collapsed) return null;
+  if (collapsed.length > MAX_TAG_LENGTH) return null;
+  if (!TAG_ALLOWED.test(collapsed)) return null;
+  return collapsed;
+}
+function parseTags(raw) {
+  if (typeof raw !== "string" || !raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((t) => typeof t === "string" && t.length > 0);
+  } catch {
+    return [];
+  }
+}
+function requireFactRow(db, factId) {
+  const row = db.prepare("SELECT tags FROM facts WHERE id = ?").get(factId);
+  if (!row) throw new Error(`fact not found: ${factId}`);
+  return { tags: parseTags(row.tags) };
+}
+function writeTags(db, factId, tags) {
+  db.prepare("UPDATE facts SET tags = ? WHERE id = ?").run(
+    tags.length ? JSON.stringify(tags) : null,
+    factId
+  );
+}
+function addFactTags(db, factId, rawTags) {
+  const normalized = [];
+  for (const raw of rawTags) {
+    const tag = normalizeTag(raw);
+    if (!tag) throw new Error(`invalid tag: ${JSON.stringify(raw)}`);
+    normalized.push(tag);
+  }
+  const current = requireFactRow(db, factId).tags;
+  const seen = new Set(current);
+  const added = [];
+  for (const tag of normalized) {
+    if (seen.has(tag)) continue;
+    seen.add(tag);
+    added.push(tag);
+  }
+  const next = [...current, ...added];
+  if (next.length > MAX_TAGS_PER_FACT) {
+    throw new Error(
+      `too many tags on ${factId}: ${next.length} > ${MAX_TAGS_PER_FACT}`
+    );
+  }
+  if (added.length) writeTags(db, factId, next);
+  return { tags: next, added };
+}
+function removeFactTags(db, factId, rawTags) {
+  const targets = /* @__PURE__ */ new Set();
+  const absentInput = [];
+  for (const raw of rawTags) {
+    const tag = normalizeTag(raw);
+    if (!tag) {
+      absentInput.push(raw);
+      continue;
+    }
+    targets.add(tag);
+  }
+  const current = requireFactRow(db, factId).tags;
+  const next = current.filter((t) => !targets.has(t));
+  const removed = current.filter((t) => targets.has(t));
+  const absent = [...targets].filter((t) => !current.includes(t)).concat(absentInput);
+  if (removed.length) writeTags(db, factId, next);
+  return { tags: next, removed, absent };
+}
+function setFactTags(db, factId, rawTags) {
+  const next = [];
+  for (const raw of rawTags) {
+    const tag = normalizeTag(raw);
+    if (!tag) throw new Error(`invalid tag: ${JSON.stringify(raw)}`);
+    if (!next.includes(tag)) next.push(tag);
+  }
+  if (next.length > MAX_TAGS_PER_FACT) {
+    throw new Error(`too many tags: ${next.length} > ${MAX_TAGS_PER_FACT}`);
+  }
+  requireFactRow(db, factId);
+  writeTags(db, factId, next);
+  return next;
+}
+function listTags(db, opts = {}) {
+  const where = ["tags IS NOT NULL"];
+  const params = [];
+  if (!opts.includeInactive) where.push("is_active = 1");
+  if (opts.project) {
+    const canon = canonicalizeProject(db, opts.project);
+    where.push("((scope_type = 'project' AND scope_project = ?) OR scope_type = 'global')");
+    params.push(canon);
+  }
+  const rows = db.prepare(`SELECT tags FROM facts WHERE ${where.join(" AND ")}`).all(...params);
+  const counts = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    for (const tag of parseTags(row.tags)) {
+      counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()].map(([tag, count]) => ({ tag, count })).sort((a, b2) => b2.count - a.count || a.tag.localeCompare(b2.tag));
+}
+function findFactsByTags(db, rawTags, opts = {}) {
+  const tags = [];
+  for (const raw of rawTags) {
+    const tag = normalizeTag(raw);
+    if (!tag) throw new Error(`invalid tag: ${JSON.stringify(raw)}`);
+    if (!tags.includes(tag)) tags.push(tag);
+  }
+  if (!tags.length) return [];
+  const where = ["tags IS NOT NULL"];
+  const params = [];
+  if (!opts.includeInactive) where.push("is_active = 1");
+  if (opts.project) {
+    const canon = canonicalizeProject(db, opts.project);
+    where.push("((scope_type = 'project' AND scope_project = ?) OR scope_type = 'global')");
+    params.push(canon);
+  }
+  const joiner = opts.match === "any" ? " OR " : " AND ";
+  const tagClauses = tags.map(() => `tags LIKE '%"' || ? || '"%'`);
+  where.push(`(${tagClauses.join(joiner)})`);
+  params.push(...tags);
+  const limit = Math.max(1, Math.min(opts.limit ?? 50, 500));
+  const rows = db.prepare(
+    `SELECT * FROM facts WHERE ${where.join(" AND ")} ORDER BY updated_at DESC LIMIT ?`
+  ).all(...params, limit);
+  return rows.map((row) => rowToFact(row));
 }
 
 // src/ontology-db.ts
@@ -26620,8 +26756,21 @@ var SearchFactsInputSchema = external_exports.object({
   project: external_exports.string().max(500).optional(),
   category: external_exports.enum(["decision", "preference", "pattern", "knowledge", "constraint"]).optional(),
   coding_agent: external_exports.string().optional().describe('Filter facts by coding agent (e.g., "claude-code", "codex")'),
+  tags: external_exports.array(external_exports.string().min(1).max(64)).max(32).optional().describe("Filter to facts carrying these user tags (all must match)"),
   include_revisions: external_exports.boolean().default(false),
   limit: external_exports.number().int().min(1).max(50).default(10)
+}).strict();
+var TagFactInputSchema = external_exports.object({
+  fact_id: external_exports.string().min(1).max(200).describe("Fact id from a search_facts result"),
+  add: external_exports.array(external_exports.string().min(1).max(64)).max(32).optional(),
+  remove: external_exports.array(external_exports.string().min(1).max(64)).max(32).optional(),
+  set: external_exports.array(external_exports.string().min(1).max(64)).max(32).optional().describe("Replace all tags with this list; [] clears them")
+}).strict();
+var ListTagsInputSchema = external_exports.object({
+  project: external_exports.string().max(500).optional(),
+  tags: external_exports.array(external_exports.string().min(1).max(64)).max(32).optional().describe("When given, list the facts carrying these tags instead of the tag index"),
+  match: external_exports.enum(["all", "any"]).default("all"),
+  limit: external_exports.number().int().min(1).max(200).default(50)
 }).strict();
 var SearchOntologyInputSchema = external_exports.object({
   domain: external_exports.string().optional().describe("Filter by domain name (case-insensitive partial match)"),
@@ -26717,6 +26866,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: "Filter by fact category"
             },
             coding_agent: { type: "string", description: 'Filter by coding agent (e.g., "claude-code", "codex", "opencode")' },
+            tags: {
+              type: "array",
+              items: { type: "string" },
+              description: "Filter to facts carrying ALL of these user tags (see list_tags)"
+            },
             include_revisions: { type: "boolean", description: "Include revision history", default: false },
             limit: { type: "number", minimum: 1, maximum: 50, default: 10, description: "Max results" }
           },
@@ -26725,6 +26879,49 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
         annotations: {
           title: "Search Facts",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "tag_fact",
+        description: 'Attach or remove user tags on a fact. Tags are the one labelling axis the user controls directly \u2014 the ontology (domain/category) is LLM-generated and not user-addressable. Use for review layers ("verified", "needs-check"), grouping that crosses project scope ("mobile", "billing"), or case collection ("bug-report"). Get fact ids from search_facts.',
+        inputSchema: {
+          type: "object",
+          properties: {
+            fact_id: { type: "string", description: "Fact id shown in search_facts results" },
+            add: { type: "array", items: { type: "string" }, description: "Tags to add" },
+            remove: { type: "array", items: { type: "string" }, description: "Tags to remove" },
+            set: { type: "array", items: { type: "string" }, description: "Replace all tags; [] clears" }
+          },
+          required: ["fact_id"],
+          additionalProperties: false
+        },
+        annotations: {
+          title: "Tag Fact",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "list_tags",
+        description: "Browse user tags. With no arguments, returns the tag index (tag -> fact count). With `tags`, returns the facts carrying them \u2014 this is how a tag becomes a custom group that ignores project scope.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            project: { type: "string", description: "Project path to scope by (defaults to cwd)" },
+            tags: { type: "array", items: { type: "string" }, description: "List facts carrying these tags" },
+            match: { type: "string", enum: ["all", "any"], default: "all" },
+            limit: { type: "number", minimum: 1, maximum: 200, default: 50 }
+          },
+          additionalProperties: false
+        },
+        annotations: {
+          title: "List Tags",
           readOnlyHint: true,
           destructiveHint: false,
           idempotentHint: true,
@@ -26980,6 +27177,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (params.coding_agent) {
           filtered = filtered.filter((r) => (r.fact.coding_agent || "claude-code") === params.coding_agent);
         }
+        if (params.tags && params.tags.length) {
+          const wanted = params.tags.map((t) => t.trim().replace(/\s+/g, "-").toLowerCase()).filter(Boolean);
+          filtered = filtered.filter((r) => {
+            const have = new Set(r.fact.tags ?? []);
+            return wanted.every((t) => have.has(t));
+          });
+        }
         const agentLabel = params.coding_agent ? ` | Agent: ${params.coding_agent}` : "";
         let output = `# Facts Search Results
 
@@ -27001,6 +27205,10 @@ Results: ${filtered.length}
           const domainName = catInfo ? domainMap.get(catInfo.domainId) ?? "" : "";
           const catName = catInfo ? catInfo.name : "";
           output += `## [${fact.category}] ${fact.fact}
+`;
+          output += `- ID: ${fact.id}
+`;
+          if (fact.tags && fact.tags.length) output += `- Tags: ${fact.tags.join(", ")}
 `;
           const factAgent = fact.coding_agent || "claude-code";
           output += `- Scope: ${fact.scope_type}${fact.scope_project ? ` (${fact.scope_project})` : ""} | Agent: ${factAgent}
@@ -27040,6 +27248,98 @@ Results: ${filtered.length}
           content: [{ type: "text", text: handleError(error2) }],
           isError: true
         };
+      } finally {
+        db.close();
+      }
+    }
+    if (name === "tag_fact") {
+      const params = TagFactInputSchema.parse(args);
+      if (!params.add && !params.remove && !params.set) {
+        return {
+          content: [{ type: "text", text: "Nothing to do: pass add, remove, or set." }],
+          isError: true
+        };
+      }
+      const db = initDatabase();
+      try {
+        const lines = [];
+        let tags = [];
+        if (params.set) {
+          tags = setFactTags(db, params.fact_id, params.set);
+          lines.push(`Set tags: ${tags.length ? tags.join(", ") : "(cleared)"}`);
+        }
+        if (params.add) {
+          const r = addFactTags(db, params.fact_id, params.add);
+          tags = r.tags;
+          lines.push(r.added.length ? `Added: ${r.added.join(", ")}` : "Added: (already present)");
+        }
+        if (params.remove) {
+          const r = removeFactTags(db, params.fact_id, params.remove);
+          tags = r.tags;
+          lines.push(r.removed.length ? `Removed: ${r.removed.join(", ")}` : "Removed: (none matched)");
+          if (r.absent.length) lines.push(`Not present: ${r.absent.join(", ")}`);
+        }
+        const text = `# Tagged ${params.fact_id}
+
+${lines.join("\n")}
+
+Current tags: ${tags.length ? tags.join(", ") : "(none)"}
+`;
+        return { content: [{ type: "text", text }] };
+      } catch (error2) {
+        return { content: [{ type: "text", text: handleError(error2) }], isError: true };
+      } finally {
+        db.close();
+      }
+    }
+    if (name === "list_tags") {
+      const params = ListTagsInputSchema.parse(args);
+      const currentProject = params.project || process.cwd();
+      const db = initDatabase();
+      try {
+        if (params.tags && params.tags.length) {
+          const facts = findFactsByTags(db, params.tags, {
+            project: currentProject,
+            match: params.match,
+            limit: params.limit
+          });
+          let output2 = `# Facts tagged ${params.tags.join(params.match === "any" ? " OR " : " AND ")}
+
+Project: ${currentProject}
+Results: ${facts.length}
+
+`;
+          if (!facts.length) output2 += "_No facts carry these tags._\n";
+          for (const fact of facts) {
+            output2 += `## [${fact.category}] ${fact.fact}
+`;
+            output2 += `- ID: ${fact.id}
+`;
+            output2 += `- Tags: ${(fact.tags ?? []).join(", ")}
+`;
+            output2 += `- Scope: ${fact.scope_type}${fact.scope_project ? ` (${fact.scope_project})` : ""}
+
+`;
+          }
+          return { content: [{ type: "text", text: output2 }] };
+        }
+        const tagIndex = listTags(db, { project: currentProject });
+        let output = `# Tag index
+
+Project: ${currentProject}
+Distinct tags: ${tagIndex.length}
+
+`;
+        if (!tagIndex.length) {
+          output += "_No tags yet. Tags are user-assigned \u2014 the automatic pipeline never creates them._\n";
+        }
+        for (const { tag, count } of tagIndex) {
+          output += `- ${tag} (${count})
+`;
+        }
+        return { content: [{ type: "text", text: output }] };
+      } catch (error2) {
+        return { content: [{ type: "text", text: handleError(error2) }], isError: true };
       } finally {
         db.close();
       }
