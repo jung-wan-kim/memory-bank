@@ -4,7 +4,7 @@ import { initDatabase, insertExchange } from './db.js';
 import { parseConversation } from './parser.js';
 import { initEmbeddings, generateExchangeEmbedding } from './embeddings.js';
 import { summarizeConversation } from './summarizer.js';
-import { getArchiveDir, getExcludedProjects, isExcludedProject, isWorkerPromptMessage, getProjectsDir } from './paths.js';
+import { getArchiveDir, getExcludedProjects, isExcludedProject, isWorkerPromptMessage, getProjectsDir, isRetainedSource } from './paths.js';
 import { archiveFileExists, statArchiveFile } from './archive-io.js';
 /**
  * Copy source → archive unless a current copy (plain or .zst) already exists.
@@ -62,7 +62,7 @@ export async function indexConversations(limitToProject, maxConversations, concu
         const stat = fs.statSync(projectPath);
         if (!stat.isDirectory())
             continue;
-        const files = fs.readdirSync(projectPath).filter(f => f.endsWith('.jsonl'));
+        const files = fs.readdirSync(projectPath).filter(f => f.endsWith('.jsonl')).filter(f => isRetainedSource(path.join(projectPath, f)));
         if (files.length === 0)
             continue;
         console.log(`\nProcessing project: ${project} (${files.length} conversations)`);
@@ -156,7 +156,7 @@ export async function indexSession(sessionId, concurrency = 1, noSummaries = fal
         const projectPath = path.join(PROJECTS_DIR, project);
         if (!fs.statSync(projectPath).isDirectory())
             continue;
-        const files = fs.readdirSync(projectPath).filter(f => f.includes(sessionId) && f.endsWith('.jsonl'));
+        const files = fs.readdirSync(projectPath).filter(f => f.includes(sessionId) && f.endsWith('.jsonl')).filter(f => isRetainedSource(path.join(projectPath, f)));
         if (files.length > 0) {
             const file = files[0];
             const sourcePath = path.join(projectPath, file);
@@ -232,7 +232,7 @@ export async function indexUnprocessed(concurrency = 1, noSummaries = false) {
         const projectPath = path.join(PROJECTS_DIR, project);
         if (!fs.statSync(projectPath).isDirectory())
             continue;
-        const files = fs.readdirSync(projectPath).filter(f => f.endsWith('.jsonl'));
+        const files = fs.readdirSync(projectPath).filter(f => f.endsWith('.jsonl')).filter(f => isRetainedSource(path.join(projectPath, f)));
         for (const file of files) {
             const sourcePath = path.join(projectPath, file);
             const projectArchive = path.join(ARCHIVE_DIR, project);
