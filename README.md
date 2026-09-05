@@ -313,6 +313,10 @@ export MEMORY_BANK_MAX_EXTRACT_CALLS=12
 # Decompression cap for .zst archives (bytes; lowering only, default 256 MiB)
 export MEMORY_BANK_MAX_DECOMPRESSED_BYTES=268435456
 
+# Retention limits for source transcripts (defaults: 14 days, 64 MB)
+export MEMORY_BANK_RETENTION_DAYS=14
+export MEMORY_BANK_MAX_FILE_MB=64
+
 # Ontology backfill worker (per-run caps; absolute ceilings apply regardless)
 export BACKFILL_ONTOLOGY_MAX=200      # facts per run (ceiling 1000; 0 disables)
 export BACKFILL_EXTRACT_MAX=40        # sessions per run (ceiling 200; 0 disables)
@@ -325,6 +329,17 @@ export BACKFILL_RELATIONS=0           # 1 = also detect relations during backfil
 # with scripts/measure-det-gate.mjs)
 # export MEMORY_BANK_ONTOLOGY_DET_GATE=0.94
 ```
+
+### Retention
+
+A source transcript is processed only while it is inside the retention window:
+newer than `MEMORY_BANK_RETENTION_DAYS` (default 14, measured from file mtime)
+and no larger than `MEMORY_BANK_MAX_FILE_MB` (default 64). Anything outside that
+window is skipped for copying, indexing, and archive retention — archived copies
+that age past the window are deleted on the next sync, while directories are kept.
+Your original transcripts under `~/.claude/projects` are never touched. Setting
+either variable to `0` or a non-numeric value restores its default; to keep more,
+set a larger number explicitly.
 
 ## 3D Knowledge Graph
 

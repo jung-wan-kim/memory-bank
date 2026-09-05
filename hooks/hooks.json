@@ -30,6 +30,16 @@
             "async": true
           }
         ]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/cli/compact-freshness-hook.js",
+            "timeout": 180
+          }
+        ]
       }
     ],
     "SessionEnd": [

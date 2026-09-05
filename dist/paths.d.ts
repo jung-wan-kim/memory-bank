@@ -52,6 +52,19 @@ export declare function detectCodingAgent(sourcePath: string): string;
  */
 export declare function getProjectsDir(): string;
 /**
+ * Retention limits for source transcripts. Both are configurable via env
+ * (MEMORY_BANK_RETENTION_DAYS, MEMORY_BANK_MAX_FILE_MB); a non-positive or
+ * unparseable value falls back to the default. There is deliberately no
+ * "unlimited" switch — pass a large number if you really want one.
+ */
+export interface RetentionPolicy {
+    maxAgeDays: number;
+    maxFileBytes: number;
+}
+export declare function getRetentionPolicy(): RetentionPolicy;
+/** Source .jsonl is retained (copied + indexed) only if recent enough and not oversized. */
+export declare function isRetainedSource(filePath: string, now?: number, policy?: RetentionPolicy): boolean;
+/**
  * Reserved basename of the isolated working directory that llm.ts gives to
  * headless Agent SDK sessions (see LLM_WORKDIR in llm.ts). Every Haiku
  * classification call spawns a one-shot CLI session whose transcript lands in

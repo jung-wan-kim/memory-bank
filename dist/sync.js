@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { SUMMARIZER_CONTEXT_MARKER } from './constants.js';
-import { getExcludedProjects, isExcludedProject, isWorkerPromptMessage, detectCodingAgent } from './paths.js';
+import { getExcludedProjects, isExcludedProject, isWorkerPromptMessage, detectCodingAgent, getRetentionPolicy, isRetainedSource } from './paths.js';
 import { archiveFileExists, readArchiveFile, statArchiveFile } from './archive-io.js';
 const EXCLUSION_MARKERS = [
     '<INSTRUCTIONS-TO-EPISODIC-MEMORY>DO NOT INDEX THIS CHAT</INSTRUCTIONS-TO-EPISODIC-MEMORY>',
@@ -11,7 +11,36 @@ const EXCLUSION_MARKERS = [
 function shouldSkipConversation(filePath) {
     try {
         const content = readArchiveFile(filePath);
-        return EXCLUSION_MARKERS.some(marker => content.includes(marker));
+        for (const line of content.split(/\r?\n/)) {
+            let entry;
+            try {
+                entry = JSON.parse(line);
+            }
+            catch {
+                continue;
+            }
+            if (entry.type !== 'user' || entry.message?.role !== 'user') {
+                continue;
+            }
+            const messageContent = entry.message.content;
+            const directText = typeof messageContent === 'string'
+                ? messageContent
+                : Array.isArray(messageContent)
+                    ? messageContent
+                        .filter(block => block?.type === 'text' && typeof block.text === 'string')
+                        .map(block => block.text)
+                        .join('\n')
+                    : '';
+            // A Claude tool result is also encoded as a `user` event. Only a direct
+            // text prompt can establish that the session itself belongs to an
+            // internal summarizer; quoted markers in tool results or assistant data
+            // must not suppress the rest of an ordinary conversation.
+            if (!directText.trim()) {
+                continue;
+            }
+            return EXCLUSION_MARKERS.some(marker => directText.includes(marker));
+        }
+        return false;
     }
     catch (error) {
         // If we can't read the file, don't skip it
@@ -27,9 +56,9 @@ function copyIfNewer(src, dest) {
     // Check if destination exists and is up-to-date. The archive may have been
     // compressed out-of-band (dest.zst) — treat a current compressed copy as
     // up-to-date, otherwise every sync re-copies the whole history.
+    const srcStat = fs.statSync(src);
     const destStat = statArchiveFile(dest);
     if (destStat) {
-        const srcStat = fs.statSync(src);
         if (destStat.mtimeMs >= srcStat.mtimeMs) {
             return false; // Dest (plain or compressed) is current, skip
         }
@@ -39,6 +68,12 @@ function copyIfNewer(src, dest) {
     try {
         fs.copyFileSync(src, tempDest);
         fs.renameSync(tempDest, dest); // Atomic on same filesystem
+        // Carry the source mtime onto the archived copy: retention prunes by
+        // mtime, and a copy stamped with the copy time would never age out.
+        // Seconds-as-number (not the Date getters) — a Date argument is truncated
+        // to whole milliseconds, which would leave the copy fractionally OLDER
+        // than its source and make the up-to-date check above re-copy every run.
+        fs.utimesSync(dest, srcStat.atimeMs / 1000, srcStat.mtimeMs / 1000);
     }
     catch (e) {
         try {
@@ -48,6 +83,44 @@ function copyIfNewer(src, dest) {
         throw e;
     }
     return true;
+}
+/** Delete archived copies (plain or compressed) whose mtime is older than the policy window. */
+export function pruneArchive(archiveDir, now = Date.now(), policy = getRetentionPolicy()) {
+    if (!fs.existsSync(archiveDir))
+        return 0;
+    const cutoff = now - policy.maxAgeDays * 86_400_000;
+    let pruned = 0;
+    for (const project of fs.readdirSync(archiveDir)) {
+        const projectPath = path.join(archiveDir, project);
+        let projectStat;
+        try {
+            projectStat = fs.statSync(projectPath);
+        }
+        catch {
+            continue;
+        }
+        if (!projectStat.isDirectory())
+            continue;
+        for (const entry of fs.readdirSync(projectPath)) {
+            // In-flight copies (dest + '.tmp.' + pid) are not archive content.
+            if (entry.includes('.tmp.'))
+                continue;
+            const entryPath = path.join(projectPath, entry);
+            try {
+                const stat = fs.statSync(entryPath);
+                if (!stat.isFile())
+                    continue; // Directories stay — pruning is non-destructive to structure
+                if (stat.mtimeMs < cutoff) {
+                    fs.unlinkSync(entryPath);
+                    pruned++;
+                }
+            }
+            catch {
+                // Unreadable/vanished entry: leave it alone
+            }
+        }
+    }
+    return pruned;
 }
 function extractSessionIdFromPath(filePath) {
     // Extract session ID from filename: /path/to/abc-123-def.jsonl -> abc-123-def
@@ -64,6 +137,7 @@ export async function syncConversations(sourceDir, destDir, options = {}) {
         skipped: 0,
         indexed: 0,
         summarized: 0,
+        pruned: 0,
         errors: []
     };
     // Detect coding agent from source directory or use override
@@ -92,6 +166,11 @@ export async function syncConversations(sourceDir, destDir, options = {}) {
             const srcFile = path.join(projectPath, file);
             const destFile = path.join(destDir, project, file);
             try {
+                // Outside the retention window (too old / too large): never copied, never indexed.
+                if (!isRetainedSource(srcFile)) {
+                    result.skipped++;
+                    continue;
+                }
                 const wasCopied = copyIfNewer(srcFile, destFile);
                 if (wasCopied) {
                     result.copied++;
@@ -187,5 +266,7 @@ export async function syncConversations(sourceDir, destDir, options = {}) {
             }
         }
     }
+    // Drop archived copies that have aged out of the retention window.
+    result.pruned = pruneArchive(destDir);
     return result;
 }
