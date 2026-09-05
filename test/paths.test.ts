@@ -230,3 +230,69 @@ describe('isWorkerPromptMessage', () => {
     expect(isWorkerPromptMessage(undefined)).toBe(false);
   });
 });
+
+describe('retention policy', () => {
+  const DAY = 86_400_000;
+  let tmpDir: string;
+
+  function makeFile(name: string, ageDays: number, sizeBytes = 16): string {
+    const filePath = path.join(tmpDir, name);
+    fs.writeFileSync(filePath, 'x'.repeat(Math.min(sizeBytes, 16)), 'utf-8');
+    if (sizeBytes > 16) fs.truncateSync(filePath, sizeBytes); // sparse: size without writing bytes
+    const when = new Date(Date.now() - ageDays * DAY);
+    fs.utimesSync(filePath, when, when);
+    return filePath;
+  }
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-bank-retention-'));
+    delete process.env.MEMORY_BANK_RETENTION_DAYS;
+    delete process.env.MEMORY_BANK_MAX_FILE_MB;
+  });
+
+  afterEach(() => {
+    delete process.env.MEMORY_BANK_RETENTION_DAYS;
+    delete process.env.MEMORY_BANK_MAX_FILE_MB;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('rejects a source older than the default 14-day window', async () => {
+    const { isRetainedSource } = await import('../src/paths.js');
+    expect(isRetainedSource(makeFile('old.jsonl', 15))).toBe(false);
+  });
+
+  it('retains a source from yesterday', async () => {
+    const { isRetainedSource } = await import('../src/paths.js');
+    expect(isRetainedSource(makeFile('recent.jsonl', 1))).toBe(true);
+  });
+
+  it('rejects a source larger than the default 64 MB cap even when it is fresh', async () => {
+    const { isRetainedSource } = await import('../src/paths.js');
+    const big = makeFile('big.jsonl', 0, 65 * 1024 * 1024);
+    expect(fs.statSync(big).size).toBe(65 * 1024 * 1024);
+    expect(isRetainedSource(big)).toBe(false);
+  });
+
+  it('widens the window when MEMORY_BANK_RETENTION_DAYS is raised', async () => {
+    const { isRetainedSource } = await import('../src/paths.js');
+    const old = makeFile('old.jsonl', 15);
+    expect(isRetainedSource(old)).toBe(false);
+
+    process.env.MEMORY_BANK_RETENTION_DAYS = '30';
+    expect(isRetainedSource(old)).toBe(true);
+  });
+
+  it('falls back to the defaults when the env values are 0 or unparseable', async () => {
+    const { isRetainedSource, getRetentionPolicy } = await import('../src/paths.js');
+
+    process.env.MEMORY_BANK_RETENTION_DAYS = '0';
+    process.env.MEMORY_BANK_MAX_FILE_MB = '0';
+    expect(getRetentionPolicy()).toEqual({ maxAgeDays: 14, maxFileBytes: 64 * 1024 * 1024 });
+    expect(isRetainedSource(makeFile('old.jsonl', 15))).toBe(false);
+    expect(isRetainedSource(makeFile('recent.jsonl', 1))).toBe(true);
+
+    process.env.MEMORY_BANK_RETENTION_DAYS = 'not-a-number';
+    process.env.MEMORY_BANK_MAX_FILE_MB = 'not-a-number';
+    expect(getRetentionPolicy()).toEqual({ maxAgeDays: 14, maxFileBytes: 64 * 1024 * 1024 });
+  });
+});

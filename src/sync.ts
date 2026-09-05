@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { SUMMARIZER_CONTEXT_MARKER } from './constants.js';
-import { getExcludedProjects, isExcludedProject, isWorkerPromptMessage, detectCodingAgent } from './paths.js';
+import { getExcludedProjects, isExcludedProject, isWorkerPromptMessage, detectCodingAgent, getRetentionPolicy, isRetainedSource } from './paths.js';
 import { archiveFileExists, readArchiveFile, statArchiveFile } from './archive-io.js';
 
 const EXCLUSION_MARKERS = [
@@ -62,6 +62,7 @@ export interface SyncResult {
   skipped: number;
   indexed: number;
   summarized: number;
+  pruned: number;
   errors: Array<{ file: string; error: string }>;
 }
 
@@ -82,9 +83,9 @@ function copyIfNewer(src: string, dest: string): boolean {
   // Check if destination exists and is up-to-date. The archive may have been
   // compressed out-of-band (dest.zst) — treat a current compressed copy as
   // up-to-date, otherwise every sync re-copies the whole history.
+  const srcStat = fs.statSync(src);
   const destStat = statArchiveFile(dest);
   if (destStat) {
-    const srcStat = fs.statSync(src);
     if (destStat.mtimeMs >= srcStat.mtimeMs) {
       return false; // Dest (plain or compressed) is current, skip
     }
@@ -95,11 +96,55 @@ function copyIfNewer(src: string, dest: string): boolean {
   try {
     fs.copyFileSync(src, tempDest);
     fs.renameSync(tempDest, dest); // Atomic on same filesystem
+    // Carry the source mtime onto the archived copy: retention prunes by
+    // mtime, and a copy stamped with the copy time would never age out.
+    // Seconds-as-number (not the Date getters) — a Date argument is truncated
+    // to whole milliseconds, which would leave the copy fractionally OLDER
+    // than its source and make the up-to-date check above re-copy every run.
+    fs.utimesSync(dest, srcStat.atimeMs / 1000, srcStat.mtimeMs / 1000);
   } catch (e) {
     try { fs.unlinkSync(tempDest); } catch { /* cleanup best effort */ }
     throw e;
   }
   return true;
+}
+
+/** Delete archived copies (plain or compressed) whose mtime is older than the policy window. */
+export function pruneArchive(archiveDir: string, now = Date.now(), policy = getRetentionPolicy()): number {
+  if (!fs.existsSync(archiveDir)) return 0;
+
+  const cutoff = now - policy.maxAgeDays * 86_400_000;
+  let pruned = 0;
+
+  for (const project of fs.readdirSync(archiveDir)) {
+    const projectPath = path.join(archiveDir, project);
+    let projectStat: fs.Stats;
+    try {
+      projectStat = fs.statSync(projectPath);
+    } catch {
+      continue;
+    }
+    if (!projectStat.isDirectory()) continue;
+
+    for (const entry of fs.readdirSync(projectPath)) {
+      // In-flight copies (dest + '.tmp.' + pid) are not archive content.
+      if (entry.includes('.tmp.')) continue;
+
+      const entryPath = path.join(projectPath, entry);
+      try {
+        const stat = fs.statSync(entryPath);
+        if (!stat.isFile()) continue; // Directories stay — pruning is non-destructive to structure
+        if (stat.mtimeMs < cutoff) {
+          fs.unlinkSync(entryPath);
+          pruned++;
+        }
+      } catch {
+        // Unreadable/vanished entry: leave it alone
+      }
+    }
+  }
+
+  return pruned;
 }
 
 function extractSessionIdFromPath(filePath: string): string | null {
@@ -122,6 +167,7 @@ export async function syncConversations(
     skipped: 0,
     indexed: 0,
     summarized: 0,
+    pruned: 0,
     errors: []
   };
 
@@ -159,6 +205,9 @@ export async function syncConversations(
       const destFile = path.join(destDir, project, file);
 
       try {
+        // Outside the retention window (too old / too large): never copied, never indexed.
+        if (!isRetainedSource(srcFile)) { result.skipped++; continue; }
+
         const wasCopied = copyIfNewer(srcFile, destFile);
         if (wasCopied) {
           result.copied++;
@@ -269,6 +318,9 @@ export async function syncConversations(
       }
     }
   }
+
+  // Drop archived copies that have aged out of the retention window.
+  result.pruned = pruneArchive(destDir);
 
   return result;
 }

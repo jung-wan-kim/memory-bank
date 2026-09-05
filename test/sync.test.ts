@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, statSync, utimesSync, existsSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, statSync, utimesSync, existsSync, truncateSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { syncConversations } from '../src/sync.js';
+import { syncConversations, pruneArchive } from '../src/sync.js';
 import { SUMMARIZER_CONTEXT_MARKER } from '../src/constants.js';
 import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
@@ -343,5 +343,99 @@ describe('sync command', () => {
 
     expect(rows.map(row => row.user_message)).toContain('UNIQUE_AFTER_MARKER_QUOTE');
     expect(rows.some(row => row.user_message.includes(SUMMARIZER_CONTEXT_MARKER))).toBe(false);
+  });
+
+  describe('retention', () => {
+    const DAY = 86_400_000;
+
+    function ageFile(filePath: string, ageDays: number): Date {
+      const when = new Date(Date.now() - ageDays * DAY);
+      utimesSync(filePath, when, when);
+      return when;
+    }
+
+    it('copies only sources inside the retention window and preserves their mtime', async () => {
+      mkdirSync(join(sourceDir, 'project-a'), { recursive: true });
+
+      const recent = join(sourceDir, 'project-a', 'recent.jsonl');
+      const old = join(sourceDir, 'project-a', 'old.jsonl');
+      const big = join(sourceDir, 'project-a', 'big.jsonl');
+
+      writeFileSync(recent, 'recent content', 'utf-8');
+      writeFileSync(old, 'old content', 'utf-8');
+      writeFileSync(big, 'big content', 'utf-8');
+      truncateSync(big, 65 * 1024 * 1024); // sparse: over the 64 MB cap, fresh mtime
+
+      ageFile(recent, 1);
+      ageFile(old, 15);
+
+      const result = await syncConversations(sourceDir, destDir, { skipIndex: true, skipSummaries: true });
+
+      expect(result.copied).toBe(1);
+      expect(result.skipped).toBe(2);
+
+      const destRecent = join(destDir, 'project-a', 'recent.jsonl');
+      expect(existsSync(destRecent)).toBe(true);
+      expect(existsSync(join(destDir, 'project-a', 'old.jsonl'))).toBe(false);
+      expect(existsSync(join(destDir, 'project-a', 'big.jsonl'))).toBe(false);
+
+      // Archived copy carries the source mtime, otherwise it could never age out.
+      expect(statSync(destRecent).mtimeMs).toBe(statSync(recent).mtimeMs);
+    });
+
+    it('prunes archived copies that aged out, keeping fresh files, directories and in-flight temps', async () => {
+      const archiveDir = join(testDir, 'archive');
+      const projectDir = join(archiveDir, 'project-a');
+      mkdirSync(join(projectDir, 'nested'), { recursive: true });
+
+      const recent = join(projectDir, 'recent.jsonl');
+      const old = join(projectDir, 'old.jsonl');
+      const oldTemp = join(projectDir, 'old.jsonl.tmp.4242');
+
+      writeFileSync(recent, 'recent', 'utf-8');
+      writeFileSync(old, 'old', 'utf-8');
+      writeFileSync(oldTemp, 'in flight', 'utf-8');
+
+      ageFile(recent, 1);
+      ageFile(old, 15);
+      ageFile(oldTemp, 15);
+
+      expect(pruneArchive(archiveDir)).toBe(1);
+
+      expect(existsSync(old)).toBe(false);
+      expect(existsSync(recent)).toBe(true);
+      expect(existsSync(oldTemp)).toBe(true);
+      expect(existsSync(join(projectDir, 'nested'))).toBe(true);
+      expect(existsSync(projectDir)).toBe(true);
+    });
+
+    it('also prunes compressed copies by the same mtime ruler', async () => {
+      const archiveDir = join(testDir, 'archive-zst');
+      const projectDir = join(archiveDir, 'project-a');
+      mkdirSync(projectDir, { recursive: true });
+
+      const oldZst = join(projectDir, 'old.jsonl.zst');
+      writeFileSync(oldZst, 'compressed', 'utf-8');
+      ageFile(oldZst, 15);
+
+      expect(pruneArchive(archiveDir)).toBe(1);
+      expect(existsSync(oldZst)).toBe(false);
+    });
+
+    it('reports prune count on the sync result', async () => {
+      mkdirSync(join(sourceDir, 'project-a'), { recursive: true });
+      writeFileSync(join(sourceDir, 'project-a', 'recent.jsonl'), 'recent', 'utf-8');
+
+      const stale = join(destDir, 'project-a', 'stale.jsonl');
+      mkdirSync(join(destDir, 'project-a'), { recursive: true });
+      writeFileSync(stale, 'stale archive copy', 'utf-8');
+      ageFile(stale, 20);
+
+      const result = await syncConversations(sourceDir, destDir, { skipIndex: true, skipSummaries: true });
+
+      expect(result.pruned).toBe(1);
+      expect(existsSync(stale)).toBe(false);
+      expect(existsSync(join(destDir, 'project-a', 'recent.jsonl'))).toBe(true);
+    });
   });
 });
