@@ -42,8 +42,41 @@ EXAMPLES:
 // Check if running in background mode
 const isBackground = args.includes('--background');
 
+// ---- background cooldown (2026-09-27): the singleton lock below stops *concurrent*
+// syncs but not *frequent* ones. SessionStart fires on every session start, and
+// headless sessions (pipeline stages, eval runners) start every few minutes, so a
+// fresh sync — embedding model load + indexing, 1-2 min at 2-4 cores — restarted
+// right after the previous one finished (measured: 17:41, 17:43, 17:51 on one
+// machine, load 85). Background (hook) syncs now skip when the last successful
+// sync finished less than MEMORY_BANK_SYNC_MIN_INTERVAL_S ago (default 600s,
+// 0 disables). A foreground `memory-bank sync` is never throttled. Failed syncs
+// do not stamp, so the next session start retries.
+const __lastSyncFile = path.join(os.homedir(), '.claude', 'run-locks', 'memory-bank-sync.last');
+
+function __minIntervalMs(): number {
+  const raw = process.env.MEMORY_BANK_SYNC_MIN_INTERVAL_S;
+  if (raw === undefined || raw.trim() === '') return 600_000;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 && n <= 86_400 ? n * 1000 : 600_000;
+}
+
+function __lastSyncAgeMs(): number | null {
+  try {
+    const at = Number(fs.readFileSync(__lastSyncFile, 'utf8').trim());
+    if (!Number.isFinite(at) || at <= 0) return null;
+    const age = Date.now() - at;
+    return age >= 0 ? age : null; // a future stamp (clock change) never suppresses a sync
+  } catch { return null; }
+}
+
 // If background mode, fork the process and exit immediately
 if (isBackground) {
+  const minMs = __minIntervalMs();
+  const age = __lastSyncAgeMs();
+  if (minMs > 0 && age !== null && age < minMs) {
+    console.log(`Sync skipped - last sync finished ${Math.round(age / 1000)}s ago (min interval ${minMs / 1000}s)`);
+    process.exit(0);
+  }
   const filteredArgs = args.filter(arg => arg !== '--background');
 
   // Spawn a detached process
@@ -186,6 +219,11 @@ syncConversations(sourceDir, destDir)
     if (result.errors.length > 0) {
       console.log(`\n⚠️  Errors: ${result.errors.length}`);
       result.errors.forEach(err => console.log(`  ${err.file}: ${err.error}`));
+    }
+    try {
+      fs.writeFileSync(__lastSyncFile, String(Date.now()));
+    } catch (e) {
+      console.error(`Could not record sync completion (${__lastSyncFile}): ${(e as Error).message}`);
     }
   })
   .catch(error => {
