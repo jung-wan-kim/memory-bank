@@ -21,6 +21,19 @@ export function llmWorkdir(): string {
   return LLM_WORKDIR;
 }
 
+// Tool containment for every memory-bank query(). Workers only transform the
+// text they are given, but without this the headless session gets the full
+// Claude Code toolset and obeys instructions inside the transcripts it
+// summarizes (observed 2026-09-27/28: Task subagent spawns, Bash, Read, and
+// denied attempts at `gh issue create` and file writes). `tools: []` removes
+// every built-in tool from the model's context; 'dontAsk' denies anything not
+// pre-approved (MCP tools included); one turn caps any loop.
+export const TOOLLESS_QUERY_OPTIONS = {
+  tools: [] as string[],
+  permissionMode: 'dontAsk',
+  maxTurns: 1,
+} as const;
+
 // ---------------------------------------------------------------------------
 // Transcript pruning — the one-shot sessions above each persist a transcript
 // (session .jsonl + agent-*.jsonl) that nothing ever deletes; observed
@@ -144,7 +157,7 @@ async function callOnce(systemPrompt: string, userMessage: string, maxTokens: nu
         // spawned session must NOT load user settings/plugins — otherwise its
         // own SessionStart/End hooks re-spawn sync/backfill workers and every
         // LLM call cascades into more sessions (observed as a proxy flood).
-        maxTurns: 1,
+        ...TOOLLESS_QUERY_OPTIONS,
         settingSources: [],
         cwd: llmWorkdir(),
       } as any,

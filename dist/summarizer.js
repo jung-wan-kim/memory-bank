@@ -1,6 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { SUMMARIZER_CONTEXT_MARKER } from './constants.js';
-import { llmWorkdir } from './llm.js';
+import { llmWorkdir, TOOLLESS_QUERY_OPTIONS } from './llm.js';
 /**
  * Get API environment overrides for summarization calls.
  * Returns full env merged with process.env so subprocess inherits PATH, HOME, etc.
@@ -58,6 +58,9 @@ async function callClaude(prompt, sessionId, useFallback = false) {
             // sessions. Resume works because every call shares this fixed cwd.
             cwd: llmWorkdir(),
             settingSources: [],
+            // No tools, one turn — see TOOLLESS_QUERY_OPTIONS. Resume is unaffected:
+            // it replays the stored messages, then this call adds one tool-less turn.
+            ...TOOLLESS_QUERY_OPTIONS,
             // Don't override systemPrompt when resuming - it uses the original session's prompt
             // Instead, the prompt itself should provide clear instructions
             ...(sessionId ? {} : {
