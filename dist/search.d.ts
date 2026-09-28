@@ -1,4 +1,4 @@
-import { SearchResult, MultiConceptResult } from './types.js';
+import { SearchResult, ConversationExchange, MultiConceptResult } from './types.js';
 import type DatabaseType from 'better-sqlite3';
 export declare function getSearchDb(): DatabaseType.Database;
 export interface SearchOptions {
@@ -12,6 +12,19 @@ export declare function searchConversations(query: string, options?: SearchOptio
 export declare function formatResults(results: Array<SearchResult & {
     summary?: string;
 }>): Promise<string>;
+/**
+ * Stable JSON projection shared by the MCP response path and tests. Keeping
+ * provenance in this projection prevents the transport layer from silently
+ * dropping fields that searchConversations correctly computed.
+ */
+export declare function serializeSearchResult(result: SearchResult): {
+    exchange: ConversationExchange;
+    similarity: number | null;
+    matchSource: "text" | "vector" | "both";
+    textScore: number | null;
+    vectorScore: number | null;
+    snippet: string;
+};
 export declare function searchMultipleConcepts(concepts: string[], options?: Omit<SearchOptions, 'mode'>): Promise<MultiConceptResult[]>;
 export interface KnowledgeContext {
     facts: Array<{

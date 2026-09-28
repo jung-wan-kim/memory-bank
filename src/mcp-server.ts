@@ -21,6 +21,7 @@ import {
   formatMultiConceptResults,
   getKnowledgeContext,
   formatKnowledgeContext,
+  serializeSearchResult,
   SearchOptions,
 } from './search.js';
 import { formatConversationAsMarkdown } from './show.js';
@@ -506,11 +507,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (params.response_format === 'json') {
           resultText = JSON.stringify(
             {
-              results: results.map((r) => ({
-                exchange: r.exchange,
-                similarity: r.similarity,
-                snippet: r.snippet,
-              })),
+              results: results.map(serializeSearchResult),
               count: results.length,
               mode: params.mode,
             },

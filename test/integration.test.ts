@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { initDatabase } from '../src/db.js';
-import { searchConversations } from '../src/search.js';
+import { initDatabase, insertExchange } from '../src/db.js';
+import { searchConversations, formatResults } from '../src/search.js';
+import { generateEmbedding, generateExchangeEmbedding } from '../src/embeddings.js';
+import type { ConversationExchange } from '../src/types.js';
 import { parseConversationFile } from '../src/parser.js';
 import { createTestDb, getFixturePath } from './test-utils.js';
 import { indexTestFiles } from './test-indexer.js';
@@ -200,6 +202,87 @@ describe('Integration Tests', () => {
 
       expect(ids.length).toBe(uniqueIds.size); // No duplicates
     });
+
+    it('should preserve row-level text/vector provenance without a fake 100% text score', async () => {
+      const query = 'provenancealpha';
+      const exchanges: ConversationExchange[] = [
+        {
+          id: 'provenance-both',
+          project: 'provenance-fixture',
+          timestamp: '2026-08-13T00:00:01.000Z',
+          userMessage: `${query} exact match with a vector`,
+          assistantMessage: 'Both retrieval surfaces should find this exchange.',
+          archivePath: path.join(path.dirname(testDbPath), 'provenance-both.jsonl'),
+          lineStart: 1,
+          lineEnd: 2,
+        },
+        {
+          id: 'provenance-text-only',
+          project: 'provenance-fixture',
+          timestamp: '2026-08-13T00:00:02.000Z',
+          userMessage: `${query} exact match without a stored vector`,
+          assistantMessage: 'Only literal retrieval should find this exchange.',
+          archivePath: path.join(path.dirname(testDbPath), 'provenance-text-only.jsonl'),
+          lineStart: 1,
+          lineEnd: 2,
+        },
+        {
+          id: 'provenance-vector-only',
+          project: 'provenance-fixture',
+          timestamp: '2026-08-13T00:00:03.000Z',
+          userMessage: 'semantic retrieval origin metadata',
+          assistantMessage: 'This row deliberately omits the literal query token.',
+          archivePath: path.join(path.dirname(testDbPath), 'provenance-vector-only.jsonl'),
+          lineStart: 1,
+          lineEnd: 2,
+        },
+      ];
+
+      const db = initDatabase();
+      for (const exchange of exchanges) {
+        const embedding = await generateExchangeEmbedding(
+          exchange.userMessage,
+          exchange.assistantMessage
+        );
+        insertExchange(db, exchange, embedding);
+      }
+      db.prepare('DELETE FROM vec_exchanges WHERE id = ?').run('provenance-text-only');
+      db.close();
+
+      const results = await searchConversations(query, { mode: 'both', limit: 1000 });
+      const byId = new Map(
+        results
+          .filter((result) => result.exchange.id.startsWith('provenance-'))
+          .map((result) => [result.exchange.id, result])
+      );
+
+      expect([...byId.keys()].sort()).toEqual([
+        'provenance-both',
+        'provenance-text-only',
+        'provenance-vector-only',
+      ]);
+
+      const both = byId.get('provenance-both')!;
+      expect(both.matchSource).toBe('both');
+      expect(both.textScore).toBeNull();
+      expect(both.vectorScore).toBe(both.similarity);
+
+      const textOnly = byId.get('provenance-text-only')!;
+      expect(textOnly.matchSource).toBe('text');
+      expect(textOnly.textScore).toBeNull();
+      expect(textOnly.vectorScore).toBeNull();
+      expect(textOnly.similarity).toBeNull();
+
+      const vectorOnly = byId.get('provenance-vector-only')!;
+      expect(vectorOnly.matchSource).toBe('vector');
+      expect(vectorOnly.textScore).toBeNull();
+      expect(vectorOnly.vectorScore).toBe(vectorOnly.similarity);
+
+      const formatted = await formatResults([textOnly, both]);
+      expect(formatted).toContain('text match (score unavailable)');
+      expect(formatted).toContain('vector + text match');
+      expect(formatted).not.toContain('100% match');
+    });
   });
 
   describe('Date Filtering', () => {
@@ -245,6 +328,70 @@ describe('Integration Tests', () => {
         expect(date >= new Date('2025-10-01')).toBe(true);
         expect(date <= new Date('2025-10-31')).toBe(true);
       });
+    });
+
+    it.each([
+      {
+        label: 'after',
+        query: 'filter aware after candidate',
+        nearest: { timestamp: '2025-01-01T00:00:00.000Z', codingAgent: 'claude-code' },
+        target: { timestamp: '2026-08-13T00:00:00.000Z', codingAgent: 'claude-code' },
+        options: { mode: 'vector' as const, after: '2026-08-12', limit: 1 },
+      },
+      {
+        label: 'before',
+        query: 'filter aware before candidate',
+        nearest: { timestamp: '2026-08-13T00:00:00.000Z', codingAgent: 'claude-code' },
+        target: { timestamp: '2025-01-01T00:00:00.000Z', codingAgent: 'claude-code' },
+        options: { mode: 'both' as const, before: '2025-01-02', limit: 1 },
+      },
+      {
+        label: 'coding_agent',
+        query: 'filter aware coding agent candidate',
+        nearest: { timestamp: '2026-08-13T00:00:00.000Z', codingAgent: 'claude-code' },
+        target: { timestamp: '2026-08-13T00:00:00.000Z', codingAgent: 'codex' },
+        options: { mode: 'vector' as const, coding_agent: 'codex', limit: 1 },
+      },
+    ])('does not let pre-filter vector top-k starve a $label match', async ({
+      query,
+      nearest,
+      target,
+      options,
+    }) => {
+      const queryEmbedding = await generateEmbedding(query, 'query');
+      const distantEmbedding = queryEmbedding.map((value) => -value);
+      const db = initDatabase();
+
+      const insert = (
+        id: string,
+        timestamp: string,
+        codingAgent: string,
+        embedding: number[]
+      ) => {
+        insertExchange(db, {
+          id,
+          project: 'filter-overfetch-fixture',
+          timestamp,
+          userMessage: `${id} user message`,
+          assistantMessage: `${id} assistant message`,
+          archivePath: path.join(path.dirname(testDbPath), `${id}.jsonl`),
+          lineStart: 1,
+          lineEnd: 2,
+          codingAgent,
+        }, embedding);
+      };
+
+      // The out-of-filter row is the global nearest neighbour. With k=limit=1,
+      // vec0 chooses it before the joined predicate can remove it.
+      insert('filter-nearest', nearest.timestamp, nearest.codingAgent, queryEmbedding);
+      insert('filter-target', target.timestamp, target.codingAgent, distantEmbedding);
+      db.close();
+
+      const results = await searchConversations(query, options);
+
+      expect(results.map((result) => result.exchange.id)).toEqual([
+        'filter-target',
+      ]);
     });
   });
 });

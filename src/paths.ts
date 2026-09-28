@@ -149,6 +149,30 @@ export function getProjectsDir(): string {
 }
 
 /**
+ * Retention limits for source transcripts. Both are configurable via env
+ * (MEMORY_BANK_RETENTION_DAYS, MEMORY_BANK_MAX_FILE_MB); a non-positive or
+ * unparseable value falls back to the default. There is deliberately no
+ * "unlimited" switch — pass a large number if you really want one.
+ */
+export interface RetentionPolicy { maxAgeDays: number; maxFileBytes: number }
+
+export function getRetentionPolicy(): RetentionPolicy {
+  const days = Number(process.env.MEMORY_BANK_RETENTION_DAYS ?? 14);
+  const mb = Number(process.env.MEMORY_BANK_MAX_FILE_MB ?? 64);
+  return {
+    maxAgeDays: Number.isFinite(days) && days > 0 ? days : 14,
+    maxFileBytes: (Number.isFinite(mb) && mb > 0 ? mb : 64) * 1024 * 1024,
+  };
+}
+
+/** Source .jsonl is retained (copied + indexed) only if recent enough and not oversized. */
+export function isRetainedSource(filePath: string, now = Date.now(), policy = getRetentionPolicy()): boolean {
+  const st = fs.statSync(filePath);
+  if (st.size > policy.maxFileBytes) return false;
+  return now - st.mtimeMs <= policy.maxAgeDays * 86_400_000;
+}
+
+/**
  * Reserved basename of the isolated working directory that llm.ts gives to
  * headless Agent SDK sessions (see LLM_WORKDIR in llm.ts). Every Haiku
  * classification call spawns a one-shot CLI session whose transcript lands in

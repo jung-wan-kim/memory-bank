@@ -126,6 +126,21 @@ export function detectCodingAgent(sourcePath) {
 export function getProjectsDir() {
     return process.env.TEST_PROJECTS_DIR || path.join(os.homedir(), '.claude', 'projects');
 }
+export function getRetentionPolicy() {
+    const days = Number(process.env.MEMORY_BANK_RETENTION_DAYS ?? 14);
+    const mb = Number(process.env.MEMORY_BANK_MAX_FILE_MB ?? 64);
+    return {
+        maxAgeDays: Number.isFinite(days) && days > 0 ? days : 14,
+        maxFileBytes: (Number.isFinite(mb) && mb > 0 ? mb : 64) * 1024 * 1024,
+    };
+}
+/** Source .jsonl is retained (copied + indexed) only if recent enough and not oversized. */
+export function isRetainedSource(filePath, now = Date.now(), policy = getRetentionPolicy()) {
+    const st = fs.statSync(filePath);
+    if (st.size > policy.maxFileBytes)
+        return false;
+    return now - st.mtimeMs <= policy.maxAgeDays * 86_400_000;
+}
 /**
  * Reserved basename of the isolated working directory that llm.ts gives to
  * headless Agent SDK sessions (see LLM_WORKDIR in llm.ts). Every Haiku

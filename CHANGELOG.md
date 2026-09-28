@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Conversation search results now identify whether each match came from text,
+  vector, or both channels with `matchSource`, `textScore`, and `vectorScore`.
+  Text-only MCP results serialize `similarity` as explicit `null` instead of
+  omitting the key or reporting the former placeholder `100%`; consumers that
+  distinguish a missing key from `null` must handle the new contract.
+- Sync and indexing now honour a retention window (`MEMORY_BANK_RETENTION_DAYS`,
+  default 14 days; `MEMORY_BANK_MAX_FILE_MB`, default 64 MB): older or oversized
+  source transcripts are no longer copied or indexed, archived copies keep the
+  source mtime and are pruned once they age out (`SyncResult.pruned`), and the
+  original files under `~/.claude/projects` are left untouched.
+
 ## [1.6.0] - 2026-08-31
 
 ### Added — 사용자 태그: 자동 분류가 건드리지 않는 유일한 라벨링 축
