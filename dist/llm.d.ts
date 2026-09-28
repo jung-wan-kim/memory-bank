@@ -1,4 +1,9 @@
 export declare function llmWorkdir(): string;
+export declare const TOOLLESS_QUERY_OPTIONS: {
+    readonly tools: string[];
+    readonly permissionMode: "dontAsk";
+    readonly maxTurns: 1;
+};
 export declare function pruneLlmTranscripts(now?: number): void;
 /**
  * Call Haiku via Claude Agent SDK (no API key needed inside Claude Code —

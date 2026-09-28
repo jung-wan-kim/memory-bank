@@ -26451,6 +26451,11 @@ function llmWorkdir() {
   pruneLlmTranscripts();
   return LLM_WORKDIR;
 }
+var TOOLLESS_QUERY_OPTIONS = {
+  tools: [],
+  permissionMode: "dontAsk",
+  maxTurns: 1
+};
 var PRUNE_MARKER = path7.join(LLM_WORKDIR, ".last-transcript-prune");
 var PRUNE_THROTTLE_MS = 60 * 60 * 1e3;
 function transcriptTtlMs() {
@@ -26539,7 +26544,7 @@ ${userMessage}`,
         // spawned session must NOT load user settings/plugins — otherwise its
         // own SessionStart/End hooks re-spawn sync/backfill workers and every
         // LLM call cascades into more sessions (observed as a proxy flood).
-        maxTurns: 1,
+        ...TOOLLESS_QUERY_OPTIONS,
         settingSources: [],
         cwd: llmWorkdir()
       }
