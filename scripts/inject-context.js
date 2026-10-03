@@ -118,6 +118,23 @@ function askDaemon(prompt, cwd, sessionId, meta) {
   });
 }
 
+/** A UserPromptSubmit hook envelope passed as text, or null for an ordinary prompt. */
+function parseHookEnvelope(text) {
+  if (!text || text[0] !== '{') return null;
+  try {
+    const j = JSON.parse(text);
+    if (!j || j.hook_event_name !== 'UserPromptSubmit' || typeof j.prompt !== 'string') return null;
+    return {
+      prompt: j.prompt,
+      cwd: typeof j.cwd === 'string' ? j.cwd : '',
+      session_id: typeof j.session_id === 'string' ? j.session_id : '',
+      turn_id: j.turn_id,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
   // Parse hook input: stdin JSON first, env fallback (manual runs).
   const raw = await readStdin();
@@ -139,7 +156,23 @@ async function main() {
       prompt = raw; // plain-text stdin = the prompt itself
     }
   }
-  if (!prompt) prompt = process.env.USER_PROMPT || '';
+  if (!prompt) {
+    prompt = process.env.USER_PROMPT || '';
+    // The Codex wrapper (~/.codex/hooks/memory-bank/inject-context.sh) reads the
+    // whole hook envelope into USER_PROMPT and leaves stdin empty, so the
+    // "prompt" was JSON: it was embedded as the search query, and with no
+    // session id there was no dedup (174 of 175 multi-injection Codex sessions
+    // re-injected the same facts, measured 2026-10-03). That wrapper is
+    // hash-pinned inside the Codex harness; this script ships with the plugin,
+    // so the envelope is unwrapped here.
+    const envelope = parseHookEnvelope(prompt);
+    if (envelope) {
+      prompt = envelope.prompt;
+      if (!cwd && envelope.cwd) cwd = envelope.cwd;
+      if (!sessionId && envelope.session_id) sessionId = envelope.session_id;
+      if (!client) client = envelope.turn_id ? 'codex' : 'claude-code';
+    }
+  }
   if (!cwd) cwd = process.env.CWD || process.cwd();
   if (!sessionId) sessionId = process.env.SESSION_ID || '';
   const meta = {

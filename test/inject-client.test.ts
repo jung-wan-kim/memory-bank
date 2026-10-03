@@ -14,10 +14,10 @@ import path from 'node:path';
 const REPO = path.resolve(__dirname, '..');
 let tmp: string;
 
-function runHook(input: Record<string, unknown>, env: Record<string, string> = {}): string {
+function runHook(input: Record<string, unknown> | string, env: Record<string, string> = {}): string {
   return execFileSync(process.execPath, ['scripts/inject-context.js'], {
     cwd: REPO, encoding: 'utf8', timeout: 20_000,
-    input: JSON.stringify(input),
+    input: typeof input === 'string' ? input : JSON.stringify(input),
     env: { ...process.env, MEMORY_BANK_CONFIG_DIR: tmp, MEMORY_BANK_CLIENT: '', ...env },
   });
 }
@@ -47,6 +47,24 @@ describe('inject-context.js 클라이언트 거르기', () => {
   it('Codex 봉투(turn_id)는 codex 로 태그되고, 짧은 프롬프트도 이제 로그에 남는다', () => {
     runHook({ prompt: '응', cwd: '/tmp/proj', session_id: 'codex-sess-01', turn_id: 't1', transcript_path: '/x' });
     expect(lastLog()).toMatchObject({ status: 'skipped', reason: 'short', client: 'codex', prompt_len: 1 });
+  });
+
+  it('Codex 래퍼 방식(표준입력 비움 + 봉투를 USER_PROMPT 로)도 프롬프트·세션·작업 경로를 꺼낸다', () => {
+    // ~/.codex/hooks/memory-bank/inject-context.sh 는 USER_PROMPT=$(cat) 로 봉투 전체를 넘긴다
+    const envelope = JSON.stringify({
+      session_id: 'codex-sess-envelope', turn_id: 't9', transcript_path: '/x.jsonl',
+      cwd: '/tmp/codex-proj', hook_event_name: 'UserPromptSubmit', model: 'gpt', prompt: '좋아',
+    });
+    runHook('', { USER_PROMPT: envelope, CWD: '/tmp/wrapper-pwd' });
+    expect(lastLog()).toMatchObject({
+      status: 'skipped', reason: 'short', prompt_len: 2, client: 'codex',
+      has_session: true, project: '/tmp/codex-proj',
+    });
+  });
+
+  it('봉투가 아닌 JSON 텍스트 프롬프트는 그대로 둔다', () => {
+    runHook('', { USER_PROMPT: '{"a":1}' });
+    expect(lastLog()).toMatchObject({ reason: 'short', prompt_len: 7 });
   });
 
   it('래퍼가 준 MEMORY_BANK_CLIENT 가 추론보다 우선한다', () => {
