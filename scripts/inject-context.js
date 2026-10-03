@@ -60,8 +60,10 @@ function injectSocketPath() {
 
 /**
  * Ask the warm daemon. Resolves { context, ledgerKeys } on an answer, or
- * { failed: 'no-daemon' | 'daemon-timeout' | 'daemon-error' } (never rejects) so
- * the caller falls back — the hook must never break a user prompt.
+ * { failed: 'no-daemon' | 'daemon-timeout' | 'daemon-closed' | 'daemon-error' }
+ * (never rejects) so the caller falls back — the hook must never break a user
+ * prompt. 'daemon-closed': the daemon hung up without a full answer; waiting out
+ * the warming deadline after that only delays the fallback.
  */
 function askDaemon(prompt, cwd, sessionId, meta) {
   return new Promise((resolve) => {
@@ -83,10 +85,12 @@ function askDaemon(prompt, cwd, sessionId, meta) {
     conn.on('connect', () => {
       connected = true;
       arm(SOCKET_RESPONSE_TIMEOUT_MS, 'daemon-timeout');
+      // Decode as a stream: a multi-byte character split across chunks stays whole.
+      conn.setEncoding('utf8');
       conn.write(JSON.stringify({ prompt, cwd, session_id: sessionId, ...meta }) + '\n');
       let buf = '';
       conn.on('data', (c) => {
-        buf += c.toString('utf8');
+        buf += c;
         let nl;
         while ((nl = buf.indexOf('\n')) >= 0) {
           const line = buf.slice(0, nl);
@@ -112,6 +116,26 @@ function askDaemon(prompt, cwd, sessionId, meta) {
       });
     });
     conn.on('error', () => done({ failed: connected ? 'daemon-error' : 'no-daemon' }));
+    // After an answer or a timeout `done` has already run; this only catches a hang-up.
+    conn.on('close', () => done({ failed: connected ? 'daemon-closed' : 'no-daemon' }));
+  });
+}
+
+/**
+ * Print the block, then mark its facts as shown for this session — only once
+ * the write has gone through to the hook host's pipe. A host that already left
+ * (EPIPE) received nothing, and recording those facts would keep them out of
+ * every later prompt in the session. Both paths deliver through here, so the
+ * order is the same everywhere: print first, record second.
+ */
+function deliver(context, sessionId, ledgerKeys) {
+  return new Promise((resolve) => {
+    if (!context) return resolve();
+    process.stdout.on('error', () => { /* host gone — the write callback sees it */ });
+    process.stdout.write(context + '\n', (err) => {
+      if (!err && ledgerKeys.length > 0) appendLedger(sessionId, loadLedger(sessionId), ledgerKeys);
+      resolve();
+    });
   });
 }
 
@@ -205,19 +229,16 @@ async function main() {
   // FAST PATH — warm daemon inside a running MCP server.
   const answer = await askDaemon(prompt, cwd, sessionId, meta);
   if (!answer.failed) {
-    if (answer.context) process.stdout.write(answer.context + '\n');
-    // Delivered — only now are these facts "shown" for this session (see
-    // InjectResult in inject-core.ts).
-    if (answer.ledgerKeys.length > 0) appendLedger(sessionId, loadLedger(sessionId), answer.ledgerKeys);
+    await deliver(answer.context, sessionId, answer.ledgerKeys);
     return;
   }
 
   // COLD FALLBACK — compute locally (heavy imports load only here).
   try {
-    const { computeInjectContext } = await import(path.join(__dirname, '../dist/inject-core.js'));
-    const context = await computeInjectContext(prompt, cwd, 'fallback', sessionId || undefined,
+    const { computeInjectResult } = await import(path.join(__dirname, '../dist/inject-core.js'));
+    const { context, ledgerKeys } = await computeInjectResult(prompt, cwd, 'fallback', sessionId || undefined,
       { ...meta, fallback_reason: answer.failed });
-    if (context) process.stdout.write(context + '\n');
+    await deliver(context, sessionId, ledgerKeys);
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     process.stderr.write(`inject-context: error: ${msg}\n`);

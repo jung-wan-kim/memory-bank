@@ -191,12 +191,14 @@ export async function computeInjectResult(userPrompt, project, via, sessionId, m
             ...base, ...queryLen, ...timings, status: 'error',
             duration_ms: Date.now() - t0, error: message.slice(0, 300),
         });
-        return { context: '', ledgerKeys: [] }; // non-fatal: never disrupt the user's prompt
+        return { context: '', ledgerKeys: [], failed: true }; // non-fatal: never disrupt the user's prompt
     }
 }
 /**
- * computeInjectResult + the ledger commit, for a caller that delivers the block
- * itself right away (the cold fallback in scripts/inject-context.js).
+ * computeInjectResult + an immediate ledger commit, for an in-process caller
+ * that uses the block right away. The hook client does not use this: it
+ * commits only after its stdout write succeeds (deliver() in
+ * scripts/inject-context.js).
  */
 export async function computeInjectContext(userPrompt, project, via, sessionId, meta = {}) {
     const { context, ledgerKeys } = await computeInjectResult(userPrompt, project, via, sessionId, meta);

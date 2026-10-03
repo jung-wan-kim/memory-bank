@@ -133,17 +133,41 @@ export const BACKGROUND_PROBES = [
 ];
 
 let probeEmbeddings: number[][] | null = null;
+let probeLoad: Promise<number[][]> | null = null;
+
+/**
+ * The probe embeddings, computed once and published only when complete.
+ * Filling a shared array in place let a concurrent caller see it empty (or
+ * half-filled) and get baseline -1, which passes every fact through the
+ * relevance gate; a failed fill stayed partial for the process lifetime.
+ * Concurrent callers now share the one computation; a failure is forgotten.
+ */
+function backgroundProbes(): Promise<number[][]> {
+  if (probeEmbeddings) return Promise.resolve(probeEmbeddings);
+  if (!probeLoad) {
+    probeLoad = (async () => {
+      const out: number[][] = [];
+      for (const p of BACKGROUND_PROBES) out.push(await generateEmbedding(p, 'passage'));
+      return out;
+    })().then(
+      (done) => {
+        probeEmbeddings = done;
+        return done;
+      },
+      (error) => {
+        probeLoad = null;
+        throw error;
+      },
+    );
+  }
+  return probeLoad;
+}
 
 /** Max cosine similarity between the query embedding and the background probes. */
 export async function queryBaseline(queryEmbedding: number[]): Promise<number> {
-  if (!probeEmbeddings) {
-    probeEmbeddings = [];
-    for (const p of BACKGROUND_PROBES) {
-      probeEmbeddings.push(await generateEmbedding(p, 'passage'));
-    }
-  }
+  const probes = await backgroundProbes();
   let max = -1;
-  for (const probe of probeEmbeddings) {
+  for (const probe of probes) {
     let dot = 0;
     for (let i = 0; i < probe.length; i++) dot += probe[i] * queryEmbedding[i];
     if (dot > max) max = dot;

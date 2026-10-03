@@ -51975,15 +51975,31 @@ var BACKGROUND_PROBES = [
   "Let me think about what to do next"
 ];
 var probeEmbeddings = null;
-async function queryBaseline(queryEmbedding) {
-  if (!probeEmbeddings) {
-    probeEmbeddings = [];
-    for (const p of BACKGROUND_PROBES) {
-      probeEmbeddings.push(await generateEmbedding(p, "passage"));
-    }
+var probeLoad = null;
+function backgroundProbes() {
+  if (probeEmbeddings) return Promise.resolve(probeEmbeddings);
+  if (!probeLoad) {
+    probeLoad = (async () => {
+      const out = [];
+      for (const p of BACKGROUND_PROBES) out.push(await generateEmbedding(p, "passage"));
+      return out;
+    })().then(
+      (done) => {
+        probeEmbeddings = done;
+        return done;
+      },
+      (error62) => {
+        probeLoad = null;
+        throw error62;
+      }
+    );
   }
+  return probeLoad;
+}
+async function queryBaseline(queryEmbedding) {
+  const probes = await backgroundProbes();
   let max = -1;
-  for (const probe of probeEmbeddings) {
+  for (const probe of probes) {
     let dot = 0;
     for (let i = 0; i < probe.length; i++) dot += probe[i] * queryEmbedding[i];
     if (dot > max) max = dot;
@@ -53325,7 +53341,7 @@ async function computeInjectResult(userPrompt, project, via, sessionId, meta3 = 
       duration_ms: Date.now() - t0,
       error: message.slice(0, 300)
     });
-    return { context: "", ledgerKeys: [] };
+    return { context: "", ledgerKeys: [], failed: true };
   }
 }
 
@@ -53354,6 +53370,7 @@ function injectSocketPathIn(indexDir, version2) {
 }
 
 // src/inject-daemon.ts
+var REQUEST_IDLE_MS = Number(process.env.MEMORY_BANK_INJECT_IDLE_MS) || 1e4;
 function injectSocketPath() {
   return injectSocketPathIn(getIndexDir(), ownPackageVersion());
 }
@@ -53361,16 +53378,21 @@ function startInjectDaemon() {
   const sockPath = injectSocketPath();
   const server2 = net.createServer((conn) => {
     let buf = "";
-    conn.setTimeout(1e4, () => conn.destroy());
+    let handled = false;
+    conn.setEncoding("utf8");
+    conn.setTimeout(REQUEST_IDLE_MS, () => conn.destroy());
     conn.on("error", () => {
     });
     conn.on("data", (chunk) => {
-      buf += chunk.toString("utf8");
+      if (handled) return;
+      buf += chunk;
       const nl = buf.indexOf("\n");
       if (nl < 0) {
         if (buf.length > 1e6) conn.destroy();
         return;
       }
+      handled = true;
+      conn.setTimeout(0);
       const line = buf.slice(0, nl);
       void (async () => {
         try {
@@ -53378,7 +53400,7 @@ function startInjectDaemon() {
           if (!embeddingsReady() && injectionQuery(String(req.prompt ?? "")).reason === null) {
             conn.write(JSON.stringify({ warming: true }) + "\n");
           }
-          const { context, ledgerKeys } = await computeInjectResult(
+          const { context, ledgerKeys, failed } = await computeInjectResult(
             String(req.prompt ?? ""),
             String(req.cwd ?? process.cwd()),
             "daemon",
@@ -53388,7 +53410,7 @@ function startInjectDaemon() {
               entrypoint: req.entrypoint ? String(req.entrypoint).slice(0, 40) : void 0
             }
           );
-          conn.end(JSON.stringify({ ok: true, context, ledger_keys: ledgerKeys }) + "\n");
+          conn.end(JSON.stringify(failed ? { ok: false } : { ok: true, context, ledger_keys: ledgerKeys }) + "\n");
         } catch {
           try {
             conn.end(JSON.stringify({ ok: false }) + "\n");

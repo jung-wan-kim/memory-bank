@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { injectSocketPathIn, ownPackageVersion } from '../src/version-guard.js';
 
 vi.mock('../src/embeddings.js', async (orig) => ({
@@ -35,14 +35,22 @@ function fakeDaemon(sockPath: string, context: string): Promise<net.Server> {
   });
 }
 
+const clientEnv = () => ({ ...process.env, MEMORY_BANK_CONFIG_DIR: tmp, MEMORY_BANK_CLIENT: '' });
+
+/** 클라이언트 stdout. 20초 안에 끝나지 않아 강제 종료돼도 받은 만큼 돌려준다 — 판정은 단언이 한다. */
 function runClient(input: object): Promise<string> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const child = execFile(process.execPath, ['scripts/inject-context.js'], {
-      cwd: REPO, timeout: 20_000,
-      env: { ...process.env, MEMORY_BANK_CONFIG_DIR: tmp, MEMORY_BANK_CLIENT: '' },
-    }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+      cwd: REPO, timeout: 20_000, env: clientEnv(),
+    }, (_err, stdout) => resolve(String(stdout ?? '')));
     child.stdin!.end(JSON.stringify(input));
   });
+}
+
+function readInjectLog(): Array<Record<string, unknown>> {
+  const f = path.join(tmp, 'conversation-index', 'logs', 'inject-context.jsonl');
+  if (!fs.existsSync(f)) return [];
+  return fs.readFileSync(f, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
 }
 
 async function waitFor(pred: () => boolean, ms = 3000): Promise<boolean> {
@@ -130,9 +138,48 @@ describe('데몬 응답 프로토콜 — 준비 중 신호와 원장 기록', ()
     expect(out).not.toContain('LATE-BLOCK');
     const ledger = fs.existsSync(ledgerFile()) ? JSON.parse(fs.readFileSync(ledgerFile(), 'utf8')) : [];
     expect(ledger).not.toContain('late-1');
-    const log = fs.readFileSync(path.join(tmp, 'conversation-index', 'logs', 'inject-context.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-    expect(log.at(-1)).toMatchObject({ via: 'fallback', fallback_reason: 'daemon-timeout' });
+    expect(readInjectLog().at(-1)).toMatchObject({ via: 'fallback', fallback_reason: 'daemon-timeout' });
   }, 60_000);
+
+  it('준비 중 신호 뒤 데몬이 답 없이 연결을 닫으면 대기 한도(20초)를 기다리지 않고 바로 대체 경로로 간다', async () => {
+    const ci = path.join(tmp, 'conversation-index');
+    await scriptedDaemon(injectSocketPathIn(ci, VERSION), (c) => {
+      c.write(JSON.stringify({ warming: true }) + '\n');
+      setTimeout(() => c.end(), 100);
+    });
+    const t0 = Date.now();
+    await runClient(PROMPT);
+    expect(readInjectLog().at(-1), '연결 종료를 듣지 않으면 20초 뒤 daemon-timeout').toMatchObject({ via: 'fallback', fallback_reason: 'daemon-closed' });
+    expect(Date.now() - t0).toBeLessThan(15_000);
+  }, 60_000);
+
+  it('응답이 다바이트 문자 가운데서 쪼개져 와도 블록을 그대로 출력한다', async () => {
+    const ci = path.join(tmp, 'conversation-index');
+    const BLOCK = '📌 관련 과거 결정:\n- [decision] 배포는 Vercel 프리뷰로 확인한 뒤 병합한다';
+    const reply = Buffer.from(JSON.stringify({ ok: true, context: BLOCK, ledger_keys: [] }) + '\n');
+    const k = reply.findIndex((b) => b >= 0xe0) + 1; // 첫 다바이트 글자의 가운데
+    await scriptedDaemon(injectSocketPathIn(ci, VERSION), (c) => {
+      c.write(reply.subarray(0, k));
+      setTimeout(() => c.end(reply.subarray(k)), 80);
+    });
+    const out = await runClient(PROMPT);
+    expect(out).toContain(BLOCK);
+  }, 30_000);
+
+  it('출력을 받는 쪽이 파이프를 닫아 전달에 실패하면 원장에 기록하지 않는다', async () => {
+    const ci = path.join(tmp, 'conversation-index');
+    await scriptedDaemon(injectSocketPathIn(ci, VERSION), (c) => {
+      setTimeout(() => c.end(JSON.stringify({ ok: true, context: 'UNDELIVERED-BLOCK', ledger_keys: ['f-undelivered'] }) + '\n'), 300);
+    });
+    await new Promise<void>((resolve) => {
+      const child = spawn(process.execPath, ['scripts/inject-context.js'], { cwd: REPO, env: clientEnv(), stdio: ['pipe', 'pipe', 'ignore'] });
+      child.stdout!.destroy(); // 받는 쪽(훅 호스트)이 먼저 떠났다
+      child.on('exit', () => resolve());
+      child.stdin!.end(JSON.stringify(PROMPT));
+    });
+    const ledger = fs.existsSync(ledgerFile()) ? JSON.parse(fs.readFileSync(ledgerFile(), 'utf8')) : [];
+    expect(ledger, '전달되지 않은 블록의 fact').not.toContain('f-undelivered');
+  }, 30_000);
 });
 
 describe('데몬은 옛 버전 소켓과 무관하게 자기 소켓에 붙는다', () => {
