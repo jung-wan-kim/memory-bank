@@ -44,21 +44,10 @@ import { openReadOnlyDatabase } from '../dist/db.js';
 import { getTopFacts } from '../dist/fact-db.js';
 import { factTextKey, truncateFact } from '../dist/fact-text.js';
 import { loadLedger, appendLedger } from '../dist/inject-ledger.js';
+import { readHookInput } from '../dist/hook-stdin.js';
 
 /** Upper bound for the whole block (10 facts × 160 chars cap ≈ 1,700 worst case). */
 const BLOCK_CHAR_BUDGET = 1500;
-
-function readStdin(timeoutMs = 3000) {
-  return new Promise((resolve) => {
-    if (process.stdin.isTTY) return resolve('');
-    let data = '';
-    const timer = setTimeout(() => resolve(data), timeoutMs);
-    process.stdin.setEncoding('utf8');
-    process.stdin.on('data', (chunk) => { data += chunk; });
-    process.stdin.on('end', () => { clearTimeout(timer); resolve(data); });
-    process.stdin.on('error', () => { clearTimeout(timer); resolve(data); });
-  });
-}
 
 /**
  * Write to stdout; resolves true once the write has gone through, false when it
@@ -75,7 +64,7 @@ function writeOut(text) {
 }
 
 async function main() {
-  const raw = await readStdin();
+  const raw = await readHookInput(process.stdin, 3000);
   let input = {};
   try { input = JSON.parse(raw); } catch { /* not JSON — fall back to env */ }
 

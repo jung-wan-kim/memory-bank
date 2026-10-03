@@ -47,7 +47,9 @@ function exchange(writes: Array<Buffer | string>, gapMs = 60): Promise<{ raw: st
     c.on('close', () => clearTimeout(deadline));
     c.on('close', () => {
       const raw = Buffer.concat(chunks).toString('utf8');
-      resolve({ raw, lines: raw.split('\n').filter(Boolean).map((l) => JSON.parse(l)) });
+      // 잘렸거나 JSON 이 아닌 줄도 단언이 판정하도록 값으로 남긴다(핸들러에서 던지면 시간 초과로 끝난다)
+      const parse = (l: string) => { try { return JSON.parse(l); } catch { return { unparsable: l }; } };
+      resolve({ raw, lines: raw.split('\n').filter(Boolean).map(parse) });
     });
   });
 }

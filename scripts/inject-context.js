@@ -29,6 +29,7 @@ import { appendInjectLog } from '../dist/inject-log.js';
 import { injectSocketPathIn, ownPackageVersion } from '../dist/version-guard.js';
 import { selfHealDeps } from '../dist/deps-heal.js';
 import { loadLedger, appendLedger } from '../dist/inject-ledger.js';
+import { readHookInput } from '../dist/hook-stdin.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -39,20 +40,6 @@ const SOCKET_RESPONSE_TIMEOUT_MS = 3000;
 // session start). Loading a second copy cold costs the same ~5s and doubles the
 // CPU, so wait for the one already loading — but not forever.
 const SOCKET_WARMING_TIMEOUT_MS = 20000;
-
-function readStdin(timeoutMs = 2000) {
-  return new Promise((resolve) => {
-    if (process.stdin.isTTY) return resolve('');
-    let data = '';
-    const timer = setTimeout(() => resolve(data), timeoutMs);
-    // A large envelope arrives in several chunks; decode as a stream so a
-    // multi-byte character split across chunks stays whole.
-    process.stdin.setEncoding('utf8');
-    process.stdin.on('data', (c) => (data += c));
-    process.stdin.on('end', () => { clearTimeout(timer); resolve(data); });
-    process.stdin.on('error', () => { clearTimeout(timer); resolve(data); });
-  });
-}
 
 function injectSocketPath() {
   // Mirrors paths.ts getIndexDir() without importing the heavy dist chain.
@@ -171,7 +158,7 @@ function parseHookEnvelope(text) {
 
 async function main() {
   // Parse hook input: stdin JSON first, env fallback (manual runs).
-  const raw = await readStdin();
+  const raw = await readHookInput(process.stdin, 2000);
   let prompt = '';
   let cwd = '';
   let sessionId = '';
