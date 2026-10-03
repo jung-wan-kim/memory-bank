@@ -695,15 +695,34 @@ topK = 2) {
     const similar = searchSimilarFacts(db, embeddingArray, newFact.scope_project, topK, 0.89);
     const candidates = similar.filter((s) => s.fact.id !== newFact.id);
     const reverseRelation = db.prepare(`SELECT 1 FROM ontology_relations WHERE source_fact_id = ? AND target_fact_id = ? LIMIT 1`);
+    let exchangeTime;
+    const statedAt = (fact) => {
+        try {
+            exchangeTime ??= db.prepare(`SELECT MIN(timestamp) AS t FROM exchanges WHERE id IN (SELECT value FROM json_each(?))`);
+            const ids = (fact.source_exchange_ids ?? []).filter((x) => typeof x === 'string' && !x.startsWith('memory-doc:'));
+            if (ids.length > 0) {
+                const t = parseTimestamp(exchangeTime.get(JSON.stringify(ids))?.t);
+                if (Number.isFinite(t))
+                    return t;
+            }
+        }
+        catch { /* no exchanges table (fresh DB) — storage time below */ }
+        return parseTimestamp(fact.created_at);
+    };
     for (const { fact: candidate } of candidates) {
-        // "New" is the later-created fact, not the one being processed. The
-        // backfill worker walks historic facts in arbitrary order, and framing the
-        // processed (often older) fact as "new" made the model write
+        // "New" is the fact whose content was stated later, not the one being
+        // processed. The backfill worker walks historic facts in arbitrary order,
+        // and framing the processed (often older) fact as "new" made the model write
         // older SUPERSEDES newer — 22.3% of SUPERSEDES rows ran against creation
         // order, and processing both sides of a pair produced 245 mutual
-        // supersessions (measured 2026-10-03). Ties fall back to id order so the
-        // orientation is stable across runs.
-        const [newer, older] = isNewer(newFact, candidate) ? [newFact, candidate] : [candidate, newFact];
+        // supersessions (measured 2026-10-03). Storage time alone is a poor clock:
+        // backfill extraction stores an old session's facts today — 39.6% of facts
+        // with a resolvable source exchange were stored more than 7 days after it
+        // (sample of 2,000, 2026-10-03). So the earliest source exchange decides,
+        // with storage time only when no exchange resolves; ties go to id order so
+        // the orientation is stable across runs.
+        const [newer, older] = isNewer(statedAt(newFact), newFact.id, statedAt(candidate), candidate.id)
+            ? [newFact, candidate] : [candidate, newFact];
         // A legacy row already points the other way (older → newer, written
         // before this orientation fix): judging the pair again would add
         // newer → older and complete a mutual supersession. Same-direction
@@ -730,11 +749,21 @@ topK = 2) {
         }
     }
 }
-/** a was created after b (id order breaks exact-timestamp ties). */
-function isNewer(a, b) {
-    if (a.created_at !== b.created_at)
-        return a.created_at > b.created_at;
-    return a.id > b.id;
+/** Epoch ms of an ISO or SQLite ('YYYY-MM-DD HH:MM:SS', UTC) timestamp; NaN if unparseable. */
+function parseTimestamp(value) {
+    if (!value)
+        return NaN;
+    const v = String(value).trim();
+    const iso = v.includes('T') ? v : v.replace(' ', 'T');
+    return Date.parse(/[zZ]|[+-]\d\d:?\d\d$/.test(iso) ? iso : iso + 'Z');
+}
+/** a was stated after b; an unknown time counts as oldest, ids break ties. */
+function isNewer(ta, aId, tb, bId) {
+    const x = Number.isFinite(ta) ? ta : -Infinity;
+    const y = Number.isFinite(tb) ? tb : -Infinity;
+    if (x !== y)
+        return x > y;
+    return aId > bId;
 }
 export async function classifyAndLinkFact(db, factId, embedding) {
     const row = db.prepare(`SELECT * FROM facts WHERE id = ? AND is_active = 1`).get(factId);

@@ -16,6 +16,8 @@ vi.mock('../src/embeddings.js', () => ({
   EMBEDDING_VERSION: 2,
   EMBEDDING_MODEL: 'Xenova/paraphrase-multilingual-MiniLM-L12-v2',
 }));
+// fact-db/db read the version stamp from the light module (2026-10-03 split) — keep it in step
+vi.mock('../src/embedding-version.js', () => ({ EMBEDDING_VERSION: 2, EMBEDDING_MODEL: 'Xenova/paraphrase-multilingual-MiniLM-L12-v2' }));
 
 import { callHaiku, parseJsonResponse } from '../src/llm.js';
 import {
@@ -1040,6 +1042,50 @@ describe('ontology-classifier', () => {
       expect(prompt).toContain('Existing fact: "Use npm workspaces for the monorepo"');
       const rel = db.prepare('SELECT source_fact_id, target_fact_id FROM ontology_relations').all();
       expect(rel).toEqual([{ source_fact_id: 'newer-db', target_fact_id: 'older-processed' }]);
+    });
+
+    it('방향은 저장 시각이 아니라 원천 대화 시각으로 — 오늘 백필된 옛 세션 fact 는 옛 것이다', async () => {
+      db.exec('CREATE TABLE IF NOT EXISTS exchanges (id TEXT PRIMARY KEY, timestamp TEXT)');
+      db.prepare('INSERT INTO exchanges (id, timestamp) VALUES (?, ?), (?, ?)').run(
+        'ex-march', '2026-03-10T09:00:00.000Z', 'ex-sept', '2026-09-05T09:00:00.000Z');
+      const embeddingArr = new Array(384).fill(0.1);
+      insertTestFact(db, 'sept-decision', 'Use pnpm workspaces for the monorepo', embeddingArr);
+      db.prepare(`UPDATE facts SET created_at = '2026-09-05T09:01:00.000Z', source_exchange_ids = '["ex-sept"]' WHERE id = 'sept-decision'`).run();
+
+      (parseJsonResponse as ReturnType<typeof vi.fn>).mockReturnValue({
+        has_relation: true, relation_type: 'SUPERSEDES', reasoning: 'pnpm replaced npm',
+      });
+      (callHaiku as ReturnType<typeof vi.fn>).mockResolvedValue('{}');
+
+      // 3월 세션에서 말한 결정이 10월 백필로 오늘 저장됐다 — 저장 시각은 더 늦다
+      const backfilled = makeFact({
+        id: 'march-backfilled', fact: 'Use npm workspaces for the monorepo',
+        created_at: '2026-10-03T00:00:00.000Z', source_exchange_ids: ['ex-march'],
+        embedding: new Float32Array(embeddingArr),
+      });
+      await detectRelations(db, backfilled);
+
+      const rel = db.prepare('SELECT source_fact_id, target_fact_id FROM ontology_relations').all();
+      expect(rel).toEqual([{ source_fact_id: 'sept-decision', target_fact_id: 'march-backfilled' }]);
+    });
+
+    it('저장 시각 형식이 섞여도(SQLite 형식 vs ISO) 시각으로 비교한다', async () => {
+      const embeddingArr = new Array(384).fill(0.1);
+      insertTestFact(db, 'sqlite-fmt', 'Use pnpm workspaces for the monorepo', embeddingArr);
+      // 같은 날 10:00 (SQLite 형식) — 문자열 비교로는 ' ' < 'T' 라 09:00 ISO 보다 옛 것으로 읽힌다
+      db.prepare(`UPDATE facts SET created_at = '2026-09-01 10:00:00' WHERE id = 'sqlite-fmt'`).run();
+      (parseJsonResponse as ReturnType<typeof vi.fn>).mockReturnValue({
+        has_relation: true, relation_type: 'SUPERSEDES', reasoning: 'x',
+      });
+      (callHaiku as ReturnType<typeof vi.fn>).mockResolvedValue('{}');
+
+      const iso = makeFact({
+        id: 'iso-fmt', fact: 'Use npm workspaces for the monorepo',
+        created_at: '2026-09-01T09:00:00.000Z', embedding: new Float32Array(embeddingArr),
+      });
+      await detectRelations(db, iso);
+      const rel = db.prepare('SELECT source_fact_id, target_fact_id FROM ontology_relations').all();
+      expect(rel).toEqual([{ source_fact_id: 'sqlite-fmt', target_fact_id: 'iso-fmt' }]);
     });
 
     it('반대 방향(옛 → 새) 관계가 이미 있으면 다시 판정하지 않는다 (상호 대체 245쌍의 원인)', async () => {

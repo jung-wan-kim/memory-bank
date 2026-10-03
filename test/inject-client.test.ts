@@ -62,6 +62,27 @@ describe('inject-context.js 클라이언트 거르기', () => {
     });
   });
 
+  it('앞에 공백이 붙은 봉투도 푼다', () => {
+    const envelope = '  \n' + JSON.stringify({
+      session_id: 'codex-sess-ws', turn_id: 't2', cwd: '/tmp/codex-ws', hook_event_name: 'UserPromptSubmit', prompt: '응',
+    });
+    runHook('', { USER_PROMPT: envelope });
+    expect(lastLog()).toMatchObject({ reason: 'short', prompt_len: 1, client: 'codex', project: '/tmp/codex-ws' });
+  });
+
+  it('쓸 수 없는 봉투(다른 이벤트·문자열이 아닌 prompt)는 JSON 을 검색하지 않고 건너뛴다', () => {
+    const long = { session_id: 's', cwd: '/tmp/x', turn_id: 't', model: 'gpt-5', transcript_path: '/a/very/long/path.jsonl' };
+    runHook('', { USER_PROMPT: JSON.stringify({ ...long, hook_event_name: 'SessionStart' }) });
+    expect(lastLog()).toMatchObject({ status: 'skipped', reason: 'hook-envelope', via: 'client' });
+    runHook('', { USER_PROMPT: JSON.stringify({ ...long, hook_event_name: 'UserPromptSubmit', prompt: ['배열'] }) });
+    expect(lastLog()).toMatchObject({ status: 'skipped', reason: 'hook-envelope' });
+  });
+
+  it('turn_id 없는 봉투는 manual 로 표기한다 (이 경로는 래퍼·수동 실행만 쓴다)', () => {
+    runHook('', { USER_PROMPT: JSON.stringify({ session_id: 's9', cwd: '/tmp/m', hook_event_name: 'UserPromptSubmit', prompt: '응' }) });
+    expect(lastLog()).toMatchObject({ reason: 'short', client: 'manual' });
+  });
+
   it('봉투가 아닌 JSON 텍스트 프롬프트는 그대로 둔다', () => {
     runHook('', { USER_PROMPT: '{"a":1}' });
     expect(lastLog()).toMatchObject({ reason: 'short', prompt_len: 7 });

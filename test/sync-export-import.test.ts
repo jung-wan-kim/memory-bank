@@ -11,6 +11,8 @@ vi.mock('../src/embeddings.js', () => ({
   EMBEDDING_VERSION: 2,
   EMBEDDING_MODEL: 'Xenova/paraphrase-multilingual-MiniLM-L12-v2',
 }));
+// fact-db/db read the version stamp from the light module (2026-10-03 split) — keep it in step
+vi.mock('../src/embedding-version.js', () => ({ EMBEDDING_VERSION: 2, EMBEDDING_MODEL: 'Xenova/paraphrase-multilingual-MiniLM-L12-v2' }));
 
 const originalEnv = { ...process.env };
 
@@ -160,6 +162,34 @@ describe('sync-export/import', () => {
     const { importFromSync } = await import('../src/sync-import.js');
     const result = await importFromSync();
     expect(result).toMatchObject({ newDomains: 1, newCategories: 0, newFacts: 1, rejectedJunk: 3 });
+  });
+
+  it('거부된 도메인 아래 카테고리와 그 카테고리를 가리키는 fact 는 끊긴 참조로 들이지 않는다', async () => {
+    const { getSyncDir } = await import('../src/sync-export.js');
+    const syncDir = getSyncDir();
+    const now = new Date().toISOString();
+    fs.writeFileSync(path.join(syncDir, 'ontology-domains.jsonl'), [
+      JSON.stringify({ id: 'q-dom', name: '?', description: null, created_at: now }),
+    ].join('\n') + '\n');
+    fs.writeFileSync(path.join(syncDir, 'ontology-categories.jsonl'),
+      JSON.stringify({ id: 'orphan-cat', domain_id: 'q-dom', name: 'State Management', description: null, created_at: now }) + '\n');
+    fs.writeFileSync(path.join(syncDir, 'facts.jsonl'),
+      JSON.stringify({ id: 'ref-fact', fact: 'Redux Toolkit manages client state', category: 'decision', scope_type: 'global', scope_project: null,
+        source_exchange_ids: '[]', created_at: now, updated_at: now, consolidated_count: 1, ontology_category_id: 'orphan-cat' }) + '\n');
+
+    const { importFromSync } = await import('../src/sync-import.js');
+    const result = await importFromSync();
+    expect(result).toMatchObject({ newDomains: 0, newCategories: 0, newFacts: 1, rejectedJunk: 2, detachedCategoryRefs: 1 });
+
+    const { initDatabase } = await import('../src/db.js');
+    const db = initDatabase();
+    try {
+      const row = db.prepare("SELECT ontology_category_id FROM facts WHERE id = 'ref-fact'").get() as { ontology_category_id: string | null };
+      expect(row.ontology_category_id, '재분류 대기(NULL)로 저장').toBeNull();
+      expect(db.prepare("SELECT COUNT(*) AS n FROM ontology_categories WHERE id = 'orphan-cat'").get()).toEqual({ n: 0 });
+    } finally {
+      db.close();
+    }
   });
 
   it('should skip duplicate records on re-import', async () => {

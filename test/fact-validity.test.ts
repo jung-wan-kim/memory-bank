@@ -38,7 +38,7 @@ describe('factRejectReason', () => {
 });
 
 describe('ontologyNameRejectReason', () => {
-  it.each(['domain name', 'existing or new domain name', '...', 'existing or new', 'category name', 'existing or new category name', 'Frontend|Backend', '<domain>'])(
+  it.each(['domain name', 'existing or new domain name', '...', 'existing or new', 'category name', 'existing or new category name', 'Frontend|Backend', '<domain>', '?', ':', '— ?'])(
     '%s 는 이름이 아니다', (name) => {
       expect(ontologyNameRejectReason(name)).not.toBeNull();
     });

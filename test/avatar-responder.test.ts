@@ -16,6 +16,8 @@ vi.mock('../src/embeddings.js', () => ({
   EMBEDDING_VERSION: 2,
   EMBEDDING_MODEL: 'Xenova/paraphrase-multilingual-MiniLM-L12-v2',
 }));
+// fact-db/db read the version stamp from the light module (2026-10-03 split) — keep it in step
+vi.mock('../src/embedding-version.js', () => ({ EMBEDDING_VERSION: 2, EMBEDDING_MODEL: 'Xenova/paraphrase-multilingual-MiniLM-L12-v2' }));
 
 import { callHaiku, parseJsonResponse } from '../src/llm.js';
 import { askAvatar } from '../src/avatar-responder.js';

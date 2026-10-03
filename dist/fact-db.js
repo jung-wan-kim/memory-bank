@@ -1,8 +1,8 @@
 import { randomUUID } from 'crypto';
 import { canonicalizeProject } from './project-canon.js';
-import { EMBEDDING_VERSION } from './embeddings.js';
+import { EMBEDDING_VERSION } from './embedding-version.js';
 import { getVecTableDtype, embeddingToVecBlob, vecParamSql, normalizeVecDistance, l2DistanceToSimilarity } from './db.js';
-import { factRejectReason } from './fact-validity.js';
+import { factRejectReason, factTextRejectReason } from './fact-validity.js';
 /** dtype-aware MATCH/INSERT param for a fact-side vec table: the SQL
  * placeholder (vec_int8(?) wrap for int8) and the correctly-encoded blob.
  * float32 tables (pre-migration DBs) and int8 tables (fresh DBs / migrated)
@@ -61,6 +61,11 @@ export function getFactsByProject(db, project) {
   `).all(canon).map(rowToFact);
 }
 export function updateFact(db, id, params) {
+    if (params.fact !== undefined) {
+        const reason = factTextRejectReason(params.fact);
+        if (reason)
+            throw new Error(`updateFact refused (${reason}): ${JSON.stringify(String(params.fact)).slice(0, 80)}`);
+    }
     const now = new Date().toISOString();
     const updates = ['updated_at = ?'];
     const values = [now];

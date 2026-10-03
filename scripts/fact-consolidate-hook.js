@@ -13,12 +13,21 @@
  * SessionStart hook's plain stdout to the session only when the hook runs
  * synchronously — while it was `async: true` the key-facts block reached Codex
  * (whose wrapper reads stdout) but never Claude Code (verified 2026-10-03).
- * Synchronous means Claude's first response waits for this process, so it only
- * does the fast reads (~0.3s: imports, DB open, top facts) and hands every slow
- * step to detached children it never waits for:
- *  - fact-consolidate-worker.js — LLM-based consolidation
- *  - session-start-maintenance.js — pending-work probes (~3.9s) that decide
- *    whether to resume the re-embed / ontology / extraction backfill workers
+ * Synchronous means Claude's first response waits for this process, so:
+ *  - it reads through a READ-ONLY handle (openReadOnlyDatabase): no migrations,
+ *    no write lock, never queued behind the workers below;
+ *  - its imports stay light — no embedding model (embedding-version.ts split);
+ *  - it reads and prints FIRST, then starts every slow step as a detached child
+ *    it never waits for:
+ *     - fact-consolidate-worker.js — LLM-based consolidation
+ *     - session-start-maintenance.js — pending-work probes (~3.9s) that decide
+ *       whether to resume the re-embed / ontology / extraction backfill workers
+ * Measured 2026-10-03: ~0.17s wall per run (fresh node process, warm cache).
+ * hooks.json caps it at 5s (~30x that) — a bound on how long a cold or wedged
+ * start can hold the first response, at the cost of that session's key facts.
+ *
+ * The printed facts are recorded in the session's injection ledger, so the
+ * per-prompt injection does not repeat a fact this block already showed.
  *
  * Session continuity and the intent profile are opt-in
  * (MEMORY_BANK_SESSION_CONTINUITY=1, MEMORY_BANK_INTENT_PROFILE=1). They compared
@@ -31,10 +40,13 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { initDatabase } from '../dist/db.js';
+import { openReadOnlyDatabase } from '../dist/db.js';
 import { getTopFacts } from '../dist/fact-db.js';
-import { getLastSessionContext, formatSessionContinuity } from '../dist/session-continuity.js';
-import { predictIntent, formatIntentContext } from '../dist/intent-predictor.js';
+import { factTextKey, truncateFact } from '../dist/fact-text.js';
+import { loadLedger, appendLedger } from '../dist/inject-ledger.js';
+
+/** Upper bound for the whole block (10 facts × 160 chars cap ≈ 1,700 worst case). */
+const BLOCK_CHAR_BUDGET = 1500;
 
 function readStdin(timeoutMs = 3000) {
   return new Promise((resolve) => {
@@ -56,7 +68,39 @@ async function main() {
   const project = input.cwd || process.env.CWD || process.env.PROJECT_DIR || process.cwd();
 
   try {
-    // 1. Offload slow work to detached children this hook never waits for:
+    // 1. Key facts — read-only, before any worker is started (header). A read
+    //    failure is reported on stderr and must not stop the workers below.
+    try {
+      const db = openReadOnlyDatabase();
+      const shown = [];
+      if (db) try {
+        const lines = [];
+        let chars = 0;
+        for (const fact of getTopFacts(db, project, 10)) {
+          const line = `- [${fact.category}] ${truncateFact(fact.fact)} (${fact.consolidated_count}x confirmed)`;
+          if (chars + line.length > BLOCK_CHAR_BUDGET) break;
+          lines.push(line);
+          shown.push(fact);
+          chars += line.length + 1;
+        }
+        if (lines.length > 0) {
+          console.log('');
+          console.log('# Project Key Facts (auto-recalled)');
+          for (const line of lines) console.log(line);
+        }
+      } finally {
+        db.close();
+      }
+      // Same keys the per-prompt injection dedups on (id + text) — see header.
+      if (shown.length > 0 && input.session_id) {
+        appendLedger(input.session_id, loadLedger(input.session_id),
+          shown.flatMap((f) => [f.id, factTextKey(f)]));
+      }
+    } catch (error) {
+      console.error('fact-consolidate: key facts unavailable:', error instanceof Error ? error.message : error);
+    }
+
+    // 2. Offload slow work to detached children this hook never waits for:
     //    LLM consolidation, and the pending-work probes for backfill workers.
     //    MEMORY_BANK_SESSION_START_SPAWN=0 skips them (tests run this hook for
     //    its output and must not start LLM workers against a fixture DB).
@@ -79,21 +123,9 @@ async function main() {
       }
     }
 
-    // 2. Inject top facts as context (fast, no LLM)
-    const db = initDatabase();
-
-    const topFacts = getTopFacts(db, project, 10);
-    if (topFacts.length > 0) {
-      console.log('');
-      console.log('# Project Key Facts (auto-recalled)');
-      for (const fact of topFacts) {
-        console.log(`- [${fact.category}] ${fact.fact} (${fact.consolidated_count}x confirmed)`);
-      }
-    }
-    db.close();
-
-    // 3. Inject last session context (for continuity) — opt-in, see header
+    // 3. Last session context (for continuity) — opt-in, see header
     if (process.env.MEMORY_BANK_SESSION_CONTINUITY === '1') try {
+      const { getLastSessionContext, formatSessionContinuity } = await import('../dist/session-continuity.js');
       const lastSession = getLastSessionContext(project);
       if (lastSession) {
         console.log('');
@@ -103,8 +135,9 @@ async function main() {
       // Non-fatal: session continuity is best-effort
     }
 
-    // 4. Inject project intent profile — opt-in, see header
+    // 4. Project intent profile — opt-in, see header
     if (process.env.MEMORY_BANK_INTENT_PROFILE === '1') try {
+      const { predictIntent, formatIntentContext } = await import('../dist/intent-predictor.js');
       const intent = predictIntent(project);
       const intentCtx = formatIntentContext(intent);
       if (intentCtx) {

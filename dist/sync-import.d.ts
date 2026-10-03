@@ -9,4 +9,5 @@ export declare function importFromSync(): Promise<{
     newCategories: number;
     newRelations: number;
     rejectedJunk: number;
+    detachedCategoryRefs: number;
 }>;

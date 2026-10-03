@@ -1,5 +1,5 @@
-export declare const EMBEDDING_MODEL: string;
-export declare const EMBEDDING_VERSION: number;
+import { EMBEDDING_MODEL, EMBEDDING_VERSION } from './embedding-version.js';
+export { EMBEDDING_MODEL, EMBEDDING_VERSION };
 export type EmbeddingMode = 'query' | 'passage';
 export declare function initEmbeddings(): Promise<void>;
 /**

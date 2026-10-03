@@ -2,9 +2,9 @@ import Database from 'better-sqlite3';
 import { randomUUID } from 'crypto';
 import type { Fact, FactRevision } from './types.js';
 import { canonicalizeProject } from './project-canon.js';
-import { EMBEDDING_VERSION } from './embeddings.js';
+import { EMBEDDING_VERSION } from './embedding-version.js';
 import { getVecTableDtype, embeddingToVecBlob, vecParamSql, normalizeVecDistance, l2DistanceToSimilarity } from './db.js';
-import { factRejectReason } from './fact-validity.js';
+import { factRejectReason, factTextRejectReason } from './fact-validity.js';
 
 type FactVecTable = 'vec_facts' | 'vec_facts_kr' | 'vec_categories';
 
@@ -113,6 +113,10 @@ export function getFactsByProject(db: Database.Database, project: string): Fact[
 }
 
 export function updateFact(db: Database.Database, id: string, params: UpdateFactParams): void {
+  if (params.fact !== undefined) {
+    const reason = factTextRejectReason(params.fact);
+    if (reason) throw new Error(`updateFact refused (${reason}): ${JSON.stringify(String(params.fact)).slice(0, 80)}`);
+  }
   const now = new Date().toISOString();
   const updates: string[] = ['updated_at = ?'];
   const values: unknown[] = [now];

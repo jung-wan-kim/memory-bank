@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { promptSkipReason, MIN_PROMPT_CHARS } from '../src/prompt-gate.js';
+import { promptSkipReason, injectionQuery, MIN_PROMPT_CHARS } from '../src/prompt-gate.js';
 import { exchangeProjectKeys } from '../src/project-canon.js';
 
 describe('promptSkipReason — 하네스가 보낸 메시지는 주입하지 않는다', () => {
@@ -27,6 +27,33 @@ describe('promptSkipReason — 하네스가 보낸 메시지는 주입하지 않
     expect(promptSkipReason('결함은 그럼 수정해야되잖아? 주입 지연이랑도 관련있는거 아냐?')).toBeNull();
     expect(promptSkipReason('이 로그에 <task-notification> 태그가 왜 남는지 설명해줘')).toBeNull();
     expect(promptSkipReason('[Slack 메시지 from 사용자] 배포 상태 다시 확인해 줘')).toBeNull();
+  });
+});
+
+describe('injectionQuery — 기계 표지 뒤의 사람 본문은 버리지 않는다', () => {
+  it('펼친 슬래시 명령은 인자를 검색한다', () => {
+    const p = '<command-message>qa-cycle</command-message>\n<command-name>/qa-cycle</command-name>\n'
+      + '<command-args>결제 페이지 환불 버그를 재현하고 원인을 찾아줘</command-args>';
+    expect(injectionQuery(p)).toEqual({ query: '결제 페이지 환불 버그를 재현하고 원인을 찾아줘', reason: null });
+  });
+
+  it('인자가 없거나 짧으면 건너뛴다', () => {
+    expect(injectionQuery('<command-name>/model</command-name>\n<command-args></command-args>').reason).toBe('slash-command');
+    expect(injectionQuery('<command-name>/model</command-name>\n<command-args>opus</command-args>').reason).toBe('short');
+  });
+
+  it('앞쪽 system-reminder 를 걷어낸 본문을 검색한다', () => {
+    const p = '<system-reminder>The user opened src/a.ts in the IDE</system-reminder>\n'
+      + '<system-reminder>second</system-reminder>\n이 파일의 인증 흐름이 왜 두 번 도는지 설명해줘';
+    expect(injectionQuery(p)).toEqual({ query: '이 파일의 인증 흐름이 왜 두 번 도는지 설명해줘', reason: null });
+    expect(injectionQuery('<system-reminder>x</system-reminder>\n응').reason).toBe('short');
+    expect(injectionQuery('<system-reminder>닫히지 않은 알림 뒤에 무엇이 와도 본문으로 보지 않는다').reason).toBe('system-reminder');
+  });
+
+  it('사람 프롬프트는 그대로 검색한다', () => {
+    const p = '결함은 그럼 수정해야되잖아? 주입 지연이랑도 관련있는거 아냐?';
+    expect(injectionQuery(p)).toEqual({ query: p, reason: null });
+    expect(injectionQuery('   ').reason).toBe('empty');
   });
 });
 

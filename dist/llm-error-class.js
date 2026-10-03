@@ -122,6 +122,11 @@ export function classifyLlmError(err) {
     if (/too (large|long)|prompt is too long|context length|maximum.*token|max_?tokens|content.*too|invalid[_ ]?request|bad request|unprocessable/.test(m)) {
         return 'deterministic';
     }
+    // A missing Agent SDK platform binary (deps-heal.ts) is an install fault, not
+    // this request's: hold until the self-heal install lands. As 'unknown' the
+    // drain loops would advance past — skip — every fact meanwhile.
+    if (/native cli binary for \S+ not found/.test(m))
+        return 'transient';
     // TRANSIENT phrases: rate limit / server / network / outage, plus auth-KEY
     // errors (kept narrow — "invalid api key", not "invalid api request").
     // 'internal server error' / 'fetch failed' / stream teardown are added from the

@@ -24,6 +24,16 @@ export declare function normalizeVecDistance(distance: number, dtype: VecDtype):
  */
 export declare function l2DistanceToSimilarity(distance: number): number;
 export declare function migrateSchema(db: Database.Database): void;
+/**
+ * Read-only handle for a hot read path that must neither write nor wait on
+ * writers — the synchronous SessionStart hook. initDatabase() runs migrations
+ * and a dedup DELETE on every open, so a reader using it queues behind the
+ * workers that session start launches (busy_timeout 5s) and, on SQLITE_BUSY,
+ * starts the session without its key facts. A read-only WAL reader never takes
+ * the write lock (measured: 0ms while another process held it). No migrations,
+ * no sqlite-vec; null when the database file does not exist yet.
+ */
+export declare function openReadOnlyDatabase(): Database.Database | null;
 export declare function initDatabase(): Database.Database;
 export declare function insertExchange(db: Database.Database, exchange: ConversationExchange, embedding: number[], _toolNames?: string[]): void;
 export declare function getAllExchanges(db: Database.Database): Array<{

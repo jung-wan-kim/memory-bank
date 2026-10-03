@@ -4,7 +4,7 @@ import fs from 'fs';
 import * as sqliteVec from 'sqlite-vec';
 import { getDbPath } from './paths.js';
 import { autoHealScopeProjects } from './project-canon.js';
-import { EMBEDDING_VERSION } from './embeddings.js';
+import { EMBEDDING_VERSION } from './embedding-version.js';
 export const VEC_INT8_SCALE = 127;
 /**
  * Authoritative vector dtype for vec_exchanges.
@@ -88,6 +88,21 @@ export function migrateSchema(db) {
     if (migrated) {
         console.error('Migration complete.');
     }
+}
+/**
+ * Read-only handle for a hot read path that must neither write nor wait on
+ * writers — the synchronous SessionStart hook. initDatabase() runs migrations
+ * and a dedup DELETE on every open, so a reader using it queues behind the
+ * workers that session start launches (busy_timeout 5s) and, on SQLITE_BUSY,
+ * starts the session without its key facts. A read-only WAL reader never takes
+ * the write lock (measured: 0ms while another process held it). No migrations,
+ * no sqlite-vec; null when the database file does not exist yet.
+ */
+export function openReadOnlyDatabase() {
+    const dbPath = getDbPath();
+    if (!fs.existsSync(dbPath))
+        return null;
+    return new Database(dbPath, { readonly: true, fileMustExist: true });
 }
 export function initDatabase() {
     const dbPath = getDbPath();

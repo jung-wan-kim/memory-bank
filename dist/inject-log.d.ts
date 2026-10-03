@@ -19,6 +19,8 @@ export interface InjectLogEntry {
     via?: 'daemon' | 'fallback' | 'client';
     /** status='skipped' only — why (short prompt, task notification, slash command …). */
     reason?: string;
+    /** Length of the text actually searched, when it differs from the prompt (prompt-gate.ts). */
+    query_len?: number;
     /** Hook host: 'claude-code' | 'codex' | 'manual' — lets the two clients be measured apart. */
     client?: string;
     /** CLAUDE_CODE_ENTRYPOINT (cli, sdk-ts …) — separates interactive sessions from automation. */

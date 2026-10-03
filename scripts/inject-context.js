@@ -23,45 +23,13 @@ import os from 'node:os';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { promptSkipReason } from '../dist/prompt-gate.js';
+import { injectionQuery } from '../dist/prompt-gate.js';
 import { appendInjectLog } from '../dist/inject-log.js';
 import { injectSocketPathIn, ownPackageVersion } from '../dist/version-guard.js';
+import { selfHealDeps } from '../dist/deps-heal.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-/**
- * Self-heal missing runtime deps (better-sqlite3 등 native 모듈).
- *
- * 왜: (a) `claude plugin update` 가 npm install 을 비결정적으로 누락한다
- * (실측: 1.4.0 캐시엔 node_modules 생성, 1.4.1 캐시엔 미생성 → 콜드 경로
- * 전체가 Cannot find package 로 사망). (b) cc-sync 는 node_modules 를
- * 제외하고 plugins/cache 를 타 머신에 실어 나르므로, 동기화로 받은 캐시는
- * 항상 deps 가 없다. 두 경우 모두 첫 프롬프트에서 감지해 1회 한정으로
- * detached npm install 을 시도한다 (marker 파일 'wx' 원자 생성으로 중복
- * 방지 — 실패해도 다음 설치 디렉토리에서만 재시도, 무한 루프 없음).
- */
-function selfHealDeps(pluginRoot) {
-  const marker = path.join(pluginRoot, '.deps-heal-attempted');
-  try {
-    fs.writeFileSync(marker, new Date().toISOString(), { flag: 'wx' }); // 원자적 1회 게이트
-  } catch {
-    return false; // 이미 시도됨 (성공/실패 무관 — 재폭주 방지)
-  }
-  try {
-    const child = spawn('npm', ['install', '--no-audit', '--no-fund'], {
-      // windowsHide: 콘솔을 상속하지 않는 detached 프로세스는 Windows 에서 새 conhost
-      // 창을 띄운다. 이 self-heal 은 프롬프트 주입 경로라 창이 반복해 깜빡인다.
-      // (비-Windows 에서는 no-op — PR #3 이 정렬한 나머지 5개 spawn 과 동일 계약)
-      cwd: pluginRoot, detached: true, stdio: 'ignore', windowsHide: true,
-    });
-    child.unref();
-    process.stderr.write('inject-context: missing deps detected — spawned background npm install (one-shot)\n');
-    return true;
-  } catch (e) {
-    process.stderr.write(`inject-context: self-heal spawn failed: ${e && e.message}\n`);
-    return false;
-  }
-}
 
 const SOCKET_CONNECT_TIMEOUT_MS = 300;
 const SOCKET_RESPONSE_TIMEOUT_MS = 3000;
@@ -120,21 +88,30 @@ function askDaemon(prompt, cwd, sessionId, meta) {
   });
 }
 
-/** A UserPromptSubmit hook envelope passed as text, or null for an ordinary prompt. */
+/**
+ * A hook envelope passed as text: { ok: true, prompt, cwd, session_id, turn_id }
+ * for a usable UserPromptSubmit envelope, { ok: false } for any other envelope
+ * (wrong event, non-string prompt) — never search one of those as a query —
+ * and null for an ordinary prompt, including JSON that is not an envelope.
+ */
 function parseHookEnvelope(text) {
-  if (!text || text[0] !== '{') return null;
+  const t = (text || '').trimStart();
+  if (t[0] !== '{') return null;
+  let j;
   try {
-    const j = JSON.parse(text);
-    if (!j || j.hook_event_name !== 'UserPromptSubmit' || typeof j.prompt !== 'string') return null;
-    return {
-      prompt: j.prompt,
-      cwd: typeof j.cwd === 'string' ? j.cwd : '',
-      session_id: typeof j.session_id === 'string' ? j.session_id : '',
-      turn_id: j.turn_id,
-    };
+    j = JSON.parse(t);
   } catch {
     return null;
   }
+  if (!j || typeof j !== 'object' || Array.isArray(j) || !('hook_event_name' in j)) return null;
+  if (j.hook_event_name !== 'UserPromptSubmit' || typeof j.prompt !== 'string') return { ok: false };
+  return {
+    ok: true,
+    prompt: j.prompt,
+    cwd: typeof j.cwd === 'string' ? j.cwd : '',
+    session_id: typeof j.session_id === 'string' ? j.session_id : '',
+    turn_id: j.turn_id,
+  };
 }
 
 async function main() {
@@ -147,6 +124,7 @@ async function main() {
   // they don't (older Codex wrapper, manual run) infer it from the envelope:
   // Codex adds turn_id, Claude Code sends transcript_path without it.
   let client = process.env.MEMORY_BANK_CLIENT || '';
+  let invalidEnvelope = false;
   if (raw) {
     try {
       const j = JSON.parse(raw);
@@ -168,11 +146,14 @@ async function main() {
     // hash-pinned inside the Codex harness; this script ships with the plugin,
     // so the envelope is unwrapped here.
     const envelope = parseHookEnvelope(prompt);
-    if (envelope) {
+    if (envelope && envelope.ok) {
       prompt = envelope.prompt;
       if (!cwd && envelope.cwd) cwd = envelope.cwd;
       if (!sessionId && envelope.session_id) sessionId = envelope.session_id;
-      if (!client) client = envelope.turn_id ? 'codex' : 'claude-code';
+      // Only wrappers and manual runs use this path; Claude Code pipes stdin.
+      if (!client) client = envelope.turn_id ? 'codex' : 'manual';
+    } else if (envelope) {
+      invalidEnvelope = true;
     }
   }
   if (!cwd) cwd = process.env.CWD || process.cwd();
@@ -185,7 +166,7 @@ async function main() {
   // Harness-generated prompts (task notifications, slash-command expansions …)
   // and very short ones are not worth a search. Logged here so skips stay
   // measurable — they used to return silently before any log line.
-  const skipReason = promptSkipReason(prompt);
+  const skipReason = invalidEnvelope ? 'hook-envelope' : injectionQuery(prompt).reason;
   if (skipReason) {
     appendInjectLog({
       status: 'skipped', reason: skipReason, project: cwd, prompt_len: prompt.length,
@@ -211,7 +192,7 @@ async function main() {
     process.stderr.write(`inject-context: error: ${msg}\n`);
     // deps 누락(plugin update 미설치 / cc-sync 로 받은 캐시)이면 1회 자가치유
     if (/Cannot find (package|module)|ERR_MODULE_NOT_FOUND/.test(msg)) {
-      selfHealDeps(path.join(__dirname, '..'));
+      selfHealDeps(path.join(__dirname, '..'), 'inject-context');
     }
   }
 }

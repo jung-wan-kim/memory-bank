@@ -1,6 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { SUMMARIZER_CONTEXT_MARKER } from './constants.js';
 import { llmWorkdir, ISOLATED_QUERY_OPTIONS } from './llm.js';
+import { noteSdkFailure } from './deps-heal.js';
 /**
  * Get API environment overrides for summarization calls.
  * Returns full env merged with process.env so subprocess inherits PATH, HOME, etc.
@@ -41,6 +42,15 @@ function extractSummary(text) {
     return text.trim();
 }
 async function callClaude(prompt, sessionId, useFallback = false) {
+    try {
+        return await callClaudeOnce(prompt, sessionId, useFallback);
+    }
+    catch (error) {
+        noteSdkFailure(error, 'memory-bank summarizer');
+        throw error;
+    }
+}
+async function callClaudeOnce(prompt, sessionId, useFallback = false) {
     const primaryModel = process.env.MEMORY_BANK_API_MODEL || 'haiku';
     const fallbackModel = process.env.MEMORY_BANK_API_MODEL_FALLBACK || 'sonnet';
     const model = useFallback ? fallbackModel : primaryModel;

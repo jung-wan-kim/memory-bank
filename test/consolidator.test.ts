@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { initDatabase } from '../src/db.js';
-import { insertFact, getActiveFacts } from '../src/fact-db.js';
+import { insertFact, getActiveFacts, updateFact } from '../src/fact-db.js';
 import { buildConsolidationPrompt, applyConsolidationResult } from '../src/consolidator.js';
 import { suppressConsole } from './test-utils.js';
 import fs from 'fs';
@@ -107,6 +107,28 @@ describe('Consolidator', () => {
       const active = getActiveFacts(db);
       expect(active).toHaveLength(1);
       expect(active[0].fact).toBe('v2 config'); // falls back to newFact
+    });
+
+    it('merged_fact 가 프롬프트 예시값을 그대로 베낀 것이면 빈 값처럼 newFact 문장을 쓴다', () => {
+      const id1 = insertFact(db, { fact: 'Package manager is npm workspaces', category: 'decision', scope_type: 'project', scope_project: '/proj', source_exchange_ids: [], embedding: null });
+      const id2 = insertFact(db, { fact: 'Package manager is pnpm workspaces', category: 'decision', scope_type: 'project', scope_project: '/proj', source_exchange_ids: [], embedding: null });
+
+      const facts = getActiveFacts(db);
+      expect(() => applyConsolidationResult(db, facts.find(f => f.id === id1)!, facts.find(f => f.id === id2)!, {
+        relation: 'EVOLUTION', merged_fact: 'final sentence for merge/replace', reason: 'switched',
+      }), '예시값은 저장 계층 거부까지 가지 않고 통합기에서 걸러진다').not.toThrow();
+
+      const active = getActiveFacts(db);
+      expect(active.map((f) => f.fact)).toEqual(['Package manager is pnpm workspaces']);
+      const rev = db.prepare('SELECT new_fact FROM fact_revisions WHERE fact_id = ?').get(id1) as { new_fact: string };
+      expect(rev.new_fact).toBe('Package manager is pnpm workspaces');
+    });
+
+    it('updateFact 는 템플릿 본문을 거부하고 행을 바꾸지 않는다', () => {
+      const id = insertFact(db, { fact: 'Uses Flyway for migrations', category: 'decision', scope_type: 'project', scope_project: '/proj', source_exchange_ids: [], embedding: null });
+      expect(() => updateFact(db, id, { fact: '...' })).toThrow(/updateFact refused \(fact-punctuation-only\)/);
+      expect(() => updateFact(db, id, { fact: '<the final fact sentence, written out>' })).toThrow(/updateFact refused/);
+      expect(getActiveFacts(db).find((f) => f.id === id)!.fact).toBe('Uses Flyway for migrations');
     });
 
     it('should keep both for INDEPENDENT', () => {

@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import type { Fact, ConsolidationResult } from './types.js';
-export declare const CONSOLIDATION_SYSTEM_PROMPT = "Compare two facts and determine their relationship.\n\n## Relationship types (choose one)\n- DUPLICATE: same content - merge\n- CONTRADICTION: conflicting - new fact replaces old\n- EVOLUTION: old fact evolved - update\n- INDEPENDENT: separate - keep both\n\n## Output format\n{\n  \"relation\": \"DUPLICATE|CONTRADICTION|EVOLUTION|INDEPENDENT\",\n  \"merged_fact\": \"final sentence for merge/replace\",\n  \"reason\": \"one-line justification\"\n}";
+export declare const CONSOLIDATION_SYSTEM_PROMPT = "Compare two facts and determine their relationship.\n\n## Relationship types (choose one)\n- DUPLICATE: same content - merge\n- CONTRADICTION: conflicting - new fact replaces old\n- EVOLUTION: old fact evolved - update\n- INDEPENDENT: separate - keep both\n\n## Output format\n{\n  \"relation\": \"DUPLICATE|CONTRADICTION|EVOLUTION|INDEPENDENT\",\n  \"merged_fact\": \"<the final fact sentence for DUPLICATE/CONTRADICTION/EVOLUTION, written out>\",\n  \"reason\": \"one-line justification\"\n}";
 export declare function buildConsolidationPrompt(existingFact: string, newFact: string): string;
 export type { LlmErrorClass } from './llm-error-class.js';
 export { LlmCallError, EmptyLlmResponseError, classifyLlmError, isTransientLlmError } from './llm-error-class.js';

@@ -17,6 +17,8 @@ vi.mock('../src/embeddings.js', () => ({
   EMBEDDING_VERSION: 2,
   EMBEDDING_MODEL: 'test',
 }));
+// fact-db/db read the version stamp from the light module (2026-10-03 split) — keep it in step
+vi.mock('../src/embedding-version.js', () => ({ EMBEDDING_VERSION: 2, EMBEDDING_MODEL: 'test' }));
 
 import { callHaiku, parseJsonResponse } from '../src/llm.js';
 import { initDatabase } from '../src/db.js';

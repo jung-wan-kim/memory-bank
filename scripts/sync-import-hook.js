@@ -14,7 +14,12 @@ async function main() {
       console.log(`sync-import: +${result.newFacts} facts, +${result.newDomains} domains, +${result.newRelations} relations`);
     }
     if (result.rejectedJunk > 0) {
-      console.error(`sync-import: rejected ${result.rejectedJunk} template-residue record(s) from another device`);
+      // Not "new": the rows stay in the sync files until the exporting device
+      // stops exporting them, so the same count can repeat every session.
+      console.error(`sync-import: skipped ${result.rejectedJunk} template-residue row(s) present in the sync files`);
+    }
+    if (result.detachedCategoryRefs > 0) {
+      console.error(`sync-import: ${result.detachedCategoryRefs} imported fact(s) referenced a category missing here — left unclassified for the ontology backfill`);
     }
   } catch (error) {
     // Non-fatal

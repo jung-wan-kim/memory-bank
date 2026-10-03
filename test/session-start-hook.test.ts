@@ -5,12 +5,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { initDatabase, insertExchange } from '../src/db.js';
 import { insertFact } from '../src/fact-db.js';
+import { factTextKey } from '../src/fact-text.js';
+import Database from 'better-sqlite3';
 
 /**
  * SessionStart 훅 회귀 (2026-10-03).
  *  - hooks.json 에서 async 가 빠져야 Claude Code 가 출력(핵심 fact)을 세션에 넣는다
  *  - 훅은 출력만 하고 느린 대기 작업 확인은 분리된 스크립트로 넘긴다
  *  - 지난 세션 이어가기·사용 패턴은 슬러그 비교를 고쳤지만 기본 꺼짐
+ *  - 동기 훅이라 첫 응답을 막는다: 쓰기 잠금을 기다리지 않고(읽기 전용), 임베딩 모델을
+ *    불러오지 않으며, 출력한 fact 는 세션 원장에 남겨 첫 프롬프트에서 다시 싣지 않는다
  */
 
 const REPO = path.resolve(__dirname, '..');
@@ -65,6 +69,7 @@ describe('SessionStart 훅', () => {
     expect(hook, 'fact-consolidate-hook 등록').toBeDefined();
     expect(hook.async, 'async 금지').toBeUndefined();
     expect(Number(hook.timeout)).toBeGreaterThan(0);
+    expect(Number(hook.timeout), '첫 응답을 막는 최대 시간(초)').toBeLessThanOrEqual(5);
   });
 
   it('핵심 fact 를 평문으로 출력하고, 연속성·사용 패턴은 기본으로 끈다', () => {
@@ -78,6 +83,56 @@ describe('SessionStart 훅', () => {
   it('MEMORY_BANK_SESSION_CONTINUITY=1 이면 cwd 절대경로로 슬러그 교환의 지난 세션을 찾는다', () => {
     const out = runHook({ MEMORY_BANK_SESSION_CONTINUITY: '1' });
     expect(out).toContain('지난번 릴리즈 노트');
+  });
+
+  it('출력한 fact 는 id 와 본문 키로 세션 원장에 남는다', () => {
+    runHook();
+    const ledgerFile = path.join(tmp, 'conversation-index', 'state', 'inject-ledger', 'ss-test-0001.json');
+    expect(fs.existsSync(ledgerFile), '세션 원장 파일이 생겼다').toBe(true);
+    const ledger = JSON.parse(fs.readFileSync(ledgerFile, 'utf8'));
+    const db = new Database(path.join(tmp, 't.sqlite'), { readonly: true });
+    const row = db.prepare("SELECT id, fact FROM facts WHERE fact LIKE 'Release notes%'").get() as { id: string; fact: string };
+    db.close();
+    expect(ledger).toContain(row.id);
+    expect(ledger).toContain(factTextKey(row));
+  });
+
+  it('다른 프로세스가 쓰기 잠금을 쥐고 있어도 기다리지 않고 fact 를 출력한다', () => {
+    const writer = new Database(path.join(tmp, 't.sqlite'));
+    writer.pragma('journal_mode = WAL');
+    writer.exec('BEGIN IMMEDIATE');
+    try {
+      const t0 = Date.now();
+      const out = runHook();
+      const ms = Date.now() - t0;
+      expect(out).toContain('Release notes are written in Korean');
+      // 열 때마다 쓰기(중복 DELETE)를 하던 initDatabase 는 busy_timeout 5초를 다 기다린 뒤 실패했다
+      expect(ms, `훅 소요 ${ms}ms`).toBeLessThan(3000);
+    } finally {
+      writer.exec('ROLLBACK');
+      writer.close();
+    }
+  });
+
+  it('정적 import 사슬에 임베딩 모델(@xenova/transformers)이 없다', () => {
+    const seen = new Set<string>();
+    const bare = new Set<string>();
+    const walk = (file: string) => {
+      if (seen.has(file)) return;
+      seen.add(file);
+      const src = fs.readFileSync(file, 'utf8');
+      // static imports only — `await import(...)` inside opt-in branches is lazy by design
+      for (const m of src.matchAll(/^\s*(?:import|export)\s[^;]*?from\s+['"]([^'"]+)['"]/gm)) {
+        const spec = m[1];
+        if (spec.startsWith('../dist/')) walk(path.join(REPO, 'src', spec.slice('../dist/'.length).replace(/\.js$/, '.ts')));
+        else if (spec.startsWith('./')) walk(path.join(path.dirname(file), spec.replace(/\.js$/, '.ts')));
+        else bare.add(spec);
+      }
+    };
+    walk(path.join(REPO, 'scripts', 'fact-consolidate-hook.js'));
+    expect(seen.size, '사슬을 실제로 따라갔다').toBeGreaterThan(4);
+    expect([...bare]).not.toContain('@xenova/transformers');
+    expect([...seen].map((f) => path.basename(f))).not.toContain('embeddings.ts');
   });
 
   it('대기 작업 확인 질의는 훅이 아니라 분리된 유지보수 스크립트에 있다', () => {

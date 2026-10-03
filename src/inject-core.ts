@@ -6,8 +6,8 @@ import { getRelatedFacts } from './ontology-db.js';
 import { detectRepeat, formatRepeatContext } from './repeat-detector.js';
 import { appendInjectLog } from './inject-log.js';
 import { loadLedger, appendLedger } from './inject-ledger.js';
-import { promptSkipReason } from './prompt-gate.js';
-import { createHash } from 'node:crypto';
+import { injectionQuery } from './prompt-gate.js';
+import { factTextKey, truncateFact } from './fact-text.js';
 import type { Fact } from './types.js';
 
 const TOP_K = 5;
@@ -20,8 +20,7 @@ const TOP_K = 5;
 const BASELINE_MARGIN = 0.045;
 const MAX_CONTEXT_FACTS = 8;
 // Token budget: fact 평균 140자·p90 207자 실측 — 절단 없이 8건이면 ~470 tok/프롬프트.
-// fact 당 160자 + 블록 1,000자 예산으로 상한. 잘린 내용이 필요하면 search_facts 로 조회.
-const FACT_CHAR_CAP = 160;
+// fact 당 160자(fact-text.ts FACT_CHAR_CAP) + 블록 1,000자 예산으로 상한. 잘린 내용이 필요하면 search_facts 로 조회.
 const BLOCK_CHAR_BUDGET = 1000;
 // detectRepeat 는 exchanges 전체(335k) 벡터검색이다. OS 페이지 캐시가 식은 상태에서
 // 583~844ms 가 걸려 주입 지연의 대부분을 차지했다(2026-10-03 실측: 데몬 웜 24ms).
@@ -36,26 +35,10 @@ function repeatDetectEnabled(): boolean {
   return process.env.MEMORY_BANK_REPEAT_DETECT === '1';
 }
 
-/**
- * Text identity of a fact for in-session dedup. The same sentence is stored
- * under several ids (memory-doc double imports, re-extraction), and id-only
- * dedup let those copies through — 8.9% of injected lines were exact text
- * repeats inside one block (measured 2026-10-03).
- */
-function factTextKey(fact: Fact): string {
-  const norm = fact.fact.replace(/\s+/g, ' ').trim().toLowerCase();
-  return 't:' + createHash('sha1').update(norm).digest('hex').slice(0, 16);
-}
-
 /** Who called the hook — recorded in the inject log, never used for ranking. */
 export interface InjectRequestMeta {
   client?: string;
   entrypoint?: string;
-}
-
-function truncateFact(text: string): string {
-  const t = text.replace(/\s+/g, ' ').trim();
-  return t.length > FACT_CHAR_CAP ? t.slice(0, FACT_CHAR_CAP - 1) + '…' : t;
 }
 
 /**
@@ -89,17 +72,21 @@ export async function computeInjectContext(
     entrypoint: meta.entrypoint || undefined,
     has_session: Boolean(sessionId),
   };
-  const skipReason = promptSkipReason(userPrompt);
-  if (skipReason) {
-    appendInjectLog({ ...base, status: 'skipped', reason: skipReason });
+  const gate = injectionQuery(userPrompt);
+  if (gate.reason !== null) {
+    appendInjectLog({ ...base, status: 'skipped', reason: gate.reason });
     return '';
   }
+  // Usually the prompt itself; the arguments of an expanded slash command or the
+  // text after leading system reminders otherwise (prompt-gate.ts).
+  const query = gate.query;
+  const queryLen = query.length !== base.prompt_len ? { query_len: query.length } : {};
 
   const timings: { embed_ms?: number; search_ms?: number; related_ms?: number; repeat_ms?: number } = {};
   try {
     let tStage = Date.now();
     await initEmbeddings();
-    const embedding = await generateEmbedding(userPrompt, 'query');
+    const embedding = await generateEmbedding(query, 'query');
     const baseline = await queryBaseline(embedding);
     timings.embed_ms = Date.now() - tStage;
 
@@ -119,7 +106,7 @@ export async function computeInjectContext(
 
       if (results.length === 0) {
         appendInjectLog({
-          ...base, ...timings, status: 'no-match',
+          ...base, ...queryLen, ...timings, status: 'no-match',
           candidates: candidates.length, injected: 0, duration_ms: Date.now() - t0,
         });
         return '';
@@ -157,7 +144,7 @@ export async function computeInjectContext(
       }
       if (fresh.length === 0) {
         appendInjectLog({
-          ...base, ...timings, status: 'deduped',
+          ...base, ...queryLen, ...timings, status: 'deduped',
           candidates: candidates.length, injected: 0, deduped: dedupedCount,
           text_deduped: textDeduped, duration_ms: Date.now() - t0,
         });
@@ -188,7 +175,7 @@ export async function computeInjectContext(
       if (repeatDetectEnabled() && Date.now() - t0 < REPEAT_ELAPSED_BUDGET_MS) {
         tStage = Date.now();
         try {
-          const repeats = await detectRepeat(userPrompt, project, 2, 0.85, { embedding, db });
+          const repeats = await detectRepeat(query, project, 2, 0.85, { embedding, db });
           const repeatCtx = formatRepeatContext(repeats);
           if (repeatCtx) {
             lines.push('');
@@ -201,7 +188,7 @@ export async function computeInjectContext(
       appendLedger(sessionId, ledger, ledgerKeys);
       const block = lines.join('\n') + '\n';
       appendInjectLog({
-        ...base, ...timings, status: 'injected',
+        ...base, ...queryLen, ...timings, status: 'injected',
         candidates: candidates.length, injected: injectedCount,
         deduped: dedupedCount, text_deduped: textDeduped,
         from_vec: fromVec, from_rel: fromRel, chars: block.length,
@@ -212,7 +199,7 @@ export async function computeInjectContext(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     appendInjectLog({
-      ...base, ...timings, status: 'error',
+      ...base, ...queryLen, ...timings, status: 'error',
       duration_ms: Date.now() - t0, error: message.slice(0, 300),
     });
     return ''; // non-fatal: never disrupt the user's prompt

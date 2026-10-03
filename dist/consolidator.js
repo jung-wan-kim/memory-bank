@@ -2,6 +2,7 @@ import { callHaiku, parseJsonResponse } from './llm.js';
 // 값 사용분은 별도 import — `export … from` 은 재수출만 하고 로컬 바인딩을 만들지 않는다.
 import { LlmCallError, classifyLlmError } from './llm-error-class.js';
 import { getNewFactsSince, getAllNewFactsSince, searchSimilarFactsSameScope, updateFact, deactivateFact, insertRevision, } from './fact-db.js';
+import { factTextRejectReason } from './fact-validity.js';
 export const CONSOLIDATION_SYSTEM_PROMPT = `Compare two facts and determine their relationship.
 
 ## Relationship types (choose one)
@@ -13,7 +14,7 @@ export const CONSOLIDATION_SYSTEM_PROMPT = `Compare two facts and determine thei
 ## Output format
 {
   "relation": "DUPLICATE|CONTRADICTION|EVOLUTION|INDEPENDENT",
-  "merged_fact": "final sentence for merge/replace",
+  "merged_fact": "<the final fact sentence for DUPLICATE/CONTRADICTION/EVOLUTION, written out>",
   "reason": "one-line justification"
 }`;
 const MAX_HAIKU_CALLS = 10;
@@ -221,8 +222,15 @@ export async function consolidateAllPending(db, since) {
     return { processed, merged, contradictions, evolutions, haikuCalls, cursor };
 }
 export function applyConsolidationResult(db, existingFact, newFact, result) {
-    // Normalize merged_fact: treat empty/whitespace-only as absent
-    const mergedFact = result.merged_fact?.trim() || null;
+    // Normalize merged_fact: empty/whitespace-only is absent, and so is a copy of
+    // the prompt's example value (fact-validity.ts) — the new fact's own text is
+    // used instead, exactly as for an empty one. Logged so it stays countable.
+    let mergedFact = result.merged_fact?.trim() || null;
+    const mergedReject = mergedFact ? factTextRejectReason(mergedFact) : null;
+    if (mergedReject) {
+        console.error(`Consolidation: merged_fact rejected (${mergedReject}) for ${existingFact.id} — using the new fact's text`);
+        mergedFact = null;
+    }
     switch (result.relation) {
         case 'DUPLICATE':
             updateFact(db, existingFact.id, { consolidated_count_increment: true });

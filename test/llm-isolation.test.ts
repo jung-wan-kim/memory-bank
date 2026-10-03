@@ -99,3 +99,22 @@ describe('추출 단계의 템플릿 누출 차단', () => {
     }
   });
 });
+
+describe('query() 실패 지점이 자가치유를 부른다', () => {
+  it('callHaiku', async () => {
+    const heal = await import('../src/deps-heal.js');
+    const spy = vi.spyOn(heal, 'noteSdkFailure').mockImplementation(() => {});
+    const sdk = await import('@anthropic-ai/claude-agent-sdk');
+    const err = new Error('Native CLI binary for darwin-arm64 not found.');
+    vi.spyOn(sdk, 'query').mockImplementation(() => { throw err; });
+    process.env.MEMORY_BANK_LLM_RETRIES = '0';
+    try {
+      const { callHaiku } = await import('../src/llm.js');
+      await expect(callHaiku('sys', 'ping')).rejects.toThrow(/Native CLI binary/);
+      expect(spy).toHaveBeenCalledWith(err, 'memory-bank llm');
+    } finally {
+      delete process.env.MEMORY_BANK_LLM_RETRIES;
+      vi.restoreAllMocks();
+    }
+  });
+});

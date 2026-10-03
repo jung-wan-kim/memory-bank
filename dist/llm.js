@@ -4,6 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { LLM_WORKDIR_BASENAME, getProjectsDir } from './paths.js';
 import { classifyLlmError, EmptyLlmResponseError } from './llm-error-class.js';
+import { noteSdkFailure } from './deps-heal.js';
 // Isolated working directory for headless Agent SDK sessions. The CLI that
 // query() spawns persists a transcript under ~/.claude/projects/<cwd-slug>/;
 // running it from the caller's cwd drops worker transcripts into that
@@ -176,6 +177,7 @@ async function callOnce(systemPrompt, userMessage, maxTokens) {
         return '';
     }
     catch (agentSdkError) {
+        noteSdkFailure(agentSdkError, 'memory-bank llm');
         // Fallback to direct Anthropic SDK if agent SDK fails (standalone mode)
         const apiKey = process.env.ANTHROPIC_API_KEY || process.env.MEMORY_BANK_API_TOKEN;
         if (!apiKey) {

@@ -9,7 +9,9 @@
  * 'existing or new domain name', '...', 'existing or new'. The '...' facts
  * alone filled 183 injection slots. Nothing on the write path rejected them
  * because every check was "is it a non-empty string". These predicates are
- * that missing check — one place, used by every writer.
+ * that missing check, in one place: insertFact and updateFact (fact-db.ts),
+ * the extractor, the consolidator's merged_fact, ontology domain/category
+ * creation and the classifier's name sanitizer, and cross-device sync import.
  *
  * Deliberately NOT enforced: the five-category taxonomy. Real facts still
  * arrive as 'requirement', 'solution', 'process' … (latest 2026-09-29) — they
@@ -26,6 +28,8 @@ const PLACEHOLDER_TEXTS = new Set([
   'domain', 'domain name', 'category', 'category name', 'name',
   'existing or new', 'existing or new domain name', 'existing or new category name',
   'new domain', 'new category', 'new domain name', 'new category name',
+  // consolidator.ts output-format example before 2026-10-03
+  'final sentence for merge/replace', 'final sentence',
 ]);
 
 function norm(s: string): string {
@@ -34,8 +38,10 @@ function norm(s: string): string {
 
 function placeholderReason(text: string): string | null {
   if (text.trim() === '') return 'empty';
-  // Only dots/ellipsis/dashes/underscores/asterisks — the '...' template value
-  if (/^[\s.…\-–—_*·]+$/.test(text)) return 'punctuation-only';
+  // Only punctuation/symbols ('...', '?', ':', '—') — the '...' template value
+  // and its kin. Measured 2026-10-03: no other stored fact, category or ontology
+  // name (42,663 facts incl. inactive) is made of these alone.
+  if (/^[\p{P}\p{S}\s]+$/u.test(text)) return 'punctuation-only';
   if (PLACEHOLDER_TEXTS.has(norm(text))) return 'template-placeholder';
   // A short value that is entirely one bracketed slot: '[concise sentence describing the fact]'
   if (/^\s*[\[<{][^\]>}]{0,80}[\]>}]\s*$/.test(text)) return 'bracket-placeholder';
@@ -50,11 +56,20 @@ function labelReason(label: string): string | null {
   return null;
 }
 
+/**
+ * Why this text must not become a fact's body, or null. For writers that only
+ * set the text (updateFact, the consolidator's merged_fact).
+ */
+export function factTextRejectReason(text: unknown): string | null {
+  if (typeof text !== 'string') return 'fact-not-string';
+  const reason = placeholderReason(text);
+  return reason ? `fact-${reason}` : null;
+}
+
 /** Why this fact must not be stored, or null when it is acceptable. */
 export function factRejectReason(p: { fact: unknown; category: unknown; scope_type: unknown }): string | null {
-  if (typeof p.fact !== 'string') return 'fact-not-string';
-  const textReason = placeholderReason(p.fact);
-  if (textReason) return `fact-${textReason}`;
+  const textReason = factTextRejectReason(p.fact);
+  if (textReason) return textReason;
   if (typeof p.category !== 'string') return 'category-not-string';
   const categoryReason = labelReason(p.category);
   if (categoryReason) return `category-${categoryReason}`;

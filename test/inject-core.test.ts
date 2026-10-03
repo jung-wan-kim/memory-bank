@@ -101,6 +101,17 @@ describe('computeInjectContext', () => {
     expect(Number(last.text_deduped)).toBeGreaterThanOrEqual(1);
   }, 30_000);
 
+  it('앞쪽 system-reminder 를 걷어낸 사람 본문으로 검색한다', async () => {
+    // 알림이 모델 입력 한도(512 토큰)를 넘게 길면, 걷어내지 않고 통째로 임베딩할 때 뒤의 질문이 잘려 나간다
+    const noise = 'The user has the file notes/cooking.md open in the IDE. Recipe: whisk eggs, fold flour, bake. '.repeat(40);
+    const question = 'What is our policy for database migrations with Flyway versioned SQL?';
+    const out = await core.computeInjectContext(
+      `<system-reminder>${noise}</system-reminder>\n${question}`, '/tmp/proj', 'daemon', 'sess-reminder-0001',
+    );
+    expect(out, `블록:\n${out}`).toContain('Flyway');
+    expect(readLog().at(-1)).toMatchObject({ status: 'injected', query_len: question.length });
+  }, 30_000);
+
   it('MEMORY_BANK_REPEAT_DETECT=1 일 때만 반복 감지가 돈다', async () => {
     process.env.MEMORY_BANK_REPEAT_DETECT = '1';
     await core.computeInjectContext(

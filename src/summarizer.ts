@@ -2,6 +2,7 @@ import { ConversationExchange } from './types.js';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { SUMMARIZER_CONTEXT_MARKER } from './constants.js';
 import { llmWorkdir, ISOLATED_QUERY_OPTIONS } from './llm.js';
+import { noteSdkFailure } from './deps-heal.js';
 
 /**
  * Get API environment overrides for summarization calls.
@@ -48,6 +49,15 @@ function extractSummary(text: string): string {
 }
 
 async function callClaude(prompt: string, sessionId?: string, useFallback = false): Promise<string> {
+  try {
+    return await callClaudeOnce(prompt, sessionId, useFallback);
+  } catch (error) {
+    noteSdkFailure(error, 'memory-bank summarizer');
+    throw error;
+  }
+}
+
+async function callClaudeOnce(prompt: string, sessionId?: string, useFallback = false): Promise<string> {
   const primaryModel = process.env.MEMORY_BANK_API_MODEL || 'haiku';
   const fallbackModel = process.env.MEMORY_BANK_API_MODEL_FALLBACK || 'sonnet';
   const model = useFallback ? fallbackModel : primaryModel;

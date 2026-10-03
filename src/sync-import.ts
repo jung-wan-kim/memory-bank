@@ -25,10 +25,19 @@ interface SyncFact {
  * Only inserts records that don't already exist (by ID).
  * Generates embeddings for new facts.
  */
-export async function importFromSync(): Promise<{ newFacts: number; newDomains: number; newCategories: number; newRelations: number; rejectedJunk: number }> {
+export async function importFromSync(): Promise<{
+  newFacts: number; newDomains: number; newCategories: number; newRelations: number;
+  rejectedJunk: number; detachedCategoryRefs: number;
+}> {
   const syncDir = getSyncDir();
-  // rejectedJunk: template-residue records another device exported (see fact-validity.ts)
-  const result = { newFacts: 0, newDomains: 0, newCategories: 0, newRelations: 0, rejectedJunk: 0 };
+  // rejectedJunk: template-residue rows found in the sync files (fact-validity.ts),
+  //   plus categories under a rejected domain. They stay in the files until the
+  //   exporting device stops exporting them, so the count repeats per run.
+  // detachedCategoryRefs: imported facts whose ontology category does not exist
+  //   here (rejected above, or never exported) — stored unclassified so the
+  //   ontology backfill classifies them, instead of pointing at a missing row.
+  const result = { newFacts: 0, newDomains: 0, newCategories: 0, newRelations: 0, rejectedJunk: 0, detachedCategoryRefs: 0 };
+  const rejectedDomainIds = new Set<string>();
 
   // Check if sync files exist
   const factsPath = path.join(syncDir, 'facts.jsonl');
@@ -46,7 +55,7 @@ export async function importFromSync(): Promise<{ newFacts: number; newDomains: 
       for (const line of lines) {
         try {
           const d = JSON.parse(line);
-          if (ontologyNameRejectReason(d.name)) { result.rejectedJunk++; continue; }
+          if (ontologyNameRejectReason(d.name)) { result.rejectedJunk++; rejectedDomainIds.add(String(d.id)); continue; }
           const existing = db.prepare('SELECT id FROM ontology_domains WHERE id = ?').get(d.id);
           if (!existing) {
             db.prepare('INSERT INTO ontology_domains (id, name, description, created_at) VALUES (?, ?, ?, ?)').run(
@@ -65,7 +74,7 @@ export async function importFromSync(): Promise<{ newFacts: number; newDomains: 
       for (const line of lines) {
         try {
           const c = JSON.parse(line);
-          if (ontologyNameRejectReason(c.name)) { result.rejectedJunk++; continue; }
+          if (ontologyNameRejectReason(c.name) || rejectedDomainIds.has(String(c.domain_id))) { result.rejectedJunk++; continue; }
           const existing = db.prepare('SELECT id FROM ontology_categories WHERE id = ?').get(c.id);
           if (!existing) {
             db.prepare('INSERT INTO ontology_categories (id, domain_id, name, description, created_at) VALUES (?, ?, ?, ?, ?)').run(
@@ -111,6 +120,13 @@ export async function importFromSync(): Promise<{ newFacts: number; newDomains: 
     }
 
     if (newFacts.length > 0) {
+      const categoryExists = db.prepare('SELECT 1 FROM ontology_categories WHERE id = ?');
+      for (const f of newFacts) {
+        if (f.ontology_category_id && !categoryExists.get(f.ontology_category_id)) {
+          f.ontology_category_id = null;
+          result.detachedCategoryRefs++;
+        }
+      }
       await initEmbeddings();
 
       for (const f of newFacts) {
