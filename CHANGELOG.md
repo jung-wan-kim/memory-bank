@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-10-03
+
+다른 사람의 두 달 치 사용 기록과 비교하다가 드러난 결함을 고친 릴리스다. 주입 지연 중앙값이 비교 대상의 약 10배였는데, 원인은 모델 속도가 아니라 **한 번도 결과를 낸 적 없는 반복 감지가 매번 전체 벡터 검색을 돌던 것**이었다.
+
+### Fixed — 프롬프트 주입 경로
+
+- **반복 감지가 2,686회 동안 0건이었다**: 작업 경로(절대경로)와 대화 색인의 프로젝트 키(슬러그)를 그대로 비교해 항상 불일치였다. 비교를 고쳤고(`exchangeProjectKeys` — Claude Code 의 슬러그 규칙: 영문·숫자 외 문자는 모두 `-`), 콜드 상태 비용(583~844ms) 때문에 **기본은 끈다**(`MEMORY_BANK_REPEAT_DETECT=1` 로 켬)
+- **기계 메시지를 사용자 질문으로 검색하던 문제**: 작업 알림(`<task-notification>`)·로컬 명령 출력·세션 간 메시지는 검색 없이 건너뛰고, 이유(`reason`)를 로그에 남긴다. 20자 미만 프롬프트도 이제 조용히 버리지 않고 `skipped/short` 로 기록한다. 펼친 슬래시 명령은 인자를, 앞에 `<system-reminder>` 가 붙은 프롬프트는 그 뒤 본문을 검색한다(사람 본문까지 버리지 않는다 — 검색한 길이가 다르면 `query_len` 기록)
+- **id 만 다른 같은 문장이 반복 주입되던 문제**: 블록 안과 세션 원장에서 본문 키(정규화한 문장의 해시)로 거른다. 원장 상한 400 → 800
+- **Codex 세션에서 dedup 이 작동하지 않던 문제**: Codex 래퍼가 훅 봉투(JSON) 전체를 `USER_PROMPT` 로 넘겨 JSON 자체가 검색 질의가 됐고 세션 id 도 없었다(다중 주입 세션 175개 중 174개가 같은 fact 재주입). 봉투(`hook_event_name=UserPromptSubmit` + 문자열 `prompt`)를 알아보고 풀어 쓴다. 쓸 수 없는 봉투(다른 이벤트·문자열이 아닌 `prompt`)는 JSON 을 검색하지 않고 `skipped/hook-envelope` 로 남긴다
+- **업데이트 뒤에도 옛 데몬이 답하던 문제**: 빠른 주입 경로의 데몬은 MCP 서버 안에 있고 소켓 이름이 버전 공통이라, 새 세션의 훅 클라이언트가 먼저 떠 있던 옛 버전 서버의 옛 로직으로 답을 받았다. 소켓을 `inject-daemon-<버전>.sock` 으로 나눠 클라이언트는 같은 버전 데몬에만 묻는다. 소켓을 넘겨받는 방식은 쓰지 않는다 — 옛 서버가 정상 종료하면서 소켓 파일을 이름으로 지워 새 서버의 파일까지 지운다
+- 로그 필드 추가: `client`(claude-code/codex/manual)·`entrypoint`·`has_session`·단계별 시간(`embed_ms`/`search_ms`/`related_ms`/`repeat_ms`)·출처(`from_vec`/`from_rel`)·`text_deduped`
+
+### Fixed — 세션 시작
+
+- **Claude Code 에 핵심 fact 가 전달되지 않던 문제**: SessionStart 훅이 `async` 라 출력이 컨텍스트에 들어가지 않았다. 동기 실행으로 바꿨다. 첫 응답이 이 훅을 기다리므로:
+  - 대기 작업 확인 질의(실측 ~3.9초)는 `session-start-maintenance.js` 로 분리해 detached 로 돌린다
+  - **읽기 전용 연결**로 읽는다(`openReadOnlyDatabase`) — 마이그레이션·쓰기 잠금 없이, 함께 뜨는 작업 프로세스의 쓰기를 기다리지 않는다(쓰기 잠금 중에도 0ms). 읽고 출력한 **뒤에** 작업 프로세스를 띄운다
+  - 모델 버전 상수를 `embedding-version.ts` 로 분리해 임베딩 모델(`@xenova/transformers`·onnxruntime)을 불러오지 않는다
+  - 출력한 fact 는 세션 원장에 id·본문 키로 남겨 첫 프롬프트에서 다시 싣지 않는다. fact 당 160자·블록 1,500자 상한
+  - 제한 시간 5초(실측 ~0.17초)
+- 지난 세션 이어가기·사용 패턴 예측도 같은 슬러그 비교 버그를 고쳤다(기본은 끔 — `MEMORY_BANK_SESSION_CONTINUITY=1` / `MEMORY_BANK_INTENT_PROFILE=1`)
+
+### Fixed — LLM 호출
+
+- `@anthropic-ai/claude-agent-sdk` 0.1.77 → 0.3.288 (묶인 CLI 2.0.77 → 2.1.288). 옛 CLI 는 호출마다 워밍업 세션 3개를 띄웠고 일부가 "2.1.280 이상 필요" 400 으로 실패했다. peer 요구에 맞춰 `@anthropic-ai/sdk` ^0.131.0 · `zod` ^4 · `@modelcontextprotocol/sdk` ^1.29.0
+- SDK 0.3 은 CLI 를 플랫폼별 optionalDependency 로 싣는다. 설치에서 빠지면 모든 호출이 `Native CLI binary … not found` 로 실패하는데, 예전 분류로는 `unknown` 이라 통합·분류가 그동안 fact 를 건너뛰었다. 이제 보류(transient)로 분류하고, 처음 한 번 `npm install` 을 띄우고 stderr 에 알린다(주입 경로의 자가치유를 `deps-heal.ts` 로 공용화)
+- 모든 headless 호출에 `ISOLATED_QUERY_OPTIONS`(`settingSources: []` + `tools: []` + `strictMcpConfig: true`). 새 CLI 는 기본으로 내장 도구와 사용자 MCP 서버 정의를 실어 호출당 프롬프트가 ~32,500 토큰이었다 → ~390 토큰
+
+### Fixed — 저장 품질
+
+- **프롬프트 템플릿이 fact 로 저장되던 문제**: 6/12~16 에 `'...'`·`'concise statement'`·`'decision|preference|…'` 카테고리·`'project|global'` 범위 같은 템플릿 값이 저장돼 있었다(`'...'` 하나가 주입 183회를 차지). `fact-validity.ts` 한 곳에서 판정하고 `insertFact`·온톨로지 도메인/카테고리 생성·추출기·분류기·기기 간 동기화 가져오기가 모두 거부한다. 실 DB 전수 검사에서 정상 fact 오차단 0건. 분류 체계 밖 카테고리(`requirement` 등)는 실제 내용이므로 막지 않는다
+- 분류 프롬프트 출력 예시의 자리표시 문구(`"domain name"`)를 실제 이름 예시로 교체 — 모델이 그대로 베껴 도메인 4개가 생겼었다
+- 통합기(`consolidator`)가 예시값(`"final sentence for merge/replace"`)을 그대로 돌려주면 빈 값처럼 새 fact 문장을 쓴다. `updateFact` 도 `insertFact` 처럼 템플릿 본문을 거부한다. 문장부호·기호로만 된 값(`?`, `:`)도 거부(실 DB 42,663건 중 새로 걸리는 것 0건)
+- 기기 간 동기화 가져오기: 거부된 도메인 아래 카테고리도 들이지 않고, 이 기기에 없는 카테고리를 가리키는 fact 는 분류를 비워(재분류 대기) 저장한다 — 끊긴 참조로 영원히 재분류되지 않던 경로
+- **관계 방향이 뒤집히던 문제**: `detectRelations` 가 처리 중인 fact 를 무조건 "새 것"으로 둬서 SUPERSEDES 의 22.3% 가 생성 순서와 반대였다. 이제 그 내용이 처음 말해진 시각 — 원천 대화의 가장 이른 시각, 없으면 저장 시각 — 으로 방향을 정한다. 저장 시각만으로는 부족하다: 백필 추출은 옛 세션의 fact 를 오늘 저장하므로, 원천 대화를 찾을 수 있는 fact 의 39.6% 가 대화보다 7일 넘게 늦게 저장됐다(표본 2,000건). 시각은 문자열이 아니라 숫자로 비교한다. 반대 방향 관계가 이미 있는 쌍은 다시 판정하지 않는다. 기존 행은 그대로 둔다(방향을 기계적으로 뒤집으면 맞는 행까지 틀어진다)
+
+### 운영 노트
+
+- 이 릴리스와 함께 로컬 DB 를 정리했다(백업 후 비활성화 — 삭제 아님): 백업 폴더(`.bak-*`) 출처 fact·같은 메모리 문서 출처의 중복·템플릿 쓰레기 fact. 활성 fact 33,339 → 26,865, 완전 중복률 18.91% → 4.37%
+- 메모리 문서 동기화 스크립트(cc-sync 쪽)도 백업 파일을 건너뛰고, 같은 출처 키의 중복을 정리하고, 동시 실행을 잠금으로 막도록 고쳤다. 잠금은 쓰기 전 강제 종료 잔재(60초)·장기 보유(30분)를 회수하고, 회수 경합에서 남의 새 잠금을 지우지 않는다. 백업 판정은 이름의 끝만 본다(`api.old-vs-new.md` 같은 정상 문서 오차단 제거)
+
 ## [1.6.0] - 2026-08-31
 
 ### Added — 사용자 태그: 자동 분류가 건드리지 않는 유일한 라벨링 축
