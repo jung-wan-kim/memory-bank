@@ -39,8 +39,18 @@ import { injectSocketPathIn, ownPackageVersion } from './version-guard.js';
  *  - A failed computation answers {ok:false}, never an empty success, so the
  *    client falls back instead of injecting nothing.
  */
-// Tests shorten this; the request line normally arrives in one write.
-const REQUEST_IDLE_MS = Number(process.env.MEMORY_BANK_INJECT_IDLE_MS) || 10_000;
+/**
+ * Idle limit before the request line is in, and again after the answer is
+ * sent (a client that never closes its side must not pin the connection in
+ * the MCP server). Tests shorten it through the environment; anything but a
+ * positive finite number falls back to 10s — a negative value would make
+ * socket.setTimeout throw inside the connection handler.
+ */
+export function requestIdleMs(raw) {
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : 10_000;
+}
+const REQUEST_IDLE_MS = requestIdleMs(process.env.MEMORY_BANK_INJECT_IDLE_MS);
 export function injectSocketPath() {
     return injectSocketPathIn(getIndexDir(), ownPackageVersion());
 }
@@ -66,6 +76,10 @@ export function startInjectDaemon() {
             handled = true;
             conn.setTimeout(0); // the request is in — the client's deadline governs from here
             const line = buf.slice(0, nl);
+            const reply = (payload) => {
+                conn.end(JSON.stringify(payload) + '\n');
+                conn.setTimeout(REQUEST_IDLE_MS, () => conn.destroy()); // answered — reclaim a half-open socket
+            };
             void (async () => {
                 try {
                     const req = JSON.parse(line);
@@ -75,12 +89,14 @@ export function startInjectDaemon() {
                     const { context, ledgerKeys, failed } = await computeInjectResult(String(req.prompt ?? ''), String(req.cwd ?? process.cwd()), 'daemon', req.session_id ? String(req.session_id) : undefined, {
                         client: req.client ? String(req.client).slice(0, 40) : undefined,
                         entrypoint: req.entrypoint ? String(req.entrypoint).slice(0, 40) : undefined,
+                        // Ties this log line to the client's fallback line when the client gave up.
+                        req_id: req.req_id ? String(req.req_id).replace(/[^A-Za-z0-9-]/g, '').slice(0, 40) || undefined : undefined,
                     });
-                    conn.end(JSON.stringify(failed ? { ok: false } : { ok: true, context, ledger_keys: ledgerKeys }) + '\n');
+                    reply(failed ? { ok: false } : { ok: true, context, ledger_keys: ledgerKeys });
                 }
                 catch {
                     try {
-                        conn.end(JSON.stringify({ ok: false }) + '\n');
+                        reply({ ok: false });
                     }
                     catch { /* gone */ }
                 }

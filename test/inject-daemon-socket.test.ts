@@ -117,6 +117,26 @@ describe('데몬 응답 프로토콜 — 준비 중 신호와 원장 기록', ()
     });
   }
 
+  /** 요청 줄을 끝까지 읽어 파싱한 뒤 script 에 넘기는 가짜 데몬. */
+  function lineDaemon(sockPath: string, script: (req: Record<string, unknown>, c: net.Socket) => void): Promise<net.Server> {
+    return new Promise((resolve, reject) => {
+      const s = net.createServer((c) => {
+        c.setEncoding('utf8');
+        let buf = '';
+        let handled = false;
+        c.on('data', (d: string) => {
+          buf += d;
+          const nl = buf.indexOf('\n');
+          if (handled || nl < 0) return;
+          handled = true;
+          script(JSON.parse(buf.slice(0, nl)), c);
+        });
+      });
+      s.on('error', reject);
+      s.listen(sockPath, () => { servers.push(s); resolve(s); });
+    });
+  }
+
   it('준비 중 신호를 받으면 응답 한도(3초)를 넘겨도 기다리고, 받은 블록을 출력한 뒤 원장에 기록한다', async () => {
     const ci = path.join(tmp, 'conversation-index');
     await scriptedDaemon(injectSocketPathIn(ci, VERSION), (c) => {
@@ -143,14 +163,20 @@ describe('데몬 응답 프로토콜 — 준비 중 신호와 원장 기록', ()
 
   it('준비 중 신호 뒤 데몬이 답 없이 연결을 닫으면 대기 한도(20초)를 기다리지 않고 바로 대체 경로로 간다', async () => {
     const ci = path.join(tmp, 'conversation-index');
-    await scriptedDaemon(injectSocketPathIn(ci, VERSION), (c) => {
+    let sentReqId: unknown = null;
+    await lineDaemon(injectSocketPathIn(ci, VERSION), (req, c) => {
+      sentReqId = req.req_id;
       c.write(JSON.stringify({ warming: true }) + '\n');
       setTimeout(() => c.end(), 100);
     });
     const t0 = Date.now();
     await runClient(PROMPT);
-    expect(readInjectLog().at(-1), '연결 종료를 듣지 않으면 20초 뒤 daemon-timeout').toMatchObject({ via: 'fallback', fallback_reason: 'daemon-closed' });
+    const last = readInjectLog().at(-1);
+    expect(last, '연결 종료를 듣지 않으면 20초 뒤 daemon-timeout').toMatchObject({ via: 'fallback', fallback_reason: 'daemon-closed' });
     expect(Date.now() - t0).toBeLessThan(15_000);
+    // 데몬이 계산해 로그를 남긴 뒤 버려진 블록과, 이 대체 경로 줄을 같은 요청으로 묶는 열쇠
+    expect(String(sentReqId)).toMatch(/^[0-9a-f-]{36}$/);
+    expect(last!.req_id).toBe(sentReqId);
   }, 60_000);
 
   it('응답이 다바이트 문자 가운데서 쪼개져 와도 블록을 그대로 출력한다', async () => {
@@ -164,6 +190,19 @@ describe('데몬 응답 프로토콜 — 준비 중 신호와 원장 기록', ()
     });
     const out = await runClient(PROMPT);
     expect(out).toContain(BLOCK);
+  }, 30_000);
+
+  it('훅 입력이 커서 여러 조각으로 읽혀도 다바이트 문자를 깨지 않는다', async () => {
+    const ci = path.join(tmp, 'conversation-index');
+    await lineDaemon(injectSocketPathIn(ci, VERSION), (req, c) => {
+      const p = String(req.prompt);
+      c.end(JSON.stringify({ ok: true, context: `LEN:${p.length}:${p.includes('\uFFFD')}`, ledger_keys: [] }) + '\n');
+    });
+    // '{"prompt":"' 11바이트 + 'aa' = 13바이트 뒤로 4바이트 이모지가 이어진다. 13 은 4로 나눠 1이 남으므로,
+    // 4의 배수에서 끊기는 읽기 조각 경계(파이프 버퍼 16·64KB)는 모두 이모지 가운데에 떨어진다.
+    const prompt = 'aa' + '\u{1F600}'.repeat(30_000);
+    const out = await runClient({ ...PROMPT, prompt });
+    expect(out).toContain(`LEN:${prompt.length}:false`);
   }, 30_000);
 
   it('출력을 받는 쪽이 파이프를 닫아 전달에 실패하면 원장에 기록하지 않는다', async () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -22,19 +22,22 @@ const PROJECT = '/tmp/mb-ss-proj_a';
 const SLUG = '-tmp-mb-ss-proj-a';
 let tmp: string;
 
+const hookEnv = (env: Record<string, string> = {}) => ({
+  ...process.env,
+  MEMORY_BANK_CONFIG_DIR: tmp,
+  MEMORY_BANK_DB_PATH: path.join(tmp, 't.sqlite'),
+  MEMORY_BANK_SESSION_START_SPAWN: '0', // 픽스처 DB 로 LLM 워커를 띄우지 않는다
+  MEMORY_BANK_SESSION_CONTINUITY: '',
+  MEMORY_BANK_INTENT_PROFILE: '',
+  ...env,
+});
+const ledgerPath = (sid: string) => path.join(tmp, 'conversation-index', 'state', 'inject-ledger', `${sid}.json`);
+
 function runHook(env: Record<string, string> = {}): string {
   return execFileSync(process.execPath, ['scripts/fact-consolidate-hook.js'], {
     cwd: REPO, encoding: 'utf8', timeout: 30_000,
     input: JSON.stringify({ session_id: 'ss-test-0001', cwd: PROJECT, hook_event_name: 'SessionStart' }),
-    env: {
-      ...process.env,
-      MEMORY_BANK_CONFIG_DIR: tmp,
-      MEMORY_BANK_DB_PATH: path.join(tmp, 't.sqlite'),
-      MEMORY_BANK_SESSION_START_SPAWN: '0', // 픽스처 DB 로 LLM 워커를 띄우지 않는다
-      MEMORY_BANK_SESSION_CONTINUITY: '',
-      MEMORY_BANK_INTENT_PROFILE: '',
-      ...env,
-    },
+    env: hookEnv(env),
   });
 }
 
@@ -95,6 +98,20 @@ describe('SessionStart 훅', () => {
     db.close();
     expect(ledger).toContain(row.id);
     expect(ledger).toContain(factTextKey(row));
+  });
+
+  it('출력을 받는 쪽이 파이프를 닫아 전달에 실패하면 원장에 기록하지 않는다', async () => {
+    // 위 테스트가 양성 대조다 — 같은 DB·같은 훅에서 전달되면 원장이 생긴다.
+    const sid = 'ss-test-epipe';
+    await new Promise<void>((resolve) => {
+      const child = spawn(process.execPath, ['scripts/fact-consolidate-hook.js'], {
+        cwd: REPO, env: hookEnv(), stdio: ['pipe', 'pipe', 'ignore'],
+      });
+      child.stdout!.destroy(); // 받는 쪽(Claude Code)이 먼저 떠났다
+      child.on('exit', () => resolve());
+      child.stdin!.end(JSON.stringify({ session_id: sid, cwd: PROJECT, hook_event_name: 'SessionStart' }));
+    });
+    expect(fs.existsSync(ledgerPath(sid)), '전달되지 않은 핵심 fact 가 「이미 실음」으로 남으면 그 세션 내내 주입되지 않는다').toBe(false);
   });
 
   it('다른 프로세스가 쓰기 잠금을 쥐고 있어도 기다리지 않고 fact 를 출력한다', () => {

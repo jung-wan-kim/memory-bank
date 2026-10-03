@@ -53202,7 +53202,8 @@ async function computeInjectResult(userPrompt, project, via, sessionId, meta3 = 
     client: meta3.client || void 0,
     entrypoint: meta3.entrypoint || void 0,
     has_session: Boolean(sessionId),
-    fallback_reason: meta3.fallback_reason || void 0
+    fallback_reason: meta3.fallback_reason || void 0,
+    req_id: meta3.req_id || void 0
   };
   const gate = injectionQuery(userPrompt);
   if (gate.reason !== null) {
@@ -53370,7 +53371,11 @@ function injectSocketPathIn(indexDir, version2) {
 }
 
 // src/inject-daemon.ts
-var REQUEST_IDLE_MS = Number(process.env.MEMORY_BANK_INJECT_IDLE_MS) || 1e4;
+function requestIdleMs(raw) {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 1e4;
+}
+var REQUEST_IDLE_MS = requestIdleMs(process.env.MEMORY_BANK_INJECT_IDLE_MS);
 function injectSocketPath() {
   return injectSocketPathIn(getIndexDir(), ownPackageVersion());
 }
@@ -53394,6 +53399,10 @@ function startInjectDaemon() {
       handled = true;
       conn.setTimeout(0);
       const line = buf.slice(0, nl);
+      const reply = (payload) => {
+        conn.end(JSON.stringify(payload) + "\n");
+        conn.setTimeout(REQUEST_IDLE_MS, () => conn.destroy());
+      };
       void (async () => {
         try {
           const req = JSON.parse(line);
@@ -53407,13 +53416,15 @@ function startInjectDaemon() {
             req.session_id ? String(req.session_id) : void 0,
             {
               client: req.client ? String(req.client).slice(0, 40) : void 0,
-              entrypoint: req.entrypoint ? String(req.entrypoint).slice(0, 40) : void 0
+              entrypoint: req.entrypoint ? String(req.entrypoint).slice(0, 40) : void 0,
+              // Ties this log line to the client's fallback line when the client gave up.
+              req_id: req.req_id ? String(req.req_id).replace(/[^A-Za-z0-9-]/g, "").slice(0, 40) || void 0 : void 0
             }
           );
-          conn.end(JSON.stringify(failed ? { ok: false } : { ok: true, context, ledger_keys: ledgerKeys }) + "\n");
+          reply(failed ? { ok: false } : { ok: true, context, ledger_keys: ledgerKeys });
         } catch {
           try {
-            conn.end(JSON.stringify({ ok: false }) + "\n");
+            reply({ ok: false });
           } catch {
           }
         }

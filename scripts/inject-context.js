@@ -22,6 +22,7 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { injectionQuery } from '../dist/prompt-gate.js';
 import { appendInjectLog } from '../dist/inject-log.js';
@@ -44,6 +45,9 @@ function readStdin(timeoutMs = 2000) {
     if (process.stdin.isTTY) return resolve('');
     let data = '';
     const timer = setTimeout(() => resolve(data), timeoutMs);
+    // A large envelope arrives in several chunks; decode as a stream so a
+    // multi-byte character split across chunks stays whole.
+    process.stdin.setEncoding('utf8');
     process.stdin.on('data', (c) => (data += c));
     process.stdin.on('end', () => { clearTimeout(timer); resolve(data); });
     process.stdin.on('error', () => { clearTimeout(timer); resolve(data); });
@@ -212,6 +216,7 @@ async function main() {
   const meta = {
     client: client || 'manual',
     entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT || undefined,
+    req_id: randomUUID(), // same id on the daemon's log line and on a fallback line
   };
 
   // Harness-generated prompts (task notifications, slash-command expansions …)

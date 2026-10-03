@@ -123,6 +123,23 @@ describe('computeInjectContext', () => {
     expect(loadLedger('sess-result-0001').size, '직접 전달하는 경로는 기록한다').toBeGreaterThan(0);
   }, 30_000);
 
+  it('일치 없음·이미 실음은 실패가 아니다 — failed 는 예외에만 붙는다', async () => {
+    // failed 가 잘못 붙으면 데몬이 일치 없는 프롬프트마다 ok:false 를 보내, 클라이언트가 매번 모델을 새로 올린다
+    const { loadLedger, appendLedger } = await import('../src/inject-ledger.js');
+    const none = await core.computeInjectResult(
+      'Which kimchi stew recipe uses pork belly and aged kimchi for the deepest flavor?', '/tmp/proj', 'daemon', 'sess-notfail-0001',
+    );
+    expect(readLog().at(-1)!.status).toBe('no-match');
+    expect(none).toEqual({ context: '', ledgerKeys: [] });
+
+    const q = 'How does our deploy pipeline publish Vercel previews for pull requests?';
+    const first = await core.computeInjectResult(q, '/tmp/proj', 'daemon', 'sess-notfail-0002');
+    appendLedger('sess-notfail-0002', loadLedger('sess-notfail-0002'), first.ledgerKeys);
+    const again = await core.computeInjectResult(q, '/tmp/proj', 'daemon', 'sess-notfail-0002');
+    expect(readLog().at(-1)!.status).toBe('deduped');
+    expect(again).toEqual({ context: '', ledgerKeys: [] });
+  }, 30_000);
+
   it('MEMORY_BANK_REPEAT_DETECT=1 일 때만 반복 감지가 돈다', async () => {
     process.env.MEMORY_BANK_REPEAT_DETECT = '1';
     await core.computeInjectContext(

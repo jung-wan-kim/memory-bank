@@ -60,6 +60,20 @@ function readStdin(timeoutMs = 3000) {
   });
 }
 
+/**
+ * Write to stdout; resolves true once the write has gone through, false when it
+ * failed (the host already left — EPIPE). The facts printed here are recorded
+ * in the session ledger only on true: recorded but never delivered, the key
+ * facts would be filtered out of every prompt for the rest of the session.
+ * Same rule as deliver() in inject-context.js.
+ */
+function writeOut(text) {
+  return new Promise((resolve) => {
+    process.stdout.on('error', () => { /* host gone — the write callback sees it */ });
+    process.stdout.write(text, (err) => resolve(!err));
+  });
+}
+
 async function main() {
   const raw = await readStdin();
   let input = {};
@@ -73,6 +87,7 @@ async function main() {
     try {
       const db = openReadOnlyDatabase();
       const shown = [];
+      let delivered = false;
       if (db) try {
         const lines = [];
         let chars = 0;
@@ -84,15 +99,13 @@ async function main() {
           chars += line.length + 1;
         }
         if (lines.length > 0) {
-          console.log('');
-          console.log('# Project Key Facts (auto-recalled)');
-          for (const line of lines) console.log(line);
+          delivered = await writeOut(['', '# Project Key Facts (auto-recalled)', ...lines].join('\n') + '\n');
         }
       } finally {
         db.close();
       }
       // Same keys the per-prompt injection dedups on (id + text) — see header.
-      if (shown.length > 0 && input.session_id) {
+      if (delivered && shown.length > 0 && input.session_id) {
         appendLedger(input.session_id, loadLedger(input.session_id),
           shown.flatMap((f) => [f.id, factTextKey(f)]));
       }

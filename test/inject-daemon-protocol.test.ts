@@ -84,7 +84,9 @@ describe('실제 데몬 — 요청 처리', () => {
 
   it('원장은 쓰지 않고 키만 응답에 싣는다 — 기록은 블록을 출력한 쪽이 한다', async () => {
     compute.mockResolvedValueOnce({ context: 'BLOCK', ledgerKeys: ['f-1', 't:abc'] });
-    const { lines } = await exchange([request({ session_id: 'sess-dp-ledger' })]);
+    const { lines } = await exchange([request({ session_id: 'sess-dp-ledger', req_id: 'req-<b>abc-123' })]);
+    // 요청 id 는 로그 줄을 클라이언트의 대체 경로 줄과 묶는 열쇠다 — 영숫자·하이픈만 남긴다
+    expect(compute.mock.calls.at(-1)![4]).toMatchObject({ req_id: 'req-babc-123' });
     expect(lines.at(-1)).toMatchObject({ ok: true, context: 'BLOCK', ledger_keys: ['f-1', 't:abc'] });
     const ledger = path.join(tmp, 'conversation-index', 'state', 'inject-ledger', 'sess-dp-ledger.json');
     expect(fs.existsSync(ledger), '데몬이 원장을 쓰면 클라이언트가 버린 블록도 「이미 실음」이 된다').toBe(false);
@@ -117,6 +119,28 @@ describe('실제 데몬 — 요청 처리', () => {
       compute.mockReset();
     }
     expect(calls).toBe(1);
+  });
+
+  it('답을 보낸 뒤 클라이언트가 연결을 닫지 않아도 유휴 한도가 지나면 정리한다', async () => {
+    compute.mockResolvedValueOnce({ context: 'HALF', ledgerKeys: [] });
+    // 데몬이 이미 종료 신호(FIN)를 보낸 뒤라, 데몬이 소켓을 정리했는지는 클라이언트가 다시 써 봐야 드러난다:
+    // 정리됐으면 EPIPE 로 끊기고, 남아 있으면 쓰기가 그대로 성공한다(scratchpad 재현으로 확인한 동작).
+    const closedByDaemon = await new Promise<boolean>((resolve) => {
+      const c = net.connect({ path: sock, allowHalfOpen: true }); // 답을 받고도 자기 쪽을 닫지 않는 클라이언트
+      c.on('connect', () => c.write(request()));
+      c.on('data', () => {});
+      c.on('error', () => {});
+      c.on('close', () => resolve(true));
+      setTimeout(() => c.write('still-here\n'), IDLE_MS * 3);
+      setTimeout(() => { resolve(false); c.destroy(); }, IDLE_MS * 6);
+    });
+    expect(closedByDaemon, '반쯤 닫힌 연결이 MCP 서버 안에 무기한 남는다').toBe(true);
+  });
+
+  it('유휴 한도 환경 변수가 양수가 아니면 기본값을 쓴다 (연결 처리 중 RangeError 로 MCP 서버가 죽지 않게)', async () => {
+    const { requestIdleMs } = await import('../src/inject-daemon.js');
+    expect(requestIdleMs('300')).toBe(300);
+    for (const bad of [undefined, '', '-5', '0', 'abc', 'Infinity']) expect(requestIdleMs(bad), String(bad)).toBe(10_000);
   });
 
   it('모델이 준비 중이면 검색할 프롬프트에 {"warming":true} 를 먼저 보내고, 짧은 프롬프트에는 보내지 않는다', async () => {

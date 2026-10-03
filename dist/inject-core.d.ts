@@ -4,6 +4,12 @@ export interface InjectRequestMeta {
     entrypoint?: string;
     /** Cold fallback only: why the daemon did not answer ('no-daemon', 'daemon-timeout', 'daemon-closed', 'daemon-error'). */
     fallback_reason?: string;
+    /**
+     * One id per hook run, sent to the daemon and used again by the fallback. When
+     * the client gives up, the daemon's line and the fallback line share it, so a
+     * block computed but never delivered is not counted as a second injection.
+     */
+    req_id?: string;
 }
 /**
  * The block plus the ledger keys (fact id + text key per injected fact) that

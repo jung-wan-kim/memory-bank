@@ -45,7 +45,7 @@ describe('computeInjectResult — 계산 실패', () => {
     expect(last).toMatchObject({ status: 'error', error: 'model load failed' });
   });
 
-  it('건너뛴 프롬프트와 일치 없음은 실패가 아니다', async () => {
+  it('건너뛴 프롬프트는 실패가 아니다 (일치 없음·이미 실음은 inject-core.test.ts 에서 실제 모델로 시험)', async () => {
     const core = await import('../src/inject-core.js');
     const r = await core.computeInjectResult('<task-notification>\n<status>completed</status>\n</task-notification>', '/tmp/proj', 'daemon');
     expect(r.failed).toBeUndefined();

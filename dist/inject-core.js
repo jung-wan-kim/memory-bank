@@ -57,6 +57,7 @@ export async function computeInjectResult(userPrompt, project, via, sessionId, m
         entrypoint: meta.entrypoint || undefined,
         has_session: Boolean(sessionId),
         fallback_reason: meta.fallback_reason || undefined,
+        req_id: meta.req_id || undefined,
     };
     const gate = injectionQuery(userPrompt);
     if (gate.reason !== null) {

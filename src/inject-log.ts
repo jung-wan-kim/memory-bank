@@ -38,8 +38,10 @@ export interface InjectLogEntry {
   reason?: string;
   /** Length of the text actually searched, when it differs from the prompt (prompt-gate.ts). */
   query_len?: number;
-  /** via='fallback' only — why the warm daemon did not answer ('daemon-timeout', 'no-daemon'). */
+  /** via='fallback' only — why the warm daemon did not answer ('no-daemon', 'daemon-timeout', 'daemon-closed', 'daemon-error'). */
   fallback_reason?: string;
+  /** One id per hook run: a daemon line and a fallback line with the same id are one prompt. */
+  req_id?: string;
   /** Hook host: 'claude-code' | 'codex' | 'manual' — lets the two clients be measured apart. */
   client?: string;
   /** CLAUDE_CODE_ENTRYPOINT (cli, sdk-ts …) — separates interactive sessions from automation. */
