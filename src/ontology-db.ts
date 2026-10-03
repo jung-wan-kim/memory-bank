@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { randomUUID } from 'crypto';
 import { getVecTableDtype, embeddingToVecBlob, vecParamSql, normalizeVecDistance } from './db.js';
+import { ontologyNameRejectReason } from './fact-validity.js';
 import type {
   OntologyDomain,
   OntologyCategory,
@@ -17,6 +18,8 @@ export function createDomain(
   name: string,
   description?: string,
 ): OntologyDomain {
+  const rejectReason = ontologyNameRejectReason(name);
+  if (rejectReason) throw new Error(`createDomain refused (${rejectReason}): ${String(name).slice(0, 60)}`);
   const id = randomUUID();
   const now = new Date().toISOString();
   db.prepare(
@@ -51,6 +54,8 @@ export function createCategory(
   name: string,
   description?: string,
 ): OntologyCategory {
+  const rejectReason = ontologyNameRejectReason(name);
+  if (rejectReason) throw new Error(`createCategory refused (${rejectReason}): ${String(name).slice(0, 60)}`);
   const id = randomUUID();
   const now = new Date().toISOString();
   db.prepare(

@@ -4,6 +4,7 @@ import { initDatabase, getVecTableDtype, embeddingToVecBlob, vecParamSql } from 
 import { generateEmbedding, initEmbeddings, EMBEDDING_VERSION } from './embeddings.js';
 import { getSyncDir } from './sync-export.js';
 import { canonicalizeProject } from './project-canon.js';
+import { factRejectReason, ontologyNameRejectReason } from './fact-validity.js';
 
 interface SyncFact {
   id: string;
@@ -24,9 +25,10 @@ interface SyncFact {
  * Only inserts records that don't already exist (by ID).
  * Generates embeddings for new facts.
  */
-export async function importFromSync(): Promise<{ newFacts: number; newDomains: number; newCategories: number; newRelations: number }> {
+export async function importFromSync(): Promise<{ newFacts: number; newDomains: number; newCategories: number; newRelations: number; rejectedJunk: number }> {
   const syncDir = getSyncDir();
-  const result = { newFacts: 0, newDomains: 0, newCategories: 0, newRelations: 0 };
+  // rejectedJunk: template-residue records another device exported (see fact-validity.ts)
+  const result = { newFacts: 0, newDomains: 0, newCategories: 0, newRelations: 0, rejectedJunk: 0 };
 
   // Check if sync files exist
   const factsPath = path.join(syncDir, 'facts.jsonl');
@@ -44,6 +46,7 @@ export async function importFromSync(): Promise<{ newFacts: number; newDomains: 
       for (const line of lines) {
         try {
           const d = JSON.parse(line);
+          if (ontologyNameRejectReason(d.name)) { result.rejectedJunk++; continue; }
           const existing = db.prepare('SELECT id FROM ontology_domains WHERE id = ?').get(d.id);
           if (!existing) {
             db.prepare('INSERT INTO ontology_domains (id, name, description, created_at) VALUES (?, ?, ?, ?)').run(
@@ -62,6 +65,7 @@ export async function importFromSync(): Promise<{ newFacts: number; newDomains: 
       for (const line of lines) {
         try {
           const c = JSON.parse(line);
+          if (ontologyNameRejectReason(c.name)) { result.rejectedJunk++; continue; }
           const existing = db.prepare('SELECT id FROM ontology_categories WHERE id = ?').get(c.id);
           if (!existing) {
             db.prepare('INSERT INTO ontology_categories (id, domain_id, name, description, created_at) VALUES (?, ?, ?, ?, ?)').run(
@@ -83,6 +87,7 @@ export async function importFromSync(): Promise<{ newFacts: number; newDomains: 
         const f: SyncFact = JSON.parse(line);
         const existingById = db.prepare('SELECT id FROM facts WHERE id = ?').get(f.id);
         if (existingById) continue;
+        if (factRejectReason(f)) { result.rejectedJunk++; continue; }
 
         // Canonicalize scope before dedup/insert — other devices may still
         // export slug-format project names.

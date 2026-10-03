@@ -1,7 +1,7 @@
 import { ConversationExchange } from './types.js';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { SUMMARIZER_CONTEXT_MARKER } from './constants.js';
-import { llmWorkdir } from './llm.js';
+import { llmWorkdir, ISOLATED_QUERY_OPTIONS } from './llm.js';
 
 /**
  * Get API environment overrides for summarization calls.
@@ -65,7 +65,7 @@ async function callClaude(prompt: string, sessionId?: string, useFallback = fals
       // hooks would re-spawn sync/backfill workers and cascade into more
       // sessions. Resume works because every call shares this fixed cwd.
       cwd: llmWorkdir(),
-      settingSources: [],
+      ...ISOLATED_QUERY_OPTIONS,
       // Don't override systemPrompt when resuming - it uses the original session's prompt
       // Instead, the prompt itself should provide clear instructions
       ...(sessionId ? {} : {

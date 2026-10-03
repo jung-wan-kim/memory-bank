@@ -13,6 +13,9 @@ async function main() {
     if (result.newFacts > 0 || result.newDomains > 0) {
       console.log(`sync-import: +${result.newFacts} facts, +${result.newDomains} domains, +${result.newRelations} relations`);
     }
+    if (result.rejectedJunk > 0) {
+      console.error(`sync-import: rejected ${result.rejectedJunk} template-residue record(s) from another device`);
+    }
   } catch (error) {
     // Non-fatal
     console.error('sync-import: Error:', error instanceof Error ? error.message : error);

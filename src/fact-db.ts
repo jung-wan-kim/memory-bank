@@ -4,6 +4,7 @@ import type { Fact, FactRevision } from './types.js';
 import { canonicalizeProject } from './project-canon.js';
 import { EMBEDDING_VERSION } from './embeddings.js';
 import { getVecTableDtype, embeddingToVecBlob, vecParamSql, normalizeVecDistance, l2DistanceToSimilarity } from './db.js';
+import { factRejectReason } from './fact-validity.js';
 
 type FactVecTable = 'vec_facts' | 'vec_facts_kr' | 'vec_categories';
 
@@ -44,6 +45,10 @@ interface InsertRevisionParams {
 }
 
 export function insertFact(db: Database.Database, params: InsertFactParams): string {
+  // Last line of defence for every writer (extractor, capture-decision, the
+  // cc-sync memory-doc importer): template residue never reaches the table.
+  const rejectReason = factRejectReason(params);
+  if (rejectReason) throw new Error(`insertFact refused (${rejectReason}): ${String(params.fact).slice(0, 60)}`);
   const id = randomUUID();
   const now = new Date().toISOString();
   const scopeProject = params.scope_project

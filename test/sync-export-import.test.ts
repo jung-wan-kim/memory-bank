@@ -140,6 +140,28 @@ describe('sync-export/import', () => {
     expect(result.newRelations).toBe(1);
   });
 
+  it('다른 기기가 내보낸 템플릿 쓰레기는 들이지 않고 수를 센다 (2026-10-03)', async () => {
+    const { getSyncDir } = await import('../src/sync-export.js');
+    const syncDir = getSyncDir();
+    const now = new Date().toISOString();
+    fs.writeFileSync(path.join(syncDir, 'ontology-domains.jsonl'), [
+      JSON.stringify({ id: 'junk-dom', name: 'existing or new domain name', description: null, created_at: now }),
+      JSON.stringify({ id: 'ok-dom', name: 'Backend', description: null, created_at: now }),
+    ].join('\n') + '\n');
+    fs.writeFileSync(path.join(syncDir, 'ontology-categories.jsonl'),
+      JSON.stringify({ id: 'junk-cat', domain_id: 'ok-dom', name: 'category name', description: null, created_at: now }) + '\n');
+    fs.writeFileSync(path.join(syncDir, 'facts.jsonl'), [
+      JSON.stringify({ id: 'junk-fact', fact: '...', category: '...', scope_type: '...', scope_project: null,
+        source_exchange_ids: '[]', created_at: now, updated_at: now, consolidated_count: 1, ontology_category_id: null }),
+      JSON.stringify({ id: 'ok-fact', fact: 'Use REST for public APIs', category: 'decision', scope_type: 'global', scope_project: null,
+        source_exchange_ids: '[]', created_at: now, updated_at: now, consolidated_count: 1, ontology_category_id: null }),
+    ].join('\n') + '\n');
+
+    const { importFromSync } = await import('../src/sync-import.js');
+    const result = await importFromSync();
+    expect(result).toMatchObject({ newDomains: 1, newCategories: 0, newFacts: 1, rejectedJunk: 3 });
+  });
+
   it('should skip duplicate records on re-import', async () => {
     const { getSyncDir } = await import('../src/sync-export.js');
     const syncDir = getSyncDir();

@@ -1017,6 +1017,45 @@ describe('ontology-classifier', () => {
       const relations = getRelationsForFact(db, 'unrelated');
       expect(relations.length).toBe(0);
     });
+
+    it('오래된 fact 를 처리해도 방향은 생성 시각 기준 — 새 fact 가 source (2026-10-03, 역방향 22.3%)', async () => {
+      const embeddingArr = new Array(384).fill(0.1);
+      insertTestFact(db, 'newer-db', 'Use pnpm workspaces for the monorepo', embeddingArr);
+      db.prepare('UPDATE facts SET created_at = ? WHERE id = ?').run('2026-09-01T00:00:00.000Z', 'newer-db');
+
+      (parseJsonResponse as ReturnType<typeof vi.fn>).mockReturnValue({
+        has_relation: true, relation_type: 'SUPERSEDES', reasoning: 'pnpm replaced npm',
+      });
+      (callHaiku as ReturnType<typeof vi.fn>).mockResolvedValue('{}');
+
+      // 백필 워커가 옛 fact 를 지금 처리하는 상황
+      const older = makeFact({
+        id: 'older-processed', fact: 'Use npm workspaces for the monorepo',
+        created_at: '2026-06-01T00:00:00.000Z', embedding: new Float32Array(embeddingArr),
+      });
+      await detectRelations(db, older);
+
+      const prompt = (callHaiku as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+      expect(prompt).toContain('New fact: "Use pnpm workspaces for the monorepo"');
+      expect(prompt).toContain('Existing fact: "Use npm workspaces for the monorepo"');
+      const rel = db.prepare('SELECT source_fact_id, target_fact_id FROM ontology_relations').all();
+      expect(rel).toEqual([{ source_fact_id: 'newer-db', target_fact_id: 'older-processed' }]);
+    });
+
+    it('반대 방향(옛 → 새) 관계가 이미 있으면 다시 판정하지 않는다 (상호 대체 245쌍의 원인)', async () => {
+      const embeddingArr = new Array(384).fill(0.1);
+      insertTestFact(db, 'pair-a', 'Deploy previews run on Vercel', embeddingArr);
+      insertTestFact(db, 'pair-b', 'Deploy previews run on Netlify', null); // FK 대상만 — 벡터 없음
+      db.prepare(`INSERT INTO ontology_relations (id, source_fact_id, relation_type, target_fact_id, created_at)
+                  VALUES ('r1', 'pair-a', 'SUPERSEDES', 'pair-b', '2026-09-01T00:00:00.000Z')`).run(); // 수정 전 방향으로 쓰인 옛 행
+      (callHaiku as ReturnType<typeof vi.fn>).mockResolvedValue('{}');
+
+      const fact = makeFact({ id: 'pair-b', fact: 'Deploy previews run on Netlify', embedding: new Float32Array(embeddingArr) });
+      await detectRelations(db, fact);
+
+      expect(callHaiku).not.toHaveBeenCalled();
+      expect((db.prepare('SELECT COUNT(*) AS n FROM ontology_relations').get() as { n: number }).n).toBe(1);
+    });
   });
 
   describe('classifyAndLinkFact', () => {
