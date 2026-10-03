@@ -5,7 +5,7 @@ import os from 'os';
 import { suppressConsole } from './test-utils.js';
 
 /**
- * computeInjectContext 회귀 (2026-10-03 수정분).
+ * computeInjectResult 회귀 (2026-10-03 수정분).
  *  - 하네스가 보낸 메시지(작업 알림 등)는 검색 없이 건너뛰고 이유를 로그에 남긴다
  *  - id 가 다른 같은 문장은 한 블록에 한 번만, 다음 프롬프트에서도 다시 싣지 않는다
  *  - 반복 감지는 기본 꺼짐, MEMORY_BANK_REPEAT_DETECT=1 에서만 돈다
@@ -24,6 +24,19 @@ let core: typeof import('../src/inject-core.js');
 let embed: typeof import('../src/embeddings.js');
 let factDb: typeof import('../src/fact-db.js');
 let dbMod: typeof import('../src/db.js');
+let ledgerMod: typeof import('../src/inject-ledger.js');
+
+/**
+ * 블록을 출력하는 쪽이 하는 일: 계산하고, 블록을 쓰고, 그다음에 그 fact 를 원장에 기록한다
+ * (scripts/inject-context.js 의 deliver). 원장을 쓰는 함수는 라이브러리에 두지 않는다 —
+ * 출력 없이 기록하는 함수가 있으면 그것을 따라 배선한 호출자가 1.7.1 결함을 되살린다.
+ */
+async function injectAndRecord(...args: Parameters<typeof core.computeInjectResult>): Promise<string> {
+  const r = await core.computeInjectResult(...args);
+  const sessionId = args[3];
+  if (r.ledgerKeys.length > 0) ledgerMod.appendLedger(sessionId, ledgerMod.loadLedger(sessionId), r.ledgerKeys);
+  return r.context;
+}
 
 async function addFact(text: string): Promise<string> {
   const db = dbMod.initDatabase();
@@ -45,6 +58,7 @@ beforeAll(async () => {
   embed = await import('../src/embeddings.js');
   factDb = await import('../src/fact-db.js');
   dbMod = await import('../src/db.js');
+  ledgerMod = await import('../src/inject-ledger.js');
   const { getInjectLogPath } = await import('../src/inject-log.js');
   readLog = () => fs.readFileSync(getInjectLogPath(), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   await embed.initEmbeddings();
@@ -64,9 +78,9 @@ beforeEach(() => {
   delete process.env.MEMORY_BANK_REPEAT_DETECT;
 });
 
-describe('computeInjectContext', () => {
+describe('computeInjectResult', () => {
   it('작업 알림은 검색하지 않고 이유와 함께 skipped 로 남긴다', async () => {
-    const out = await core.computeInjectContext(
+    const out = await injectAndRecord(
       '<task-notification>\n<task-id>b9ex41zdi</task-id>\n<status>completed</status>\n</task-notification>',
       '/tmp/proj', 'daemon', 'sess-gate-0001', { client: 'claude-code' },
     );
@@ -77,7 +91,7 @@ describe('computeInjectContext', () => {
   });
 
   it('id 만 다른 같은 문장은 블록에 한 번만 싣고, 단계 시간·출처를 기록한다', async () => {
-    const out = await core.computeInjectContext(
+    const out = await injectAndRecord(
       'How does our deploy pipeline publish Vercel previews for pull requests?',
       '/tmp/proj', 'daemon', 'sess-dedup-0001', { client: 'codex', entrypoint: 'cli' },
     );
@@ -92,7 +106,7 @@ describe('computeInjectContext', () => {
 
   it('같은 세션의 다음 프롬프트는 세 번째 사본(새 id)도 본문 키로 거른다', async () => {
     await addFact(DEPLOY); // 첫 주입 이후 새 id 로 같은 문장이 또 저장됨
-    const out = await core.computeInjectContext(
+    const out = await injectAndRecord(
       'Remind me again how the deploy pipeline handles Vercel previews for pull requests',
       '/tmp/proj', 'daemon', 'sess-dedup-0001',
     );
@@ -105,7 +119,7 @@ describe('computeInjectContext', () => {
     // 알림이 모델 입력 한도(512 토큰)를 넘게 길면, 걷어내지 않고 통째로 임베딩할 때 뒤의 질문이 잘려 나간다
     const noise = 'The user has the file notes/cooking.md open in the IDE. Recipe: whisk eggs, fold flour, bake. '.repeat(40);
     const question = 'What is our policy for database migrations with Flyway versioned SQL?';
-    const out = await core.computeInjectContext(
+    const out = await injectAndRecord(
       `<system-reminder>${noise}</system-reminder>\n${question}`, '/tmp/proj', 'daemon', 'sess-reminder-0001',
     );
     expect(out, `블록:\n${out}`).toContain('Flyway');
@@ -118,9 +132,7 @@ describe('computeInjectContext', () => {
     const r = await core.computeInjectResult(q, '/tmp/proj', 'daemon', 'sess-result-0001');
     expect(r.context).toContain('deploy pipeline publishes a Vercel preview');
     expect(r.ledgerKeys.length).toBeGreaterThan(0);
-    expect(loadLedger('sess-result-0001').size, '데몬은 기록하지 않는다').toBe(0);
-    await core.computeInjectContext(q, '/tmp/proj', 'fallback', 'sess-result-0001');
-    expect(loadLedger('sess-result-0001').size, '직접 전달하는 경로는 기록한다').toBeGreaterThan(0);
+    expect(loadLedger('sess-result-0001').size, '계산은 기록하지 않는다 — 출력한 쪽이 쓰기 성공 뒤에 기록한다').toBe(0);
   }, 30_000);
 
   it('일치 없음·이미 실음은 실패가 아니다 — failed 는 예외에만 붙는다', async () => {
@@ -142,7 +154,7 @@ describe('computeInjectContext', () => {
 
   it('MEMORY_BANK_REPEAT_DETECT=1 일 때만 반복 감지가 돈다', async () => {
     process.env.MEMORY_BANK_REPEAT_DETECT = '1';
-    await core.computeInjectContext(
+    await injectAndRecord(
       'What is our policy for database migrations with Flyway versioned SQL?',
       '/tmp/proj', 'daemon', 'sess-repeat-0001',
     );

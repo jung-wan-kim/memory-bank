@@ -42,6 +42,9 @@ function exchange(writes: Array<Buffer | string>, gapMs = 60): Promise<{ raw: st
     });
     c.on('data', (d) => chunks.push(d));
     c.on('error', () => { /* 서버가 끊음 — 받은 만큼으로 판정 */ });
+    // 답이 없어도 매달리지 않는다 — 판정은 시간 초과가 아니라 받은 줄에 대한 단언이 한다
+    const deadline = setTimeout(() => c.destroy(), 4000);
+    c.on('close', () => clearTimeout(deadline));
     c.on('close', () => {
       const raw = Buffer.concat(chunks).toString('utf8');
       resolve({ raw, lines: raw.split('\n').filter(Boolean).map((l) => JSON.parse(l)) });
@@ -96,6 +99,16 @@ describe('실제 데몬 — 요청 처리', () => {
     compute.mockResolvedValueOnce({ context: '', ledgerKeys: [], failed: true });
     const { lines } = await exchange([request()]);
     expect(lines.at(-1)).toMatchObject({ ok: false });
+  });
+
+  it('계산이 예외를 던져도, 요청 줄이 JSON 이 아니어도 ok:false 로 답하고 연결을 닫는다', async () => {
+    compute.mockRejectedValueOnce(new Error('db gone'));
+    const threw = await exchange([request()]);
+    expect(threw.lines).toEqual([{ ok: false }]);
+    const before = compute.mock.calls.length;
+    const garbled = await exchange(['{not json\n']);
+    expect(garbled.lines).toEqual([{ ok: false }]);
+    expect(compute.mock.calls.length, '파싱하지 못한 요청은 계산하지 않는다').toBe(before);
   });
 
   it('요청이 다바이트 문자 가운데서 쪼개져 와도 프롬프트를 그대로 받는다', async () => {

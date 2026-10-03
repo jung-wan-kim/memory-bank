@@ -5,7 +5,7 @@ import { generateEmbedding, initEmbeddings, queryBaseline } from './embeddings.j
 import { getRelatedFacts } from './ontology-db.js';
 import { detectRepeat, formatRepeatContext } from './repeat-detector.js';
 import { appendInjectLog } from './inject-log.js';
-import { loadLedger, appendLedger } from './inject-ledger.js';
+import { loadLedger } from './inject-ledger.js';
 import { injectionQuery } from './prompt-gate.js';
 import { factTextKey, truncateFact } from './fact-text.js';
 import type { Fact } from './types.js';
@@ -233,22 +233,4 @@ export async function computeInjectResult(
     });
     return { context: '', ledgerKeys: [], failed: true }; // non-fatal: never disrupt the user's prompt
   }
-}
-
-/**
- * computeInjectResult + an immediate ledger commit, for an in-process caller
- * that uses the block right away. The hook client does not use this: it
- * commits only after its stdout write succeeds (deliver() in
- * scripts/inject-context.js).
- */
-export async function computeInjectContext(
-  userPrompt: string,
-  project: string,
-  via: 'daemon' | 'fallback',
-  sessionId?: string,
-  meta: InjectRequestMeta = {},
-): Promise<string> {
-  const { context, ledgerKeys } = await computeInjectResult(userPrompt, project, via, sessionId, meta);
-  if (ledgerKeys.length > 0) appendLedger(sessionId, loadLedger(sessionId), ledgerKeys);
-  return context;
 }

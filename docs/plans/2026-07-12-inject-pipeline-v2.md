@@ -20,6 +20,7 @@
 2. **토큰 예산**: fact당 160자 절단 + 블록 총 1,000자 예산 (초과 시 하위 관련도부터 제외)
 3. **tail-latency**: detectRepeat 250ms timebox (Promise.race) — p95 tail 절단
 4. **session_id 배관**: hook stdin → inject-context.js → daemon payload → computeInjectContext
+   - (2026-10-03, v1.7.1~1.7.4 에서 바뀜) 데몬은 `computeInjectResult` 로 블록과 원장 키만 돌려주고, 원장은 블록을 실제로 출력한 쪽(`inject-context.js` 의 `deliver`, 세션 시작 훅)이 쓰기 성공 뒤에 기록한다. `computeInjectContext` 는 제거됐다
 5. **관측성**: inject 로그에 `chars`(주입 크기)·`deduped`(절약 건수) 필드 — 실효 절감을 로그로 상시 측정 (fail-loud)
 
 ## 수용 기준

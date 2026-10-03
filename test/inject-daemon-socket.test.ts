@@ -192,16 +192,26 @@ describe('데몬 응답 프로토콜 — 준비 중 신호와 원장 기록', ()
     expect(out).toContain(BLOCK);
   }, 30_000);
 
-  it('훅 입력이 커서 여러 조각으로 읽혀도 다바이트 문자를 깨지 않는다', async () => {
+  it('훅 입력이 여러 조각으로 읽혀도 다바이트 문자를 깨지 않는다', async () => {
     const ci = path.join(tmp, 'conversation-index');
     await lineDaemon(injectSocketPathIn(ci, VERSION), (req, c) => {
       const p = String(req.prompt);
       c.end(JSON.stringify({ ok: true, context: `LEN:${p.length}:${p.includes('\uFFFD')}`, ledger_keys: [] }) + '\n');
     });
-    // '{"prompt":"' 11바이트 + 'aa' = 13바이트 뒤로 4바이트 이모지가 이어진다. 13 은 4로 나눠 1이 남으므로,
-    // 4의 배수에서 끊기는 읽기 조각 경계(파이프 버퍼 16·64KB)는 모두 이모지 가운데에 떨어진다.
-    const prompt = 'aa' + '\u{1F600}'.repeat(30_000);
-    const out = await runClient({ ...PROMPT, prompt });
+    // 훅 입력을 이모지 가운데서 끊어 두 번에 나눠 보낸다(간격을 둬서 클라이언트가 따로 읽게).
+    // 파이프 버퍼 크기에 기대지 않는다 — 조각 경계를 테스트가 정한다.
+    const prompt = '배포 파이프라인 정리 \u{1F600}\u{1F680} 프리뷰 확인 순서';
+    const buf = Buffer.from(JSON.stringify({ ...PROMPT, prompt }));
+    const k = buf.indexOf(Buffer.from('\u{1F600}')) + 2; // 4바이트 이모지의 가운데
+    const out = await new Promise<string>((resolve) => {
+      const child = spawn(process.execPath, ['scripts/inject-context.js'], { cwd: REPO, env: clientEnv(), stdio: ['pipe', 'pipe', 'ignore'] });
+      let stdout = '';
+      child.stdout!.setEncoding('utf8');
+      child.stdout!.on('data', (d: string) => { stdout += d; });
+      child.on('close', () => resolve(stdout));
+      child.stdin!.write(buf.subarray(0, k));
+      setTimeout(() => child.stdin!.end(buf.subarray(k)), 150);
+    });
     expect(out).toContain(`LEN:${prompt.length}:false`);
   }, 30_000);
 

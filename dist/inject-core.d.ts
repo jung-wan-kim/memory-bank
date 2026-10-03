@@ -46,10 +46,3 @@ export interface InjectResult {
  * `via` tags the inject log so the two paths stay distinguishable.
  */
 export declare function computeInjectResult(userPrompt: string, project: string, via: 'daemon' | 'fallback', sessionId?: string, meta?: InjectRequestMeta): Promise<InjectResult>;
-/**
- * computeInjectResult + an immediate ledger commit, for an in-process caller
- * that uses the block right away. The hook client does not use this: it
- * commits only after its stdout write succeeds (deliver() in
- * scripts/inject-context.js).
- */
-export declare function computeInjectContext(userPrompt: string, project: string, via: 'daemon' | 'fallback', sessionId?: string, meta?: InjectRequestMeta): Promise<string>;

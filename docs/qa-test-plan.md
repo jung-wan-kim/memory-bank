@@ -46,9 +46,9 @@ Defects found while comparing against another installation's report, in live che
 
 | ID | Severity | Coverage | Evidence command |
 | --- | --- | --- | --- |
-| TC-INJ-001 | CRITICAL | A block the client abandoned is never recorded in the session ledger; the daemon only returns ledger keys | `npx vitest run test/inject-daemon-protocol.test.ts test/inject-daemon-socket.test.ts` |
+| TC-INJ-001 | CRITICAL | A block the client abandoned is never recorded in the session ledger; the daemon only returns ledger keys and the computation itself writes no ledger | `npx vitest run test/inject-daemon-protocol.test.ts test/inject-daemon-socket.test.ts test/inject-core.test.ts` |
 | TC-INJ-002 | CRITICAL | Ledger is written only after the stdout write succeeds (prompt client and SessionStart hook); a closed pipe records nothing | `npx vitest run test/inject-daemon-socket.test.ts test/session-start-hook.test.ts` |
-| TC-INJ-003 | CRITICAL | A thrown computation answers `{ok:false}`; skipped, no-match and deduped results are not failures | `npx vitest run test/inject-daemon-protocol.test.ts test/inject-core-failure.test.ts test/inject-core.test.ts` |
+| TC-INJ-003 | CRITICAL | A thrown computation or an unparsable request answers `{ok:false}`; skipped, no-match and deduped results are not failures | `npx vitest run test/inject-daemon-protocol.test.ts test/inject-core-failure.test.ts test/inject-core.test.ts` |
 | TC-INJ-004 | CRITICAL | Baseline probes are used only when complete, computed once for concurrent callers, recomputed after a failure | `npx vitest run test/embeddings-load.test.ts` |
 | TC-INJ-005 | CRITICAL | The hook client asks only the daemon of its own version (versioned socket), never an older one | `npx vitest run test/inject-daemon-socket.test.ts` |
 | TC-INJ-006 | HIGH | While the model loads the daemon sends `{"warming":true}`; the client waits; no idle cut-off during the computation | `npx vitest run test/inject-daemon-protocol.test.ts test/inject-daemon-socket.test.ts` |
@@ -58,7 +58,7 @@ Defects found while comparing against another installation's report, in live che
 | TC-INJ-010 | HIGH | SessionStart prints key facts synchronously from a read-only DB and records them in the ledger | `npx vitest run test/session-start-hook.test.ts` |
 | TC-INJ-011 | MEDIUM | Socket and stdin are decoded as UTF-8 streams; multi-byte characters split across chunks stay whole | `npx vitest run test/inject-daemon-protocol.test.ts test/inject-daemon-socket.test.ts` |
 | TC-INJ-012 | MEDIUM | One request per connection; a half-open socket is reclaimed after the answer; a bad idle-limit value falls back to 10s | `npx vitest run test/inject-daemon-protocol.test.ts` |
-| TC-INJ-013 | MEDIUM | Inject log carries client, entrypoint, has_session, stage timings, fallback_reason and req_id (daemon and fallback lines of one prompt share req_id) | `npx vitest run test/inject-core.test.ts test/inject-daemon-socket.test.ts` |
+| TC-INJ-013 | MEDIUM | Inject log carries client, entrypoint, has_session, stage timings, fallback_reason and req_id (daemon and fallback lines of one prompt share req_id) | `npx vitest run test/inject-core.test.ts test/inject-daemon-socket.test.ts test/inject-daemon-protocol.test.ts` |
 | TC-INJ-014 | LOW | After install: the first prompt of a new session is served by the daemon and the ledger holds exactly the facts injected | headless `claude -p` session + `--resume`, then compare inject log and ledger |
 
 ## Current hard UI blocker policy
