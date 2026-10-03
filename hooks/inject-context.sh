@@ -26,6 +26,7 @@ if [[ -f "$ERR_LOG" ]] && [[ $(wc -c < "$ERR_LOG" 2>/dev/null || echo 0) -gt 104
 fi
 
 # Pass raw stdin straight through — the JS parses JSON/plaintext/env itself.
-node "$INJECT_SCRIPT" 2>>"$ERR_LOG" || true
+# MEMORY_BANK_CLIENT tags the inject log so Claude Code and Codex are measured apart.
+MEMORY_BANK_CLIENT="${MEMORY_BANK_CLIENT:-claude-code}" node "$INJECT_SCRIPT" 2>>"$ERR_LOG" || true
 
 exit 0

@@ -1,4 +1,5 @@
 import { initDatabase } from './db.js';
+import { exchangeProjectKeys } from './project-canon.js';
 
 export interface LastSessionContext {
   sessionId: string;
@@ -17,6 +18,9 @@ export interface LastSessionContext {
  * way to reduce repeated context setting at session start.
  */
 export function getLastSessionContext(project: string): LastSessionContext | null {
+  // Hooks pass the absolute cwd; exchanges.project stores the archive slug.
+  const keys = exchangeProjectKeys(project);
+  if (keys.length === 0) return null;
   const db = initDatabase();
 
   try {
@@ -25,11 +29,11 @@ export function getLastSessionContext(project: string): LastSessionContext | nul
       SELECT session_id, COUNT(*) as exchange_count,
              MAX(timestamp) as last_ts, MIN(timestamp) as first_ts
       FROM exchanges
-      WHERE project = ? AND session_id IS NOT NULL
+      WHERE project IN (${keys.map(() => '?').join(', ')}) AND session_id IS NOT NULL
       GROUP BY session_id
       ORDER BY last_ts DESC
       LIMIT 1
-    `).get(project) as { session_id: string; exchange_count: number; last_ts: string; first_ts: string } | undefined;
+    `).get(...keys) as { session_id: string; exchange_count: number; last_ts: string; first_ts: string } | undefined;
 
     if (!session) return null;
 

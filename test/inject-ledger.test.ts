@@ -38,15 +38,15 @@ describe('inject-ledger (세션 dedup 원장)', () => {
     expect(loadLedger('sess-A111').has('fa')).toBe(true);
   });
 
-  it('bounded: 400 상한 초과 시 oldest evict', async () => {
+  it('bounded: 800 상한 초과 시 oldest evict (fact id + 본문 키를 함께 담는다)', async () => {
     const { loadLedger, appendLedger } = await ledger();
     const sid = 'sess-cap-test';
-    const first = Array.from({ length: 350 }, (_, i) => 'old' + i);
+    const first = Array.from({ length: 750 }, (_, i) => 'old' + i);
     appendLedger(sid, new Set(), first);
     const more = Array.from({ length: 100 }, (_, i) => 'new' + i);
     appendLedger(sid, loadLedger(sid), more);
     const l = loadLedger(sid);
-    expect(l.size).toBe(400);
+    expect(l.size).toBe(800);
     expect(l.has('old0')).toBe(false);   // oldest 50 evicted
     expect(l.has('old49')).toBe(false);
     expect(l.has('old50')).toBe(true);

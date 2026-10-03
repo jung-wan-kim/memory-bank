@@ -14,7 +14,7 @@
  *
  * IMPORTANT: keep the import list here LIGHT — the fast path must not pay for
  * better-sqlite3/transformers imports. Heavy modules load lazily only in the
- * fallback.
+ * fallback. prompt-gate/inject-log are node-builtin-only modules.
  */
 
 import net from 'node:net';
@@ -23,6 +23,8 @@ import os from 'node:os';
 import fs from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { promptSkipReason } from '../dist/prompt-gate.js';
+import { appendInjectLog } from '../dist/inject-log.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -83,7 +85,7 @@ function injectSocketPath() {
 
 /** Ask the warm daemon; resolve null (not reject) on ANY failure so the caller
  * falls back — the hook must never break a user prompt. */
-function askDaemon(prompt, cwd, sessionId) {
+function askDaemon(prompt, cwd, sessionId, meta) {
   return new Promise((resolve) => {
     let settled = false;
     const done = (v) => { if (!settled) { settled = true; resolve(v); } };
@@ -97,7 +99,7 @@ function askDaemon(prompt, cwd, sessionId) {
     conn.on('connect', () => {
       clearTimeout(connectTimer);
       conn.setTimeout(SOCKET_RESPONSE_TIMEOUT_MS, () => { conn.destroy(); done(null); });
-      conn.write(JSON.stringify({ prompt, cwd, session_id: sessionId }) + '\n');
+      conn.write(JSON.stringify({ prompt, cwd, session_id: sessionId, ...meta }) + '\n');
       let buf = '';
       conn.on('data', (c) => {
         buf += c.toString('utf8');
@@ -122,12 +124,17 @@ async function main() {
   let prompt = '';
   let cwd = '';
   let sessionId = '';
+  // Hook host for the inject log. The wrappers export MEMORY_BANK_CLIENT; when
+  // they don't (older Codex wrapper, manual run) infer it from the envelope:
+  // Codex adds turn_id, Claude Code sends transcript_path without it.
+  let client = process.env.MEMORY_BANK_CLIENT || '';
   if (raw) {
     try {
       const j = JSON.parse(raw);
       prompt = String(j.prompt ?? '');
       cwd = String(j.cwd ?? '');
       sessionId = String(j.session_id ?? ''); // 세션 dedup 원장 키 (hook stdin 계약)
+      if (!client) client = j.turn_id ? 'codex' : j.transcript_path ? 'claude-code' : '';
     } catch {
       prompt = raw; // plain-text stdin = the prompt itself
     }
@@ -135,11 +142,25 @@ async function main() {
   if (!prompt) prompt = process.env.USER_PROMPT || '';
   if (!cwd) cwd = process.env.CWD || process.cwd();
   if (!sessionId) sessionId = process.env.SESSION_ID || '';
+  const meta = {
+    client: client || 'manual',
+    entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT || undefined,
+  };
 
-  if (!prompt || prompt.length < 20) return; // not worth an injection
+  // Harness-generated prompts (task notifications, slash-command expansions …)
+  // and very short ones are not worth a search. Logged here so skips stay
+  // measurable — they used to return silently before any log line.
+  const skipReason = promptSkipReason(prompt);
+  if (skipReason) {
+    appendInjectLog({
+      status: 'skipped', reason: skipReason, project: cwd, prompt_len: prompt.length,
+      via: 'client', has_session: Boolean(sessionId), ...meta,
+    });
+    return;
+  }
 
   // FAST PATH — warm daemon inside a running MCP server.
-  const daemonContext = await askDaemon(prompt, cwd, sessionId);
+  const daemonContext = await askDaemon(prompt, cwd, sessionId, meta);
   if (daemonContext !== null) {
     if (daemonContext) process.stdout.write(daemonContext + '\n');
     return;
@@ -148,7 +169,7 @@ async function main() {
   // COLD FALLBACK — compute locally (heavy imports load only here).
   try {
     const { computeInjectContext } = await import(path.join(__dirname, '../dist/inject-core.js'));
-    const context = await computeInjectContext(prompt, cwd, 'fallback', sessionId || undefined);
+    const context = await computeInjectContext(prompt, cwd, 'fallback', sessionId || undefined, meta);
     if (context) process.stdout.write(context + '\n');
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);

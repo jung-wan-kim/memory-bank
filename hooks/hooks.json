@@ -22,7 +22,7 @@
           {
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/fact-consolidate-hook.js",
-            "async": true
+            "timeout": 20
           },
           {
             "type": "command",

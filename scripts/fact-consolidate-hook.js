@@ -9,17 +9,29 @@
  * Env vars (CWD / PROJECT_DIR / LAST_CONSOLIDATED_AT) remain as fallback
  * for manual invocation.
  *
- * Context injection (top facts, continuity, intent) runs synchronously so its
- * stdout reaches the session. LLM-based consolidation is offloaded to a
- * detached worker so SessionStart is never blocked by slow LLM calls.
+ * The hook is registered WITHOUT `async` (hooks/hooks.json). Claude Code adds a
+ * SessionStart hook's plain stdout to the session only when the hook runs
+ * synchronously — while it was `async: true` the key-facts block reached Codex
+ * (whose wrapper reads stdout) but never Claude Code (verified 2026-10-03).
+ * Synchronous means Claude's first response waits for this process, so it only
+ * does the fast reads (~0.3s: imports, DB open, top facts) and hands every slow
+ * step to detached children it never waits for:
+ *  - fact-consolidate-worker.js — LLM-based consolidation
+ *  - session-start-maintenance.js — pending-work probes (~3.9s) that decide
+ *    whether to resume the re-embed / ontology / extraction backfill workers
+ *
+ * Session continuity and the intent profile are opt-in
+ * (MEMORY_BANK_SESSION_CONTINUITY=1, MEMORY_BANK_INTENT_PROFILE=1). They compared
+ * the absolute cwd against exchanges' slug column and so never printed anything;
+ * with that fixed, the intent profile costs ~3s on large projects and its
+ * "frequent tools" are historical (a since-banned browser plugin topped the list),
+ * so neither turns on until its value is measured.
  */
 
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { initDatabase } from '../dist/db.js';
-import { buildReembedPending } from '../dist/reembed-selector.js';
-import { getExtractionConfig, pendingExtractionCoreQuery } from '../dist/pending-extraction.js';
 import { getTopFacts } from '../dist/fact-db.js';
 import { getLastSessionContext, formatSessionContinuity } from '../dist/session-continuity.js';
 import { predictIntent, formatIntentContext } from '../dist/intent-predictor.js';
@@ -44,89 +56,32 @@ async function main() {
   const project = input.cwd || process.env.CWD || process.env.PROJECT_DIR || process.cwd();
 
   try {
-    // 1. Offload LLM-based consolidation to a detached worker (non-blocking)
+    // 1. Offload slow work to detached children this hook never waits for:
+    //    LLM consolidation, and the pending-work probes for backfill workers.
+    //    MEMORY_BANK_SESSION_START_SPAWN=0 skips them (tests run this hook for
+    //    its output and must not start LLM workers against a fixture DB).
     const here = path.dirname(fileURLToPath(import.meta.url));
-    const worker = path.join(here, 'fact-consolidate-worker.js');
-    try {
-      const child = spawn(process.execPath, [worker], {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true,
-        env: { ...process.env, CWD: project },
-      });
-      child.unref();
-    } catch {
-      // Non-fatal: consolidation is best-effort
-    }
-
-    // 2. Inject top facts as context (fast, no LLM)
-    const db = initDatabase();
-
-    // 2a. Auto-resume vector upgrades: if any rows still carry old-model
-    // embeddings, spawn the resumable re-embed worker (its pid lockfile
-    // prevents concurrent runs, so spawning is safe to attempt every start).
-    const spawnDetached = (script) => {
+    const spawnWorkers = process.env.MEMORY_BANK_SESSION_START_SPAWN !== '0';
+    for (const [script, env] of !spawnWorkers ? [] : [
+      ['fact-consolidate-worker.js', { ...process.env, CWD: project }],
+      ['session-start-maintenance.js', { ...process.env }],
+    ]) {
       try {
         const child = spawn(process.execPath, [path.join(here, script)], {
           detached: true,
           stdio: 'ignore',
           windowsHide: true,
-          env: { ...process.env },
+          env,
         });
         child.unref();
       } catch {
         // Non-fatal: background work resumes on a later session
       }
-    };
-    try {
-      const { EMBEDDING_VERSION } = await import('../dist/embeddings.js');
-      // Match BOTH of the worker's fact conditions (reembedFacts: stale version;
-      // embedKoreanFacts: a fact_kr with no vec_facts_kr row) so a Korean-vector
-      // backlog also auto-spawns the worker — the version-only check missed it,
-      // the same coupling drift that hid the exchange missing-vector backlog.
-      const pendingFact = db.prepare(`
-        SELECT 1 FROM facts f WHERE f.is_active = 1 AND (
-          f.embedding_version != ?
-          OR (f.fact_kr IS NOT NULL AND f.fact_kr != ''
-              AND NOT EXISTS (SELECT 1 FROM vec_facts_kr_rowids v WHERE v.id = f.id))
-        ) LIMIT 1
-      `).get(EMBEDDING_VERSION);
-      // Match the WORKER's own selector exactly (single source: buildReembedPending)
-      // so the spawn condition can't drift from what the worker actually processes.
-      // The old version-only check missed the (b) MISSING-VECTOR backlog — rows
-      // that claim the current version but have no vec_exchanges row — so the
-      // re-embed worker was never auto-spawned to heal them across sessions
-      // (measured: 100k+ such rows sat undrained until manually kicked). It also
-      // excludes worker-prompt pollution, so a pure-pollution DB won't spin the
-      // worker up forever.
-      const { clause, params } = buildReembedPending(EMBEDDING_VERSION);
-      const pendingEx = db.prepare(`SELECT 1 FROM exchanges e WHERE ${clause} LIMIT 1`).get(...params);
-      if (pendingFact || pendingEx) spawnDetached('reembed-worker.js');
-    } catch {
-      // Non-fatal: re-embedding resumes on a later session
     }
 
-    // 2b. Auto-resume ontology classification backfill (historic facts saved
-    // without classification).
-    try {
-      const pendingOnto = db.prepare(
-        'SELECT 1 FROM facts WHERE is_active = 1 AND ontology_category_id IS NULL LIMIT 1'
-      ).get();
-      if (pendingOnto) spawnDetached('backfill-ontology-worker.js');
-    } catch { /* non-fatal */ }
+    // 2. Inject top facts as context (fast, no LLM)
+    const db = initDatabase();
 
-    // 2c. Auto-resume cross-project extraction backfill (sessions that ended
-    // before the fixed SessionEnd hook existed).
-    try {
-      // Match the WORKER's exact pending-session predicate (single source:
-      // pendingExtractionCoreQuery) — the old bare NOT-IN-extraction_log check
-      // over-counted by 508 (sessions below MIN_EXCHANGES + memory-bank-llm
-      // pollution that the worker permanently skips), so it spawned the worker
-      // on EVERY session start for phantom work it could never clear.
-      const { sql: exSql, params: exParams } = pendingExtractionCoreQuery(getExtractionConfig());
-      const pendingExtract = db.prepare(`SELECT 1 FROM (${exSql}) LIMIT 1`).get(...exParams);
-      if (pendingExtract) spawnDetached('backfill-extract-worker.js');
-    } catch { /* non-fatal */ }
     const topFacts = getTopFacts(db, project, 10);
     if (topFacts.length > 0) {
       console.log('');
@@ -137,8 +92,8 @@ async function main() {
     }
     db.close();
 
-    // 3. Inject last session context (for continuity)
-    try {
+    // 3. Inject last session context (for continuity) — opt-in, see header
+    if (process.env.MEMORY_BANK_SESSION_CONTINUITY === '1') try {
       const lastSession = getLastSessionContext(project);
       if (lastSession) {
         console.log('');
@@ -148,8 +103,8 @@ async function main() {
       // Non-fatal: session continuity is best-effort
     }
 
-    // 4. Inject project intent profile
-    try {
+    // 4. Inject project intent profile — opt-in, see header
+    if (process.env.MEMORY_BANK_INTENT_PROFILE === '1') try {
       const intent = predictIntent(project);
       const intentCtx = formatIntentContext(intent);
       if (intentCtx) {

@@ -1,4 +1,5 @@
 import { initDatabase } from './db.js';
+import { exchangeProjectKeys } from './project-canon.js';
 
 export interface IntentPrediction {
   likelyTools: Array<{ tool: string; frequency: number }>;
@@ -13,6 +14,10 @@ export interface IntentPrediction {
  * This helps Claude proactively prepare relevant context.
  */
 export function predictIntent(project: string): IntentPrediction {
+  // Hooks pass the absolute cwd; exchanges.project stores the archive slug.
+  const keys = exchangeProjectKeys(project);
+  if (keys.length === 0) return { likelyTools: [], commonPatterns: [], projectProfile: '' };
+  const inKeys = `(${keys.map(() => '?').join(', ')})`;
   const db = initDatabase();
 
   try {
@@ -21,13 +26,13 @@ export function predictIntent(project: string): IntentPrediction {
       SELECT tc.tool_name, COUNT(*) as cnt
       FROM tool_calls tc
       JOIN exchanges e ON tc.exchange_id = e.id
-      WHERE e.project = ?
+      WHERE e.project IN ${inKeys}
         AND tc.tool_name NOT IN ('Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob',
           'TaskUpdate', 'TaskCreate', 'ToolSearch', 'TaskOutput', 'TaskList', 'AskUserQuestion')
       GROUP BY tc.tool_name
       ORDER BY cnt DESC
       LIMIT 8
-    `).all(project) as Array<{ tool_name: string; cnt: number }>;
+    `).all(...keys) as Array<{ tool_name: string; cnt: number }>;
 
     // Common 2-tool sequences (what tool follows what)
     const sequences = db.prepare(`
@@ -40,14 +45,14 @@ export function predictIntent(project: string): IntentPrediction {
         AND tc1.timestamp < tc2.timestamp
         AND tc1.id != tc2.id
       JOIN exchanges e ON tc1.exchange_id = e.id
-      WHERE e.project = ?
+      WHERE e.project IN ${inKeys}
         AND tc1.tool_name NOT IN ('Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob')
         AND tc2.tool_name NOT IN ('Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob')
       GROUP BY tc1.tool_name, tc2.tool_name
       HAVING cnt >= 3
       ORDER BY cnt DESC
       LIMIT 5
-    `).all(project) as Array<{ tool_a: string; tool_b: string; cnt: number }>;
+    `).all(...keys) as Array<{ tool_a: string; tool_b: string; cnt: number }>;
 
     // Project activity profile
     const profile = db.prepare(`
@@ -58,8 +63,8 @@ export function predictIntent(project: string): IntentPrediction {
         MIN(timestamp) as first_seen,
         MAX(timestamp) as last_seen
       FROM exchanges
-      WHERE project = ?
-    `).get(project) as { total_exchanges: number; sessions: number; branches: number; first_seen: string; last_seen: string } | undefined;
+      WHERE project IN ${inKeys}
+    `).get(...keys) as { total_exchanges: number; sessions: number; branches: number; first_seen: string; last_seen: string } | undefined;
 
     // Build patterns description
     const patterns: string[] = [];

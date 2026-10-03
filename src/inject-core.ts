@@ -6,6 +6,9 @@ import { getRelatedFacts } from './ontology-db.js';
 import { detectRepeat, formatRepeatContext } from './repeat-detector.js';
 import { appendInjectLog } from './inject-log.js';
 import { loadLedger, appendLedger } from './inject-ledger.js';
+import { promptSkipReason } from './prompt-gate.js';
+import { createHash } from 'node:crypto';
+import type { Fact } from './types.js';
 
 const TOP_K = 5;
 // Probe-baseline relevance gate (e5 scores are compressed, so absolute
@@ -20,11 +23,35 @@ const MAX_CONTEXT_FACTS = 8;
 // fact 당 160자 + 블록 1,000자 예산으로 상한. 잘린 내용이 필요하면 search_facts 로 조회.
 const FACT_CHAR_CAP = 160;
 const BLOCK_CHAR_BUDGET = 1000;
-// detectRepeat 는 313k exchanges 벡터검색 (p50 21ms / p95 498ms 실측) — tail 이
-// 주입 지연 p90 을 끌어올린다. better-sqlite3 는 동기라 시작한 검색을 타이머로
-// 선점할 수 없다(Promise.race 는 무효 — Codex 리뷰 지적). 대신 시작 "전" 경과
-// 예산을 확인해, 파이프라인이 이미 이만큼 썼으면 반복감지를 통째로 생략한다.
+// detectRepeat 는 exchanges 전체(335k) 벡터검색이다. OS 페이지 캐시가 식은 상태에서
+// 583~844ms 가 걸려 주입 지연의 대부분을 차지했다(2026-10-03 실측: 데몬 웜 24ms).
+// 게다가 cwd 와 슬러그를 비교하던 버그로 2,686회 주입 동안 결과를 한 번도 내지
+// 못했다 — 비용만 내고 가치는 0. 비교는 고쳤지만 가치가 측정되기 전까지 기본은 끈다.
+// 켜려면 MCP 서버 환경에 MEMORY_BANK_REPEAT_DETECT=1.
+// better-sqlite3 는 동기라 시작한 검색을 타이머로 선점할 수 없다(Promise.race 는
+// 무효 — Codex 리뷰 지적). 대신 시작 "전" 경과 예산을 확인해 생략한다.
 const REPEAT_ELAPSED_BUDGET_MS = 700;
+
+function repeatDetectEnabled(): boolean {
+  return process.env.MEMORY_BANK_REPEAT_DETECT === '1';
+}
+
+/**
+ * Text identity of a fact for in-session dedup. The same sentence is stored
+ * under several ids (memory-doc double imports, re-extraction), and id-only
+ * dedup let those copies through — 8.9% of injected lines were exact text
+ * repeats inside one block (measured 2026-10-03).
+ */
+function factTextKey(fact: Fact): string {
+  const norm = fact.fact.replace(/\s+/g, ' ').trim().toLowerCase();
+  return 't:' + createHash('sha1').update(norm).digest('hex').slice(0, 16);
+}
+
+/** Who called the hook — recorded in the inject log, never used for ranking. */
+export interface InjectRequestMeta {
+  client?: string;
+  entrypoint?: string;
+}
 
 function truncateFact(text: string): string {
   const t = text.replace(/\s+/g, ' ').trim();
@@ -34,7 +61,9 @@ function truncateFact(text: string): string {
 /**
  * Compute the UserPromptSubmit context block for a prompt: top-K similar
  * facts gated by the probe baseline, expanded with 1-hop ontology relations,
- * plus repeated-prompt detection. Returns '' when there is nothing to inject.
+ * deduped against the session ledger by id and by text. Repeated-prompt
+ * detection runs only when MEMORY_BANK_REPEAT_DETECT=1. Returns '' when there
+ * is nothing to inject.
  *
  * Shared by BOTH execution paths:
  *  - the warm in-process daemon inside the MCP server (embeddings already
@@ -49,17 +78,30 @@ export async function computeInjectContext(
   project: string,
   via: 'daemon' | 'fallback',
   sessionId?: string,
+  meta: InjectRequestMeta = {},
 ): Promise<string> {
   const t0 = Date.now();
-  if (!userPrompt || userPrompt.length < 20) {
-    appendInjectLog({ status: 'skipped', project, prompt_len: userPrompt?.length ?? 0, via });
+  const base = {
+    project,
+    prompt_len: userPrompt?.length ?? 0,
+    via,
+    client: meta.client || undefined,
+    entrypoint: meta.entrypoint || undefined,
+    has_session: Boolean(sessionId),
+  };
+  const skipReason = promptSkipReason(userPrompt);
+  if (skipReason) {
+    appendInjectLog({ ...base, status: 'skipped', reason: skipReason });
     return '';
   }
 
+  const timings: { embed_ms?: number; search_ms?: number; related_ms?: number; repeat_ms?: number } = {};
   try {
+    let tStage = Date.now();
     await initEmbeddings();
     const embedding = await generateEmbedding(userPrompt, 'query');
     const baseline = await queryBaseline(embedding);
+    timings.embed_ms = Date.now() - tStage;
 
     // Cached long-lived handle (file-identity checked) — initDatabase()'s
     // full migration pass per request costs ~38ms and is pure overhead in the
@@ -67,7 +109,9 @@ export async function computeInjectContext(
     const db = getSearchDb();
     {
       // threshold 0: take top-k by distance, then gate by baseline margin below
+      tStage = Date.now();
       const candidates = searchSimilarFacts(db, embedding, project, TOP_K, 0);
+      timings.search_ms = Date.now() - tStage;
       const results = candidates.filter((r) => {
         const similarity = l2DistanceToSimilarity(r.distance);
         return similarity - baseline >= BASELINE_MARGIN;
@@ -75,13 +119,14 @@ export async function computeInjectContext(
 
       if (results.length === 0) {
         appendInjectLog({
-          status: 'no-match', project, prompt_len: userPrompt.length,
-          candidates: candidates.length, injected: 0, duration_ms: Date.now() - t0, via,
+          ...base, ...timings, status: 'no-match',
+          candidates: candidates.length, injected: 0, duration_ms: Date.now() - t0,
         });
         return '';
       }
 
       // Expand with 1-hop relations
+      tStage = Date.now();
       const seenIds = new Set(results.map((r) => r.fact.id));
       const expandedFacts = [...results.map((r) => ({ fact: r.fact, note: '' }))];
       for (const { fact } of results.slice(0, 3)) {
@@ -93,17 +138,28 @@ export async function computeInjectContext(
           }
         }
       }
+      timings.related_ms = Date.now() - tStage;
 
       // 세션 dedup: 이 세션에서 이미 주입한 fact 는 대화 컨텍스트에 이미 있다 —
-      // 재주입은 순수 토큰 낭비. 원장에 없는 fact 만 주입한다.
+      // 재주입은 순수 토큰 낭비. 원장에 id 도 본문 키도 없는 fact 만 주입한다.
+      // 본문 키는 블록 안에서도 적용한다 — id 만 다른 같은 문장이 한 블록에 두 번 실리지 않게.
       const ledger = loadLedger(sessionId);
-      const fresh = expandedFacts.filter(({ fact }) => !ledger.has(fact.id));
-      const dedupedCount = expandedFacts.length - fresh.length;
+      const fresh: Array<{ fact: Fact; note: string; textKey: string }> = [];
+      const blockTextKeys = new Set<string>();
+      let dedupedCount = 0;
+      let textDeduped = 0;
+      for (const item of expandedFacts) {
+        if (ledger.has(item.fact.id)) { dedupedCount++; continue; }
+        const textKey = factTextKey(item.fact);
+        if (ledger.has(textKey) || blockTextKeys.has(textKey)) { textDeduped++; continue; }
+        blockTextKeys.add(textKey);
+        fresh.push({ ...item, textKey });
+      }
       if (fresh.length === 0) {
         appendInjectLog({
-          status: 'deduped', project, prompt_len: userPrompt.length,
+          ...base, ...timings, status: 'deduped',
           candidates: candidates.length, injected: 0, deduped: dedupedCount,
-          duration_ms: Date.now() - t0, via,
+          text_deduped: textDeduped, duration_ms: Date.now() - t0,
         });
         return '';
       }
@@ -112,19 +168,25 @@ export async function computeInjectContext(
       // (하위 관련도부터 탈락: fresh 는 관련도순이므로 뒤에서 끊긴다)
       const lines = ['📌 관련 과거 결정:'];
       let blockChars = lines[0].length;
-      const injectedIds: string[] = [];
-      for (const { fact, note } of fresh) {
+      const ledgerKeys: string[] = [];
+      let injectedCount = 0;
+      let fromVec = 0;
+      let fromRel = 0;
+      for (const { fact, note, textKey } of fresh) {
         const dateStr = fact.created_at.slice(0, 10);
         const line = `- ${note ? note + ' ' : ''}[${fact.category}] ${truncateFact(fact.fact)} (${dateStr})`;
-        if (blockChars + line.length > BLOCK_CHAR_BUDGET && injectedIds.length > 0) break;
+        if (blockChars + line.length > BLOCK_CHAR_BUDGET && injectedCount > 0) break;
         lines.push(line);
         blockChars += line.length + 1;
-        injectedIds.push(fact.id);
+        ledgerKeys.push(fact.id, textKey);
+        injectedCount++;
+        if (note) fromRel++; else fromVec++;
       }
 
-      // Detect repeated prompts (best-effort). 동기 sqlite 검색이라 시작 후엔
-      // 선점 불가 — 주입이 이미 예산을 소진했으면 시작 자체를 생략 (tail 상한).
-      if (Date.now() - t0 < REPEAT_ELAPSED_BUDGET_MS) {
+      // Detect repeated prompts — opt-in (see REPEAT_ELAPSED_BUDGET_MS). 동기
+      // sqlite 검색이라 시작 후엔 선점 불가 — 예산을 이미 썼으면 시작 자체를 생략.
+      if (repeatDetectEnabled() && Date.now() - t0 < REPEAT_ELAPSED_BUDGET_MS) {
+        tStage = Date.now();
         try {
           const repeats = await detectRepeat(userPrompt, project, 2, 0.85, { embedding, db });
           const repeatCtx = formatRepeatContext(repeats);
@@ -133,23 +195,25 @@ export async function computeInjectContext(
             lines.push(repeatCtx);
           }
         } catch { /* best-effort */ }
+        timings.repeat_ms = Date.now() - tStage;
       }
 
-      appendLedger(sessionId, ledger, injectedIds);
+      appendLedger(sessionId, ledger, ledgerKeys);
       const block = lines.join('\n') + '\n';
       appendInjectLog({
-        status: 'injected', project, prompt_len: userPrompt.length,
-        candidates: candidates.length, injected: injectedIds.length,
-        deduped: dedupedCount, chars: block.length,
-        duration_ms: Date.now() - t0, via,
+        ...base, ...timings, status: 'injected',
+        candidates: candidates.length, injected: injectedCount,
+        deduped: dedupedCount, text_deduped: textDeduped,
+        from_vec: fromVec, from_rel: fromRel, chars: block.length,
+        duration_ms: Date.now() - t0,
       });
       return block;
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     appendInjectLog({
-      status: 'error', project, prompt_len: userPrompt.length,
-      duration_ms: Date.now() - t0, error: message.slice(0, 300), via,
+      ...base, ...timings, status: 'error',
+      duration_ms: Date.now() - t0, error: message.slice(0, 300),
     });
     return ''; // non-fatal: never disrupt the user's prompt
   }

@@ -47,12 +47,18 @@ export function startInjectDaemon(): void {
       const line = buf.slice(0, nl);
       void (async () => {
         try {
-          const req = JSON.parse(line) as { prompt?: string; cwd?: string; session_id?: string };
+          const req = JSON.parse(line) as {
+            prompt?: string; cwd?: string; session_id?: string; client?: string; entrypoint?: string;
+          };
           const context = await computeInjectContext(
             String(req.prompt ?? ''),
             String(req.cwd ?? process.cwd()),
             'daemon',
             req.session_id ? String(req.session_id) : undefined,
+            {
+              client: req.client ? String(req.client).slice(0, 40) : undefined,
+              entrypoint: req.entrypoint ? String(req.entrypoint).slice(0, 40) : undefined,
+            },
           );
           conn.end(JSON.stringify({ ok: true, context }) + '\n');
         } catch {

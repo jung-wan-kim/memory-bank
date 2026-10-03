@@ -1,5 +1,6 @@
 import { generateEmbedding, initEmbeddings, EMBEDDING_VERSION } from './embeddings.js';
 import { initDatabase, getVecDtype, embeddingToVecBlob, vecParamSql, normalizeVecDistance, l2DistanceToSimilarity } from './db.js';
+import { exchangeProjectKeys } from './project-canon.js';
 
 export interface RepeatMatch {
   exchangeId: string;
@@ -38,6 +39,8 @@ export async function detectRepeat(
   }
   const ownDb = !opts.db;
   const db = opts.db ?? initDatabase();
+  // Callers pass the absolute cwd; exchanges store the archive slug.
+  const projectKeys = project ? exchangeProjectKeys(project) : null;
 
   try {
     // Vector search against past user messages (dtype-aware: int8 tables need
@@ -51,7 +54,10 @@ export async function detectRepeat(
       LIMIT ?
     `).all(
       embeddingToVecBlob(embedding, vecDtype),
-      limit * 3,
+      // The KNN is global (vec0 has no project column) and the project filter
+      // runs afterwards, so a project-scoped call needs a wider pool or the
+      // nearest rows from other projects crowd out every in-project match.
+      projectKeys ? limit * 20 : limit * 3,
     ) as Array<{ id: string; distance: number }>;
 
     const matches: RepeatMatch[] = [];
@@ -72,7 +78,7 @@ export async function detectRepeat(
       if (!row) continue;
 
       // Skip if different project (unless no project filter)
-      if (project && row['project'] as string !== project) continue;
+      if (projectKeys && !projectKeys.includes(row['project'] as string)) continue;
 
       const assistantMsg = row['assistant_message'] as string;
       // Truncate assistant message to first meaningful paragraph

@@ -74,6 +74,56 @@ describe('Repeat Detection', () => {
   });
 });
 
+describe('Repeat Detection — 훅이 넘기는 절대경로로 같은 프로젝트를 찾는다', () => {
+  const testDir = path.join(os.tmpdir(), 'repeat-path-test-' + Date.now());
+  const dbPath = path.join(testDir, 'test.db');
+  // 결정론: 모델 대신 고정 단위벡터를 질의·저장 양쪽에 쓴다 (유사도 1.0)
+  const unit = (seed: number) => {
+    const v = Array.from({ length: 384 }, (_, i) => Math.sin(seed * 31 + i));
+    const n = Math.sqrt(v.reduce((a, x) => a + x * x, 0));
+    return v.map((x) => x / n);
+  };
+  const add = (id: string, project: string, embedding: number[]) => {
+    const db = initDatabase();
+    insertExchange(db, {
+      id, project, timestamp: '2026-09-01T10:00:00Z',
+      userMessage: `질문 ${id}`, assistantMessage: `이전 답변 본문 ${id} — 충분히 긴 줄입니다`,
+      archivePath: `/archive/${id}.jsonl`, lineStart: 1, lineEnd: 2,
+    }, embedding);
+    db.close();
+  };
+
+  beforeEach(() => {
+    fs.mkdirSync(testDir, { recursive: true });
+    process.env.TEST_DB_PATH = dbPath;
+  });
+  afterEach(() => {
+    delete process.env.TEST_DB_PATH;
+    fs.rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('cwd 절대경로로 호출해도 슬러그로 저장된 교환을 찾는다 (2,686회 0건이던 버그)', async () => {
+    const e = unit(1);
+    add('ex-path-1', '-tmp-proj-a', e);
+    const matches = await detectRepeat('무엇이든', '/tmp/proj_a', 2, 0.5, { embedding: e });
+    expect(matches.map((m) => m.exchangeId)).toEqual(['ex-path-1']);
+  });
+
+  it('한글 경로 조각도 Claude Code 슬러그 규칙으로 맞춘다', async () => {
+    const e = unit(2);
+    add('ex-kr-1', '-tmp------', e); // /tmp/분양데이터 → 글자마다 '-'
+    const matches = await detectRepeat('무엇이든', '/tmp/분양데이터', 2, 0.5, { embedding: e });
+    expect(matches.map((m) => m.exchangeId)).toEqual(['ex-kr-1']);
+  });
+
+  it('다른 프로젝트의 교환은 여전히 제외한다', async () => {
+    const e = unit(3);
+    add('ex-other-1', '-tmp-proj-b', e);
+    const matches = await detectRepeat('무엇이든', '/tmp/proj_a', 2, 0.5, { embedding: e });
+    expect(matches).toHaveLength(0);
+  });
+});
+
 describe('formatRepeatContext', () => {
   it('should return empty string for no matches', () => {
     expect(formatRepeatContext([])).toBe('');
