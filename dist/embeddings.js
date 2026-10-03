@@ -2,14 +2,34 @@ import { pipeline } from '@xenova/transformers';
 import { EMBEDDING_MODEL, EMBEDDING_VERSION } from './embedding-version.js';
 export { EMBEDDING_MODEL, EMBEDDING_VERSION };
 let embeddingPipeline = null;
+let embeddingLoad = null;
+/**
+ * Load the model once. Concurrent callers share the one load in flight — the
+ * daemon pre-warms on bind, and a prompt arriving meanwhile used to start a
+ * second load of the same model (2026-10-03: daemon embed 7.0s vs 5.3s cold).
+ * A failed load is forgotten so the next call retries.
+ */
 export async function initEmbeddings() {
-    if (!embeddingPipeline) {
+    if (embeddingPipeline)
+        return;
+    if (!embeddingLoad) {
         // stderr: stdout of hook scripts is injected into the session as context,
         // so progress logs must never go to stdout.
         console.error(`Loading embedding model ${EMBEDDING_MODEL} (first run may take time)...`);
-        embeddingPipeline = await pipeline('feature-extraction', EMBEDDING_MODEL);
-        console.error('Embedding model loaded');
+        embeddingLoad = pipeline('feature-extraction', EMBEDDING_MODEL).then((loaded) => {
+            embeddingPipeline = loaded;
+            console.error('Embedding model loaded');
+            return loaded;
+        }, (error) => {
+            embeddingLoad = null;
+            throw error;
+        });
     }
+    await embeddingLoad;
+}
+/** Whether the model is loaded (the daemon tells a waiting client it is still warming). */
+export function embeddingsReady() {
+    return embeddingPipeline !== null;
 }
 function applyModePrefix(text, mode) {
     // e5-family models require asymmetric prefixes; other models take raw text.

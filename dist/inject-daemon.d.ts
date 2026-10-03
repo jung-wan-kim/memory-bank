@@ -20,6 +20,10 @@
  *  - Socket mode 600 — same-user only; the payload is the user's own prompt.
  *  - Requests are line-delimited JSON; a malformed request gets {ok:false} and
  *    never throws into the MCP server.
+ *  - While the model is still loading the daemon first writes {"warming":true},
+ *    so the client keeps waiting instead of loading a second copy cold.
+ *  - The reply carries the ledger keys; the client commits them only once it has
+ *    actually delivered the block (InjectResult in inject-core.ts).
  */
 export declare function injectSocketPath(): string;
 export declare function startInjectDaemon(): void;

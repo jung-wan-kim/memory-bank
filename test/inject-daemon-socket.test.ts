@@ -97,6 +97,44 @@ describe('클라이언트는 자기 버전의 데몬에만 묻는다', () => {
   });
 });
 
+describe('데몬 응답 프로토콜 — 준비 중 신호와 원장 기록', () => {
+  const PROMPT = { prompt: '배포 파이프라인을 Vercel 프리뷰로 바꾸는 방법을 정리해 줘', cwd: '/tmp/proj', session_id: 'sess-proto-01', hook_event_name: 'UserPromptSubmit' };
+  const ledgerFile = () => path.join(tmp, 'conversation-index', 'state', 'inject-ledger', 'sess-proto-01.json');
+
+  function scriptedDaemon(sockPath: string, script: (c: net.Socket) => void): Promise<net.Server> {
+    return new Promise((resolve, reject) => {
+      const s = net.createServer((c) => { c.once('data', () => script(c)); });
+      s.on('error', reject);
+      s.listen(sockPath, () => { servers.push(s); resolve(s); });
+    });
+  }
+
+  it('준비 중 신호를 받으면 응답 한도(3초)를 넘겨도 기다리고, 받은 블록을 출력한 뒤 원장에 기록한다', async () => {
+    const ci = path.join(tmp, 'conversation-index');
+    await scriptedDaemon(injectSocketPathIn(ci, VERSION), (c) => {
+      c.write(JSON.stringify({ warming: true }) + '\n');
+      setTimeout(() => c.end(JSON.stringify({ ok: true, context: 'WARM-BLOCK', ledger_keys: ['fact-1', 't:abc'] }) + '\n'), 3500);
+    });
+    const out = await runClient(PROMPT);
+    expect(out).toContain('WARM-BLOCK');
+    expect(fs.existsSync(ledgerFile()), '전달한 블록의 원장').toBe(true);
+    expect(JSON.parse(fs.readFileSync(ledgerFile(), 'utf8'))).toEqual(['fact-1', 't:abc']);
+  }, 30_000);
+
+  it('응답이 한도 안에 오지 않으면 그 블록은 버리고 원장에도 남기지 않는다 (대체 경로 사유 기록)', async () => {
+    const ci = path.join(tmp, 'conversation-index');
+    await scriptedDaemon(injectSocketPathIn(ci, VERSION), (c) => {
+      setTimeout(() => { try { c.end(JSON.stringify({ ok: true, context: 'LATE-BLOCK', ledger_keys: ['late-1'] }) + '\n'); } catch { /* client gone */ } }, 4000);
+    });
+    const out = await runClient(PROMPT);
+    expect(out).not.toContain('LATE-BLOCK');
+    const ledger = fs.existsSync(ledgerFile()) ? JSON.parse(fs.readFileSync(ledgerFile(), 'utf8')) : [];
+    expect(ledger).not.toContain('late-1');
+    const log = fs.readFileSync(path.join(tmp, 'conversation-index', 'logs', 'inject-context.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    expect(log.at(-1)).toMatchObject({ via: 'fallback', fallback_reason: 'daemon-timeout' });
+  }, 60_000);
+});
+
 describe('데몬은 옛 버전 소켓과 무관하게 자기 소켓에 붙는다', () => {
   it('예전 이름에 살아 있는 서버가 있어도 버전 소켓을 바인드하고, 예전 파일은 그대로 둔다', async () => {
     const prev = process.env.MEMORY_BANK_CONFIG_DIR;
@@ -118,7 +156,7 @@ describe('데몬은 옛 버전 소켓과 무관하게 자기 소켓에 붙는다
         c.on('end', () => resolve(buf));
         c.on('error', reject);
       });
-      expect(JSON.parse(reply)).toEqual({ ok: true, context: '' });
+      expect(JSON.parse(reply)).toEqual({ ok: true, context: '', ledger_keys: [] });
       expect(fs.existsSync(legacy), '옛 데몬의 소켓 파일은 건드리지 않는다').toBe(true);
     } finally {
       if (prev === undefined) delete process.env.MEMORY_BANK_CONFIG_DIR;

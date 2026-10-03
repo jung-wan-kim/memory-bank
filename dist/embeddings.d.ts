@@ -1,7 +1,15 @@
 import { EMBEDDING_MODEL, EMBEDDING_VERSION } from './embedding-version.js';
 export { EMBEDDING_MODEL, EMBEDDING_VERSION };
 export type EmbeddingMode = 'query' | 'passage';
+/**
+ * Load the model once. Concurrent callers share the one load in flight — the
+ * daemon pre-warms on bind, and a prompt arriving meanwhile used to start a
+ * second load of the same model (2026-10-03: daemon embed 7.0s vs 5.3s cold).
+ * A failed load is forgotten so the next call retries.
+ */
 export declare function initEmbeddings(): Promise<void>;
+/** Whether the model is loaded (the daemon tells a waiting client it is still warming). */
+export declare function embeddingsReady(): boolean;
 /**
  * @param mode 'passage' for stored/indexed content (facts, exchanges),
  *             'query' for search queries. Defaults to 'passage' because most

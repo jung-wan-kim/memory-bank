@@ -32,7 +32,8 @@ function repeatDetectEnabled() {
     return process.env.MEMORY_BANK_REPEAT_DETECT === '1';
 }
 /**
- * Compute the UserPromptSubmit context block for a prompt: top-K similar
+ * Compute the UserPromptSubmit context block for a prompt, WITHOUT recording it
+ * in the session ledger (see InjectResult): top-K similar
  * facts gated by the probe baseline, expanded with 1-hop ontology relations,
  * deduped against the session ledger by id and by text. Repeated-prompt
  * detection runs only when MEMORY_BANK_REPEAT_DETECT=1. Returns '' when there
@@ -46,7 +47,7 @@ function repeatDetectEnabled() {
  *
  * `via` tags the inject log so the two paths stay distinguishable.
  */
-export async function computeInjectContext(userPrompt, project, via, sessionId, meta = {}) {
+export async function computeInjectResult(userPrompt, project, via, sessionId, meta = {}) {
     const t0 = Date.now();
     const base = {
         project,
@@ -55,11 +56,12 @@ export async function computeInjectContext(userPrompt, project, via, sessionId, 
         client: meta.client || undefined,
         entrypoint: meta.entrypoint || undefined,
         has_session: Boolean(sessionId),
+        fallback_reason: meta.fallback_reason || undefined,
     };
     const gate = injectionQuery(userPrompt);
     if (gate.reason !== null) {
         appendInjectLog({ ...base, status: 'skipped', reason: gate.reason });
-        return '';
+        return { context: '', ledgerKeys: [] };
     }
     // Usually the prompt itself; the arguments of an expanded slash command or the
     // text after leading system reminders otherwise (prompt-gate.ts).
@@ -90,7 +92,7 @@ export async function computeInjectContext(userPrompt, project, via, sessionId, 
                     ...base, ...queryLen, ...timings, status: 'no-match',
                     candidates: candidates.length, injected: 0, duration_ms: Date.now() - t0,
                 });
-                return '';
+                return { context: '', ledgerKeys: [] };
             }
             // Expand with 1-hop relations
             tStage = Date.now();
@@ -133,7 +135,7 @@ export async function computeInjectContext(userPrompt, project, via, sessionId, 
                     candidates: candidates.length, injected: 0, deduped: dedupedCount,
                     text_deduped: textDeduped, duration_ms: Date.now() - t0,
                 });
-                return '';
+                return { context: '', ledgerKeys: [] };
             }
             // Format context block — fact 당 160자 절단 + 블록 1,000자 예산
             // (하위 관련도부터 탈락: fresh 는 관련도순이므로 뒤에서 끊긴다)
@@ -172,7 +174,6 @@ export async function computeInjectContext(userPrompt, project, via, sessionId, 
                 catch { /* best-effort */ }
                 timings.repeat_ms = Date.now() - tStage;
             }
-            appendLedger(sessionId, ledger, ledgerKeys);
             const block = lines.join('\n') + '\n';
             appendInjectLog({
                 ...base, ...queryLen, ...timings, status: 'injected',
@@ -181,7 +182,7 @@ export async function computeInjectContext(userPrompt, project, via, sessionId, 
                 from_vec: fromVec, from_rel: fromRel, chars: block.length,
                 duration_ms: Date.now() - t0,
             });
-            return block;
+            return { context: block, ledgerKeys };
         }
     }
     catch (error) {
@@ -190,6 +191,16 @@ export async function computeInjectContext(userPrompt, project, via, sessionId, 
             ...base, ...queryLen, ...timings, status: 'error',
             duration_ms: Date.now() - t0, error: message.slice(0, 300),
         });
-        return ''; // non-fatal: never disrupt the user's prompt
+        return { context: '', ledgerKeys: [] }; // non-fatal: never disrupt the user's prompt
     }
+}
+/**
+ * computeInjectResult + the ledger commit, for a caller that delivers the block
+ * itself right away (the cold fallback in scripts/inject-context.js).
+ */
+export async function computeInjectContext(userPrompt, project, via, sessionId, meta = {}) {
+    const { context, ledgerKeys } = await computeInjectResult(userPrompt, project, via, sessionId, meta);
+    if (ledgerKeys.length > 0)
+        appendLedger(sessionId, loadLedger(sessionId), ledgerKeys);
+    return context;
 }

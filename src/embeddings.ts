@@ -7,18 +7,38 @@ export { EMBEDDING_MODEL, EMBEDDING_VERSION };
 export type EmbeddingMode = 'query' | 'passage';
 
 let embeddingPipeline: FeatureExtractionPipeline | null = null;
+let embeddingLoad: Promise<FeatureExtractionPipeline> | null = null;
 
+/**
+ * Load the model once. Concurrent callers share the one load in flight — the
+ * daemon pre-warms on bind, and a prompt arriving meanwhile used to start a
+ * second load of the same model (2026-10-03: daemon embed 7.0s vs 5.3s cold).
+ * A failed load is forgotten so the next call retries.
+ */
 export async function initEmbeddings(): Promise<void> {
-  if (!embeddingPipeline) {
+  if (embeddingPipeline) return;
+  if (!embeddingLoad) {
     // stderr: stdout of hook scripts is injected into the session as context,
     // so progress logs must never go to stdout.
     console.error(`Loading embedding model ${EMBEDDING_MODEL} (first run may take time)...`);
-    embeddingPipeline = await pipeline(
-      'feature-extraction',
-      EMBEDDING_MODEL
+    embeddingLoad = pipeline('feature-extraction', EMBEDDING_MODEL).then(
+      (loaded) => {
+        embeddingPipeline = loaded;
+        console.error('Embedding model loaded');
+        return loaded;
+      },
+      (error) => {
+        embeddingLoad = null;
+        throw error;
+      },
     );
-    console.error('Embedding model loaded');
   }
+  await embeddingLoad;
+}
+
+/** Whether the model is loaded (the daemon tells a waiting client it is still warming). */
+export function embeddingsReady(): boolean {
+  return embeddingPipeline !== null;
 }
 
 function applyModePrefix(text: string, mode: EmbeddingMode): string {

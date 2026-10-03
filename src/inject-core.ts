@@ -39,10 +39,27 @@ function repeatDetectEnabled(): boolean {
 export interface InjectRequestMeta {
   client?: string;
   entrypoint?: string;
+  /** Cold fallback only: why the daemon did not answer ('daemon-timeout', 'no-daemon'). */
+  fallback_reason?: string;
 }
 
 /**
- * Compute the UserPromptSubmit context block for a prompt: top-K similar
+ * The block plus the ledger keys (fact id + text key per injected fact) that
+ * mark it as shown in this session. Committing those keys is the job of
+ * whoever DELIVERS the block: the daemon only computes it, and a client that
+ * gave up waiting falls back to its own computation — when the daemon still
+ * committed, the abandoned block's facts were recorded as shown though they
+ * never reached the session, and stayed suppressed for the rest of it
+ * (measured 2026-10-03: the fallback then injected 2 facts, deduped 6).
+ */
+export interface InjectResult {
+  context: string;
+  ledgerKeys: string[];
+}
+
+/**
+ * Compute the UserPromptSubmit context block for a prompt, WITHOUT recording it
+ * in the session ledger (see InjectResult): top-K similar
  * facts gated by the probe baseline, expanded with 1-hop ontology relations,
  * deduped against the session ledger by id and by text. Repeated-prompt
  * detection runs only when MEMORY_BANK_REPEAT_DETECT=1. Returns '' when there
@@ -56,13 +73,13 @@ export interface InjectRequestMeta {
  *
  * `via` tags the inject log so the two paths stay distinguishable.
  */
-export async function computeInjectContext(
+export async function computeInjectResult(
   userPrompt: string,
   project: string,
   via: 'daemon' | 'fallback',
   sessionId?: string,
   meta: InjectRequestMeta = {},
-): Promise<string> {
+): Promise<InjectResult> {
   const t0 = Date.now();
   const base = {
     project,
@@ -71,11 +88,12 @@ export async function computeInjectContext(
     client: meta.client || undefined,
     entrypoint: meta.entrypoint || undefined,
     has_session: Boolean(sessionId),
+    fallback_reason: meta.fallback_reason || undefined,
   };
   const gate = injectionQuery(userPrompt);
   if (gate.reason !== null) {
     appendInjectLog({ ...base, status: 'skipped', reason: gate.reason });
-    return '';
+    return { context: '', ledgerKeys: [] };
   }
   // Usually the prompt itself; the arguments of an expanded slash command or the
   // text after leading system reminders otherwise (prompt-gate.ts).
@@ -109,7 +127,7 @@ export async function computeInjectContext(
           ...base, ...queryLen, ...timings, status: 'no-match',
           candidates: candidates.length, injected: 0, duration_ms: Date.now() - t0,
         });
-        return '';
+        return { context: '', ledgerKeys: [] };
       }
 
       // Expand with 1-hop relations
@@ -148,7 +166,7 @@ export async function computeInjectContext(
           candidates: candidates.length, injected: 0, deduped: dedupedCount,
           text_deduped: textDeduped, duration_ms: Date.now() - t0,
         });
-        return '';
+        return { context: '', ledgerKeys: [] };
       }
 
       // Format context block — fact 당 160자 절단 + 블록 1,000자 예산
@@ -185,7 +203,6 @@ export async function computeInjectContext(
         timings.repeat_ms = Date.now() - tStage;
       }
 
-      appendLedger(sessionId, ledger, ledgerKeys);
       const block = lines.join('\n') + '\n';
       appendInjectLog({
         ...base, ...queryLen, ...timings, status: 'injected',
@@ -194,7 +211,7 @@ export async function computeInjectContext(
         from_vec: fromVec, from_rel: fromRel, chars: block.length,
         duration_ms: Date.now() - t0,
       });
-      return block;
+      return { context: block, ledgerKeys };
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -202,6 +219,22 @@ export async function computeInjectContext(
       ...base, ...queryLen, ...timings, status: 'error',
       duration_ms: Date.now() - t0, error: message.slice(0, 300),
     });
-    return ''; // non-fatal: never disrupt the user's prompt
+    return { context: '', ledgerKeys: [] }; // non-fatal: never disrupt the user's prompt
   }
+}
+
+/**
+ * computeInjectResult + the ledger commit, for a caller that delivers the block
+ * itself right away (the cold fallback in scripts/inject-context.js).
+ */
+export async function computeInjectContext(
+  userPrompt: string,
+  project: string,
+  via: 'daemon' | 'fallback',
+  sessionId?: string,
+  meta: InjectRequestMeta = {},
+): Promise<string> {
+  const { context, ledgerKeys } = await computeInjectResult(userPrompt, project, via, sessionId, meta);
+  if (ledgerKeys.length > 0) appendLedger(sessionId, loadLedger(sessionId), ledgerKeys);
+  return context;
 }

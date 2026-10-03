@@ -1,8 +1,9 @@
 import net from 'node:net';
 import fs from 'node:fs';
 import { getIndexDir } from './paths.js';
-import { computeInjectContext } from './inject-core.js';
-import { initEmbeddings } from './embeddings.js';
+import { computeInjectResult } from './inject-core.js';
+import { initEmbeddings, embeddingsReady } from './embeddings.js';
+import { injectionQuery } from './prompt-gate.js';
 import { injectSocketPathIn, ownPackageVersion } from './version-guard.js';
 
 /**
@@ -27,6 +28,10 @@ import { injectSocketPathIn, ownPackageVersion } from './version-guard.js';
  *  - Socket mode 600 — same-user only; the payload is the user's own prompt.
  *  - Requests are line-delimited JSON; a malformed request gets {ok:false} and
  *    never throws into the MCP server.
+ *  - While the model is still loading the daemon first writes {"warming":true},
+ *    so the client keeps waiting instead of loading a second copy cold.
+ *  - The reply carries the ledger keys; the client commits them only once it has
+ *    actually delivered the block (InjectResult in inject-core.ts).
  */
 
 export function injectSocketPath(): string {
@@ -53,7 +58,10 @@ export function startInjectDaemon(): void {
           const req = JSON.parse(line) as {
             prompt?: string; cwd?: string; session_id?: string; client?: string; entrypoint?: string;
           };
-          const context = await computeInjectContext(
+          if (!embeddingsReady() && injectionQuery(String(req.prompt ?? '')).reason === null) {
+            conn.write(JSON.stringify({ warming: true }) + '\n');
+          }
+          const { context, ledgerKeys } = await computeInjectResult(
             String(req.prompt ?? ''),
             String(req.cwd ?? process.cwd()),
             'daemon',
@@ -63,7 +71,7 @@ export function startInjectDaemon(): void {
               entrypoint: req.entrypoint ? String(req.entrypoint).slice(0, 40) : undefined,
             },
           );
-          conn.end(JSON.stringify({ ok: true, context }) + '\n');
+          conn.end(JSON.stringify({ ok: true, context, ledger_keys: ledgerKeys }) + '\n');
         } catch {
           try { conn.end(JSON.stringify({ ok: false }) + '\n'); } catch { /* gone */ }
         }

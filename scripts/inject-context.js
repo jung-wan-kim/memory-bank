@@ -27,12 +27,17 @@ import { injectionQuery } from '../dist/prompt-gate.js';
 import { appendInjectLog } from '../dist/inject-log.js';
 import { injectSocketPathIn, ownPackageVersion } from '../dist/version-guard.js';
 import { selfHealDeps } from '../dist/deps-heal.js';
+import { loadLedger, appendLedger } from '../dist/inject-ledger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 
 const SOCKET_CONNECT_TIMEOUT_MS = 300;
 const SOCKET_RESPONSE_TIMEOUT_MS = 3000;
+// The daemon says {"warming":true} while its model is still loading (right after
+// session start). Loading a second copy cold costs the same ~5s and doubles the
+// CPU, so wait for the one already loading — but not forever.
+const SOCKET_WARMING_TIMEOUT_MS = 20000;
 
 function readStdin(timeoutMs = 2000) {
   return new Promise((resolve) => {
@@ -53,38 +58,60 @@ function injectSocketPath() {
   return injectSocketPathIn(path.join(base, 'conversation-index'), ownPackageVersion());
 }
 
-/** Ask the warm daemon; resolve null (not reject) on ANY failure so the caller
- * falls back — the hook must never break a user prompt. */
+/**
+ * Ask the warm daemon. Resolves { context, ledgerKeys } on an answer, or
+ * { failed: 'no-daemon' | 'daemon-timeout' | 'daemon-error' } (never rejects) so
+ * the caller falls back — the hook must never break a user prompt.
+ */
 function askDaemon(prompt, cwd, sessionId, meta) {
   return new Promise((resolve) => {
     let settled = false;
-    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+    let connected = false;
+    let timer = null;
+    const done = (v) => { if (!settled) { settled = true; clearTimeout(timer); resolve(v); } };
     let conn;
     try {
       conn = net.connect(injectSocketPath());
     } catch {
-      return done(null);
+      return done({ failed: 'no-daemon' });
     }
-    const connectTimer = setTimeout(() => { conn.destroy(); done(null); }, SOCKET_CONNECT_TIMEOUT_MS);
+    const arm = (ms, why) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { conn.destroy(); done({ failed: why }); }, ms);
+    };
+    arm(SOCKET_CONNECT_TIMEOUT_MS, 'no-daemon');
     conn.on('connect', () => {
-      clearTimeout(connectTimer);
-      conn.setTimeout(SOCKET_RESPONSE_TIMEOUT_MS, () => { conn.destroy(); done(null); });
+      connected = true;
+      arm(SOCKET_RESPONSE_TIMEOUT_MS, 'daemon-timeout');
       conn.write(JSON.stringify({ prompt, cwd, session_id: sessionId, ...meta }) + '\n');
       let buf = '';
       conn.on('data', (c) => {
         buf += c.toString('utf8');
-        const nl = buf.indexOf('\n');
-        if (nl < 0) return;
-        try {
-          const res = JSON.parse(buf.slice(0, nl));
-          done(res && res.ok ? String(res.context ?? '') : null);
-        } catch {
-          done(null);
+        let nl;
+        while ((nl = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, nl);
+          buf = buf.slice(nl + 1);
+          let res;
+          try {
+            res = JSON.parse(line);
+          } catch {
+            conn.destroy();
+            return done({ failed: 'daemon-error' });
+          }
+          if (res && res.warming) {
+            arm(SOCKET_WARMING_TIMEOUT_MS, 'daemon-timeout');
+            continue;
+          }
+          conn.destroy();
+          if (!res || !res.ok) return done({ failed: 'daemon-error' });
+          return done({
+            context: String(res.context ?? ''),
+            ledgerKeys: Array.isArray(res.ledger_keys) ? res.ledger_keys.filter((k) => typeof k === 'string') : [],
+          });
         }
-        conn.destroy();
       });
     });
-    conn.on('error', () => { clearTimeout(connectTimer); done(null); });
+    conn.on('error', () => done({ failed: connected ? 'daemon-error' : 'no-daemon' }));
   });
 }
 
@@ -176,16 +203,20 @@ async function main() {
   }
 
   // FAST PATH — warm daemon inside a running MCP server.
-  const daemonContext = await askDaemon(prompt, cwd, sessionId, meta);
-  if (daemonContext !== null) {
-    if (daemonContext) process.stdout.write(daemonContext + '\n');
+  const answer = await askDaemon(prompt, cwd, sessionId, meta);
+  if (!answer.failed) {
+    if (answer.context) process.stdout.write(answer.context + '\n');
+    // Delivered — only now are these facts "shown" for this session (see
+    // InjectResult in inject-core.ts).
+    if (answer.ledgerKeys.length > 0) appendLedger(sessionId, loadLedger(sessionId), answer.ledgerKeys);
     return;
   }
 
   // COLD FALLBACK — compute locally (heavy imports load only here).
   try {
     const { computeInjectContext } = await import(path.join(__dirname, '../dist/inject-core.js'));
-    const context = await computeInjectContext(prompt, cwd, 'fallback', sessionId || undefined, meta);
+    const context = await computeInjectContext(prompt, cwd, 'fallback', sessionId || undefined,
+      { ...meta, fallback_reason: answer.failed });
     if (context) process.stdout.write(context + '\n');
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);

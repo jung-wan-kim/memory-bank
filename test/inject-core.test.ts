@@ -112,6 +112,17 @@ describe('computeInjectContext', () => {
     expect(readLog().at(-1)).toMatchObject({ status: 'injected', query_len: question.length });
   }, 30_000);
 
+  it('computeInjectResult 는 원장을 건드리지 않고 키만 돌려준다 — 기록은 블록을 전달한 쪽이 한다', async () => {
+    const { loadLedger } = await import('../src/inject-ledger.js');
+    const q = 'How does our deploy pipeline publish Vercel previews for pull requests?';
+    const r = await core.computeInjectResult(q, '/tmp/proj', 'daemon', 'sess-result-0001');
+    expect(r.context).toContain('deploy pipeline publishes a Vercel preview');
+    expect(r.ledgerKeys.length).toBeGreaterThan(0);
+    expect(loadLedger('sess-result-0001').size, '데몬은 기록하지 않는다').toBe(0);
+    await core.computeInjectContext(q, '/tmp/proj', 'fallback', 'sess-result-0001');
+    expect(loadLedger('sess-result-0001').size, '직접 전달하는 경로는 기록한다').toBeGreaterThan(0);
+  }, 30_000);
+
   it('MEMORY_BANK_REPEAT_DETECT=1 일 때만 반복 감지가 돈다', async () => {
     process.env.MEMORY_BANK_REPEAT_DETECT = '1';
     await core.computeInjectContext(

@@ -51908,15 +51908,27 @@ function initDatabase() {
 // src/embeddings.ts
 import { pipeline } from "@xenova/transformers";
 var embeddingPipeline = null;
+var embeddingLoad = null;
 async function initEmbeddings() {
-  if (!embeddingPipeline) {
+  if (embeddingPipeline) return;
+  if (!embeddingLoad) {
     console.error(`Loading embedding model ${EMBEDDING_MODEL} (first run may take time)...`);
-    embeddingPipeline = await pipeline(
-      "feature-extraction",
-      EMBEDDING_MODEL
+    embeddingLoad = pipeline("feature-extraction", EMBEDDING_MODEL).then(
+      (loaded) => {
+        embeddingPipeline = loaded;
+        console.error("Embedding model loaded");
+        return loaded;
+      },
+      (error62) => {
+        embeddingLoad = null;
+        throw error62;
+      }
     );
-    console.error("Embedding model loaded");
   }
+  await embeddingLoad;
+}
+function embeddingsReady() {
+  return embeddingPipeline !== null;
 }
 function applyModePrefix(text, mode) {
   if (EMBEDDING_MODEL.toLowerCase().includes("e5")) {
@@ -53079,7 +53091,6 @@ function appendInjectLog(entry) {
 // src/inject-ledger.ts
 import fs6 from "node:fs";
 import path4 from "node:path";
-var MAX_IDS = 800;
 var TTL_MS = 7 * 24 * 60 * 60 * 1e3;
 function ledgerDir() {
   return path4.join(getIndexDir(), "state", "inject-ledger");
@@ -53102,36 +53113,6 @@ function loadLedger(sessionId) {
   } catch {
   }
   return /* @__PURE__ */ new Set();
-}
-function appendLedger(sessionId, existing, newIds) {
-  const id = sanitizeSessionId(sessionId);
-  if (!id || newIds.length === 0) return;
-  try {
-    const dir = ledgerDir();
-    fs6.mkdirSync(dir, { recursive: true });
-    const ordered = [...existing, ...newIds.filter((n) => !existing.has(n))];
-    const bounded = ordered.length > MAX_IDS ? ordered.slice(ordered.length - MAX_IDS) : ordered;
-    const p = ledgerPath(id);
-    const tmp = p + ".tmp";
-    fs6.writeFileSync(tmp, JSON.stringify(bounded));
-    fs6.renameSync(tmp, p);
-    pruneOldLedgers(dir);
-  } catch {
-  }
-}
-function pruneOldLedgers(dir) {
-  try {
-    const now = Date.now();
-    for (const f of fs6.readdirSync(dir)) {
-      if (!f.endsWith(".json")) continue;
-      const fp = path4.join(dir, f);
-      try {
-        if (now - fs6.statSync(fp).mtimeMs > TTL_MS) fs6.unlinkSync(fp);
-      } catch {
-      }
-    }
-  } catch {
-  }
 }
 
 // src/prompt-gate.ts
@@ -53196,7 +53177,7 @@ var REPEAT_ELAPSED_BUDGET_MS = 700;
 function repeatDetectEnabled() {
   return process.env.MEMORY_BANK_REPEAT_DETECT === "1";
 }
-async function computeInjectContext(userPrompt, project, via, sessionId, meta3 = {}) {
+async function computeInjectResult(userPrompt, project, via, sessionId, meta3 = {}) {
   const t0 = Date.now();
   const base = {
     project,
@@ -53204,12 +53185,13 @@ async function computeInjectContext(userPrompt, project, via, sessionId, meta3 =
     via,
     client: meta3.client || void 0,
     entrypoint: meta3.entrypoint || void 0,
-    has_session: Boolean(sessionId)
+    has_session: Boolean(sessionId),
+    fallback_reason: meta3.fallback_reason || void 0
   };
   const gate = injectionQuery(userPrompt);
   if (gate.reason !== null) {
     appendInjectLog({ ...base, status: "skipped", reason: gate.reason });
-    return "";
+    return { context: "", ledgerKeys: [] };
   }
   const query2 = gate.query;
   const queryLen = query2.length !== base.prompt_len ? { query_len: query2.length } : {};
@@ -53239,7 +53221,7 @@ async function computeInjectContext(userPrompt, project, via, sessionId, meta3 =
           injected: 0,
           duration_ms: Date.now() - t0
         });
-        return "";
+        return { context: "", ledgerKeys: [] };
       }
       tStage = Date.now();
       const seenIds = new Set(results.map((r) => r.fact.id));
@@ -53284,7 +53266,7 @@ async function computeInjectContext(userPrompt, project, via, sessionId, meta3 =
           text_deduped: textDeduped,
           duration_ms: Date.now() - t0
         });
-        return "";
+        return { context: "", ledgerKeys: [] };
       }
       const lines = ["\u{1F4CC} \uAD00\uB828 \uACFC\uAC70 \uACB0\uC815:"];
       let blockChars = lines[0].length;
@@ -53316,7 +53298,6 @@ async function computeInjectContext(userPrompt, project, via, sessionId, meta3 =
         }
         timings.repeat_ms = Date.now() - tStage;
       }
-      appendLedger(sessionId, ledger, ledgerKeys);
       const block = lines.join("\n") + "\n";
       appendInjectLog({
         ...base,
@@ -53332,7 +53313,7 @@ async function computeInjectContext(userPrompt, project, via, sessionId, meta3 =
         chars: block.length,
         duration_ms: Date.now() - t0
       });
-      return block;
+      return { context: block, ledgerKeys };
     }
   } catch (error62) {
     const message = error62 instanceof Error ? error62.message : String(error62);
@@ -53344,7 +53325,7 @@ async function computeInjectContext(userPrompt, project, via, sessionId, meta3 =
       duration_ms: Date.now() - t0,
       error: message.slice(0, 300)
     });
-    return "";
+    return { context: "", ledgerKeys: [] };
   }
 }
 
@@ -53394,7 +53375,10 @@ function startInjectDaemon() {
       void (async () => {
         try {
           const req = JSON.parse(line);
-          const context = await computeInjectContext(
+          if (!embeddingsReady() && injectionQuery(String(req.prompt ?? "")).reason === null) {
+            conn.write(JSON.stringify({ warming: true }) + "\n");
+          }
+          const { context, ledgerKeys } = await computeInjectResult(
             String(req.prompt ?? ""),
             String(req.cwd ?? process.cwd()),
             "daemon",
@@ -53404,7 +53388,7 @@ function startInjectDaemon() {
               entrypoint: req.entrypoint ? String(req.entrypoint).slice(0, 40) : void 0
             }
           );
-          conn.end(JSON.stringify({ ok: true, context }) + "\n");
+          conn.end(JSON.stringify({ ok: true, context, ledger_keys: ledgerKeys }) + "\n");
         } catch {
           try {
             conn.end(JSON.stringify({ ok: false }) + "\n");
