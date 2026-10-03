@@ -29,7 +29,7 @@
 - [ ] 같은 session_id로 2회 호출 시 두 번째는 동일 fact 재주입 0 (dedup 실증)
 - [ ] 다른 session_id는 독립 (세션 격리)
 - [ ] fact 절단·블록 예산 적용 (주입 블록 ≤ ~1,050자)
-- [ ] ledger bounded (400 cap·TTL·sanitize) 단위테스트
+- [ ] ledger bounded (400 cap·TTL·sanitize) 단위테스트 — v1.7.0 부터 상한 800(id 와 본문 키를 함께 넣는다)
 - [ ] 기존 vitest 전체 회귀 없음
 - [ ] 실 주입 e2e: 실제 프롬프트로 1회차 주입 → 2회차 dedup 확인 (스크립트 실행 증거)
 

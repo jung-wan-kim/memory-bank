@@ -14,6 +14,7 @@ describe('readHookInput', () => {
     const buf = Buffer.from(text);
     const k = buf.indexOf(Buffer.from('\u{1F600}')) + 2; // 4바이트 이모지의 가운데
     const input = new PassThrough();
+    const t0 = Date.now();
     const reading = readHookInput(input, 2000);
     let chunks = 0;
     input.on('data', () => { chunks++; });
@@ -22,6 +23,7 @@ describe('readHookInput', () => {
     input.end(buf.subarray(k));
     expect(await reading).toBe(text);
     expect(chunks, '두 조각으로 나뉘어 읽혔다(양성 대조)').toBeGreaterThanOrEqual(2);
+    expect(Date.now() - t0, '입력이 끝나면(end) 한도를 기다리지 않는다').toBeLessThan(1000);
   });
 
   it('끝나지 않는 입력은 한도에서 읽은 만큼 돌려준다', async () => {
@@ -33,6 +35,8 @@ describe('readHookInput', () => {
 
   it('터미널이면 기다리지 않고 빈 문자열', async () => {
     const tty = Object.assign(new PassThrough(), { isTTY: true });
+    const t0 = Date.now();
     expect(await readHookInput(tty, 5000)).toBe('');
+    expect(Date.now() - t0, '한도(5초)까지 멈추지 않는다').toBeLessThan(500);
   });
 });

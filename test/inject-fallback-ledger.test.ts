@@ -20,6 +20,10 @@ let dbPath: string;
 let factId: string;
 
 const ledgerFile = (sid: string) => path.join(tmp, 'conversation-index', 'state', 'inject-ledger', `${sid}.json`);
+const lastLogLine = () => {
+  const f = path.join(tmp, 'conversation-index', 'logs', 'inject-context.jsonl');
+  return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, 'utf8').trim().split('\n').at(-1)!) : undefined;
+};
 
 function runClient(sessionId: string, closeStdout = false): Promise<string> {
   return new Promise((resolve) => {
@@ -31,7 +35,7 @@ function runClient(sessionId: string, closeStdout = false): Promise<string> {
     let out = '';
     if (closeStdout) child.stdout!.destroy(); // 받는 쪽이 먼저 떠났다
     else child.stdout!.on('data', (d) => { out += d; });
-    child.on('exit', () => resolve(out));
+    child.on('close', () => resolve(out)); // stdout 이 다 비워진 뒤
     child.stdin!.end(JSON.stringify({ prompt: PROMPT, cwd: '/tmp/proj', session_id: sessionId, hook_event_name: 'UserPromptSubmit' }));
   });
 }
@@ -65,6 +69,7 @@ afterAll(() => {
 describe('대체 경로의 원장 기록', () => {
   it('데몬이 없으면 직접 계산해 블록을 출력하고, 그 fact 를 원장에 기록한다', async () => {
     const out = await runClient('sess-fb-deliver');
+    expect(lastLogLine(), '데몬 없이 대체 경로로 계산했다').toMatchObject({ via: 'fallback', fallback_reason: 'no-daemon', status: 'injected' });
     expect(out).toContain('deploy pipeline publishes a Vercel preview');
     expect(fs.existsSync(ledgerFile('sess-fb-deliver')), '출력한 블록의 원장').toBe(true);
     expect(JSON.parse(fs.readFileSync(ledgerFile('sess-fb-deliver'), 'utf8'))).toContain(factId);
@@ -72,6 +77,8 @@ describe('대체 경로의 원장 기록', () => {
 
   it('출력을 받는 쪽이 떠났으면 대체 경로도 원장에 기록하지 않는다', async () => {
     await runClient('sess-fb-epipe', true);
+    // 블록은 계산됐다 — 원장이 없는 이유가 「실을 것이 없어서」가 아니라 「전달하지 못해서」임을 확인
+    expect(lastLogLine()).toMatchObject({ via: 'fallback', status: 'injected' });
     expect(fs.existsSync(ledgerFile('sess-fb-epipe'))).toBe(false);
   }, 60_000);
 });

@@ -30,7 +30,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const PROMPT = '배포 파이프라인을 Vercel 프리뷰로 바꾸는 방법을 정리해 줘';
 
 /** 바이트 조각들을 간격을 두고 보내고, 서버가 연결을 닫을 때까지 받은 줄을 돌려준다(오류로 끊겨도 받은 만큼). */
-function exchange(writes: Array<Buffer | string>, gapMs = 60): Promise<{ raw: string; lines: Array<Record<string, unknown>> }> {
+function exchange(writes: Array<Buffer | string>, gapMs = 60): Promise<{ raw: string; lines: Array<Record<string, unknown>>; closedBy: 'server' | 'deadline' }> {
   return new Promise((resolve) => {
     const c = net.connect(sock);
     const chunks: Buffer[] = [];
@@ -43,13 +43,14 @@ function exchange(writes: Array<Buffer | string>, gapMs = 60): Promise<{ raw: st
     c.on('data', (d) => chunks.push(d));
     c.on('error', () => { /* 서버가 끊음 — 받은 만큼으로 판정 */ });
     // 답이 없어도 매달리지 않는다 — 판정은 시간 초과가 아니라 받은 줄에 대한 단언이 한다
-    const deadline = setTimeout(() => c.destroy(), 4000);
+    let closedBy: 'server' | 'deadline' = 'server';
+    const deadline = setTimeout(() => { closedBy = 'deadline'; c.destroy(); }, 4000);
     c.on('close', () => clearTimeout(deadline));
     c.on('close', () => {
       const raw = Buffer.concat(chunks).toString('utf8');
       // 잘렸거나 JSON 이 아닌 줄도 단언이 판정하도록 값으로 남긴다(핸들러에서 던지면 시간 초과로 끝난다)
       const parse = (l: string) => { try { return JSON.parse(l); } catch { return { unparsable: l }; } };
-      resolve({ raw, lines: raw.split('\n').filter(Boolean).map(parse) });
+      resolve({ raw, lines: raw.split('\n').filter(Boolean).map(parse), closedBy });
     });
   });
 }
@@ -107,9 +108,11 @@ describe('실제 데몬 — 요청 처리', () => {
     compute.mockRejectedValueOnce(new Error('db gone'));
     const threw = await exchange([request()]);
     expect(threw.lines).toEqual([{ ok: false }]);
+    expect(threw.closedBy, '데몬이 답하고 연결을 닫는다(시험 마감으로 끊긴 것이 아니다)').toBe('server');
     const before = compute.mock.calls.length;
     const garbled = await exchange(['{not json\n']);
     expect(garbled.lines).toEqual([{ ok: false }]);
+    expect(garbled.closedBy).toBe('server');
     expect(compute.mock.calls.length, '파싱하지 못한 요청은 계산하지 않는다').toBe(before);
   });
 
