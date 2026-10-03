@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.5] - 2026-10-03
+
+1.7.4 를 네 번째로 독립 검토받은 결과도 CRITICAL·HIGH 0건이었다. 남은 지적은 주로 "시험이 실제로 결함을 잡는가"에 관한 것이었고, 그에 맞춰 시험과 문서를 고쳤다. 동작 변경은 훅 입력 읽기를 공용 모듈로 옮긴 것 하나다.
+
+### Changed
+
+- 훅 입력(표준입력) 읽기를 `src/hook-stdin.ts` 의 `readHookInput` 으로 분리했다. 주입 클라이언트와 세션 시작 훅이 함께 쓴다(둘 다 UTF-8 스트림으로 디코딩)
+
+### Tests
+
+- 표준입력 다바이트 시험은 프로세스 파이프에 나눠 썼는데, 자식이 늦게 읽으면 두 조각이 한 번에 읽혀 수정을 되돌려도 통과할 수 있었다. 이제 스트림에 조각을 직접 넣고, 실제로 두 조각으로 읽혔는지도 확인한다
+- 세션 원장을 쓰는 곳을 전수 열거해 고정한다(`test/ledger-writers.test.ts`): `inject-context.js` 의 `deliver` 와 세션 시작 훅 두 곳뿐이고, 둘 다 출력 성공 조건 안에서만 기록한다. "원장은 출력한 쪽이 쓴다"는 서술이 1.7.2~1.7.4 세 번 연속 고쳐졌기 때문에, 산문 대신 테스트가 지킨다
+- 데몬이 없을 때(대체 경로)도 블록을 출력한 뒤 원장에 기록하는지, 실제 모델로 fact 를 넣은 DB 로 확인한다
+
+### Docs
+
+- 설계 문서의 낡은 줄을 고쳤다: 원장 상한(800), 반복 감지의 `Promise.race` 시간 제한(동기 검색이라 효과가 없었음), 데몬 경로의 끝점
+- 테스트 계획의 주입 경로 회귀 항목 머리말: 행 014 는 설치 후 수동 실측이라 되돌리기 시험으로 고정된 항목이 아니다
+
 ## [1.7.4] - 2026-10-03
 
 1.7.3 을 세 번째로 독립 검토받은 결과는 CRITICAL·HIGH 0건이었다. 남은 지적(MEDIUM 2, LOW 일부)을 고쳤다.
