@@ -4,6 +4,7 @@ import { initDatabase, getVecTableDtype, embeddingToVecBlob, vecParamSql } from 
 import { generateEmbedding, initEmbeddings, EMBEDDING_VERSION } from './embeddings.js';
 import { getSyncDir } from './sync-export.js';
 import { canonicalizeProject } from './project-canon.js';
+import { factRejectReason, ontologyNameRejectReason } from './fact-validity.js';
 /**
  * Import facts and ontology from sync/ JSONL files into local DB.
  * Only inserts records that don't already exist (by ID).
@@ -11,7 +12,8 @@ import { canonicalizeProject } from './project-canon.js';
  */
 export async function importFromSync() {
     const syncDir = getSyncDir();
-    const result = { newFacts: 0, newDomains: 0, newCategories: 0, newRelations: 0 };
+    // rejectedJunk: template-residue records another device exported (see fact-validity.ts)
+    const result = { newFacts: 0, newDomains: 0, newCategories: 0, newRelations: 0, rejectedJunk: 0 };
     // Check if sync files exist
     const factsPath = path.join(syncDir, 'facts.jsonl');
     if (!fs.existsSync(factsPath)) {
@@ -26,6 +28,10 @@ export async function importFromSync() {
             for (const line of lines) {
                 try {
                     const d = JSON.parse(line);
+                    if (ontologyNameRejectReason(d.name)) {
+                        result.rejectedJunk++;
+                        continue;
+                    }
                     const existing = db.prepare('SELECT id FROM ontology_domains WHERE id = ?').get(d.id);
                     if (!existing) {
                         db.prepare('INSERT INTO ontology_domains (id, name, description, created_at) VALUES (?, ?, ?, ?)').run(d.id, d.name, d.description, d.created_at);
@@ -42,6 +48,10 @@ export async function importFromSync() {
             for (const line of lines) {
                 try {
                     const c = JSON.parse(line);
+                    if (ontologyNameRejectReason(c.name)) {
+                        result.rejectedJunk++;
+                        continue;
+                    }
                     const existing = db.prepare('SELECT id FROM ontology_categories WHERE id = ?').get(c.id);
                     if (!existing) {
                         db.prepare('INSERT INTO ontology_categories (id, domain_id, name, description, created_at) VALUES (?, ?, ?, ?, ?)').run(c.id, c.domain_id, c.name, c.description, c.created_at);
@@ -61,6 +71,10 @@ export async function importFromSync() {
                 const existingById = db.prepare('SELECT id FROM facts WHERE id = ?').get(f.id);
                 if (existingById)
                     continue;
+                if (factRejectReason(f)) {
+                    result.rejectedJunk++;
+                    continue;
+                }
                 // Canonicalize scope before dedup/insert — other devices may still
                 // export slug-format project names.
                 if (f.scope_project) {

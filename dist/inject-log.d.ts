@@ -12,8 +12,30 @@ export interface InjectLogEntry {
     chars?: number;
     duration_ms?: number;
     error?: string;
-    /** Which execution path served this injection: warm MCP-server daemon or cold fallback. */
-    via?: 'daemon' | 'fallback';
+    /**
+     * Which execution path served this injection: warm MCP-server daemon, cold
+     * fallback, or the thin hook client itself (prompt skipped before any search).
+     */
+    via?: 'daemon' | 'fallback' | 'client';
+    /** status='skipped' only — why (short prompt, task notification, slash command …). */
+    reason?: string;
+    /** Hook host: 'claude-code' | 'codex' | 'manual' — lets the two clients be measured apart. */
+    client?: string;
+    /** CLAUDE_CODE_ENTRYPOINT (cli, sdk-ts …) — separates interactive sessions from automation. */
+    entrypoint?: string;
+    /** Whether the hook supplied a session id (no id = no per-session dedup). */
+    has_session?: boolean;
+    /** Stage timings (ms): embedding+baseline, fact KNN, 1-hop relations, repeat detection. */
+    embed_ms?: number;
+    search_ms?: number;
+    related_ms?: number;
+    /** Absent when repeat detection did not run (off by default — MEMORY_BANK_REPEAT_DETECT=1). */
+    repeat_ms?: number;
+    /** Injected facts by origin: vector hit vs 1-hop relation expansion. */
+    from_vec?: number;
+    from_rel?: number;
+    /** Facts dropped because the same text was already in the block or the session ledger. */
+    text_deduped?: number;
 }
 export declare function getInjectLogPath(): string;
 /**

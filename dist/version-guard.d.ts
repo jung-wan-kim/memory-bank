@@ -12,6 +12,8 @@
  *    running from an older versioned plugin dir are terminated. MCP servers are
  *    never swept — killing one breaks a live session's tools; those only rotate
  *    on session restart.
+ *
+ * The inject daemon socket is also versioned (injectSocketPathIn) — see there.
  */
 export interface LockMeta {
     pid: number;
@@ -50,3 +52,28 @@ export declare function staleWorkerVersion(command: string, myVersion: string): 
  * carries current code, and a worker spawned from it must not be killed.
  */
 export declare function workerPluginDir(command: string): string | null;
+/**
+ * This install's package.json version. Every caller sits one level below the
+ * package root (src/*.ts under vitest, dist/*.js, and the esbuild bundle
+ * dist/mcp-server.js), so '../package.json' is the root in all three. null
+ * when unreadable.
+ */
+export declare function ownPackageVersion(): string | null;
+/**
+ * The inject daemon's socket path for one plugin version.
+ *
+ * Before v1.7.0 every version shared 'inject-daemon.sock', so a new session's
+ * hook client talked to whichever MCP server bound first — after an update
+ * that was an OLD server running the old injection logic until every old
+ * session ended (2026-10-03: all bound servers were v1.5.0 when v1.7.0 was
+ * built). Taking the socket over is not safe either: libuv unlinks a unix
+ * socket BY NAME when its server closes, including at process exit, so the old
+ * owner would delete the new owner's file on its way out (measured). One
+ * socket per version keeps client and daemon on the same code and never
+ * touches another version's file.
+ *
+ * The legacy name is kept for an unusable version string, and for a path too
+ * long for a unix socket — there a versioned name would fail to bind and leave
+ * every prompt on the ~2.3s cold path.
+ */
+export declare function injectSocketPathIn(indexDir: string, version: string | null): string;

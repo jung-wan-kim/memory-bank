@@ -1,10 +1,15 @@
 import { initDatabase } from './db.js';
+import { exchangeProjectKeys } from './project-canon.js';
 /**
  * Get the last session's context for a project.
  * This enables "continuing where you left off" — the most direct
  * way to reduce repeated context setting at session start.
  */
 export function getLastSessionContext(project) {
+    // Hooks pass the absolute cwd; exchanges.project stores the archive slug.
+    const keys = exchangeProjectKeys(project);
+    if (keys.length === 0)
+        return null;
     const db = initDatabase();
     try {
         // Find the most recent session for this project (excluding current)
@@ -12,11 +17,11 @@ export function getLastSessionContext(project) {
       SELECT session_id, COUNT(*) as exchange_count,
              MAX(timestamp) as last_ts, MIN(timestamp) as first_ts
       FROM exchanges
-      WHERE project = ? AND session_id IS NOT NULL
+      WHERE project IN (${keys.map(() => '?').join(', ')}) AND session_id IS NOT NULL
       GROUP BY session_id
       ORDER BY last_ts DESC
       LIMIT 1
-    `).get(project);
+    `).get(...keys);
         if (!session)
             return null;
         // Get the last exchange in that session

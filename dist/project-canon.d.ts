@@ -6,6 +6,18 @@ export declare function isSlugProject(project: string | null | undefined): boole
  */
 export declare function slugifyPath(p: string): string;
 /**
+ * Values to compare against `exchanges.project` for a hook-supplied project.
+ *
+ * Hooks hand us the absolute cwd; `exchanges.project` stores Claude Code's
+ * archive-dir slug. Comparing the two directly never matches — detectRepeat
+ * returned 0 matches across 2,686 injection events for exactly this reason
+ * (measured 2026-10-03). Claude Code builds the slug by replacing EVERY
+ * non-alphanumeric char with '-' (a Korean path segment becomes dashes), which
+ * is wider than slugifyPath's '/', '.', '_' rule, so both forms are returned.
+ * Slug input, and any value that is already a stored label, passes through.
+ */
+export declare function exchangeProjectKeys(project: string): string[];
+/**
  * Resolve a slug-format project to its absolute path using the exchanges
  * table as ground truth (project column stores slugs, cwd stores real paths).
  * Path-format input passes through unchanged. Unresolvable slugs are

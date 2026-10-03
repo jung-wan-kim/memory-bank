@@ -10,6 +10,22 @@ import { classifyLlmError, EmptyLlmResponseError } from './llm-error-class.js';
 // project's dir, where a user `claude --resume` can pick one up as their own
 // session (observed 2026-07-05). A dedicated cwd keeps them in their own slug.
 const LLM_WORKDIR = path.join(os.tmpdir(), LLM_WORKDIR_BASENAME);
+/**
+ * Isolation every headless query() shares (callHaiku, summarizer, translate).
+ *  - settingSources: [] — no user settings/plugins, so the spawned session's own
+ *    SessionStart/End hooks can't re-spawn workers (cascade prevention).
+ *  - tools: [] — these are text-in/text-out calls; the bundled CLI otherwise
+ *    sends every built-in tool definition with each request.
+ *  - strictMcpConfig — settingSources: [] does NOT stop the CLI from loading the
+ *    user's MCP servers, so each call also carried (and started) them.
+ * Measured on SDK 0.3.288 / CLI 2.1.288 (2026-10-03), one "pong" call:
+ * default ≈ 32,500 prompt tokens, tools: [] ≈ 3,300, both ≈ 390.
+ */
+export const ISOLATED_QUERY_OPTIONS = {
+    settingSources: [],
+    tools: [],
+    strictMcpConfig: true,
+};
 export function llmWorkdir() {
     try {
         fs.mkdirSync(LLM_WORKDIR, { recursive: true });
@@ -148,7 +164,7 @@ async function callOnce(systemPrompt, userMessage, maxTokens) {
                 // own SessionStart/End hooks re-spawn sync/backfill workers and every
                 // LLM call cascades into more sessions (observed as a proxy flood).
                 maxTurns: 1,
-                settingSources: [],
+                ...ISOLATED_QUERY_OPTIONS,
                 cwd: llmWorkdir(),
             },
         })) {

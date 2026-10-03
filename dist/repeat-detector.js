@@ -1,5 +1,6 @@
 import { generateEmbedding, initEmbeddings, EMBEDDING_VERSION } from './embeddings.js';
 import { initDatabase, getVecDtype, embeddingToVecBlob, vecParamSql, normalizeVecDistance, l2DistanceToSimilarity } from './db.js';
+import { exchangeProjectKeys } from './project-canon.js';
 /**
  * Detect if the current prompt is similar to a past exchange.
  * Returns matches above the threshold, sorted by similarity.
@@ -20,6 +21,8 @@ opts = {}) {
     }
     const ownDb = !opts.db;
     const db = opts.db ?? initDatabase();
+    // Callers pass the absolute cwd; exchanges store the archive slug.
+    const projectKeys = project ? exchangeProjectKeys(project) : null;
     try {
         // Vector search against past user messages (dtype-aware: int8 tables need
         // quantized query blobs and return ×127-scaled distances)
@@ -30,7 +33,11 @@ opts = {}) {
       WHERE embedding MATCH ${vecParamSql(vecDtype)}
       ORDER BY distance
       LIMIT ?
-    `).all(embeddingToVecBlob(embedding, vecDtype), limit * 3);
+    `).all(embeddingToVecBlob(embedding, vecDtype), 
+        // The KNN is global (vec0 has no project column) and the project filter
+        // runs afterwards, so a project-scoped call needs a wider pool or the
+        // nearest rows from other projects crowd out every in-project match.
+        projectKeys ? limit * 20 : limit * 3);
         const matches = [];
         for (const vr of vecResults) {
             const d = normalizeVecDistance(vr.distance, vecDtype);
@@ -47,7 +54,7 @@ opts = {}) {
             if (!row)
                 continue;
             // Skip if different project (unless no project filter)
-            if (project && row['project'] !== project)
+            if (projectKeys && !projectKeys.includes(row['project']))
                 continue;
             const assistantMsg = row['assistant_message'];
             // Truncate assistant message to first meaningful paragraph

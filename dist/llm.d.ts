@@ -1,3 +1,19 @@
+/**
+ * Isolation every headless query() shares (callHaiku, summarizer, translate).
+ *  - settingSources: [] — no user settings/plugins, so the spawned session's own
+ *    SessionStart/End hooks can't re-spawn workers (cascade prevention).
+ *  - tools: [] — these are text-in/text-out calls; the bundled CLI otherwise
+ *    sends every built-in tool definition with each request.
+ *  - strictMcpConfig — settingSources: [] does NOT stop the CLI from loading the
+ *    user's MCP servers, so each call also carried (and started) them.
+ * Measured on SDK 0.3.288 / CLI 2.1.288 (2026-10-03), one "pong" call:
+ * default ≈ 32,500 prompt tokens, tools: [] ≈ 3,300, both ≈ 390.
+ */
+export declare const ISOLATED_QUERY_OPTIONS: {
+    settingSources: never[];
+    tools: string[];
+    strictMcpConfig: boolean;
+};
 export declare function llmWorkdir(): string;
 export declare function pruneLlmTranscripts(now?: number): void;
 /**

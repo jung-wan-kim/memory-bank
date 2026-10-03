@@ -1,7 +1,11 @@
 import { randomUUID } from 'crypto';
 import { getVecTableDtype, embeddingToVecBlob, vecParamSql, normalizeVecDistance } from './db.js';
+import { ontologyNameRejectReason } from './fact-validity.js';
 // === Domain CRUD ===
 export function createDomain(db, name, description) {
+    const rejectReason = ontologyNameRejectReason(name);
+    if (rejectReason)
+        throw new Error(`createDomain refused (${rejectReason}): ${String(name).slice(0, 60)}`);
     const id = randomUUID();
     const now = new Date().toISOString();
     db.prepare(`INSERT INTO ontology_domains (id, name, description, created_at) VALUES (?, ?, ?, ?)`).run(id, name, description ?? null, now);
@@ -20,6 +24,9 @@ export function getDomainByName(db, name) {
 }
 // === Category CRUD ===
 export function createCategory(db, domainId, name, description) {
+    const rejectReason = ontologyNameRejectReason(name);
+    if (rejectReason)
+        throw new Error(`createCategory refused (${rejectReason}): ${String(name).slice(0, 60)}`);
     const id = randomUUID();
     const now = new Date().toISOString();
     db.prepare(`INSERT INTO ontology_categories (id, domain_id, name, description, created_at) VALUES (?, ?, ?, ?, ?)`).run(id, domainId, name, description ?? null, now);

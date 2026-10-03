@@ -8,7 +8,9 @@
  *
  * 설계 (bounded-constant-memory-injection):
  *  - 세션당 파일 1개: <indexDir>/state/inject-ledger/<session_id>.json
- *  - bounded: id 400개 상한 — 초과 시 oldest evict (삽입순 배열 유지)
+ *  - bounded: 키 800개 상한 — 초과 시 oldest evict (삽입순 배열 유지).
+ *    키는 fact id 와 본문 키('t:' + 정규화 본문 해시)를 함께 담는다 — id 가 다른
+ *    같은 본문(중복 저장된 fact)의 재주입도 막기 위해서다 (2026-10-03).
  *  - TTL: 저장 시 7일 지난 원장 파일 정리 (디렉토리 소형 — 나열 비용 무시 가능)
  *  - 원자적 쓰기: tmp + rename (부분 쓰기 파일이 다음 로드를 깨지 않게)
  *  - session_id 는 파일명이 되므로 화이트리스트 sanitize (path traversal 차단)
@@ -18,7 +20,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { getIndexDir } from './paths.js';
-const MAX_IDS = 400;
+const MAX_IDS = 800;
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export function ledgerDir() {
     return path.join(getIndexDir(), 'state', 'inject-ledger');

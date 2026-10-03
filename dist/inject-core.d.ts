@@ -1,7 +1,14 @@
+/** Who called the hook — recorded in the inject log, never used for ranking. */
+export interface InjectRequestMeta {
+    client?: string;
+    entrypoint?: string;
+}
 /**
  * Compute the UserPromptSubmit context block for a prompt: top-K similar
  * facts gated by the probe baseline, expanded with 1-hop ontology relations,
- * plus repeated-prompt detection. Returns '' when there is nothing to inject.
+ * deduped against the session ledger by id and by text. Repeated-prompt
+ * detection runs only when MEMORY_BANK_REPEAT_DETECT=1. Returns '' when there
+ * is nothing to inject.
  *
  * Shared by BOTH execution paths:
  *  - the warm in-process daemon inside the MCP server (embeddings already
@@ -11,4 +18,4 @@
  *
  * `via` tags the inject log so the two paths stay distinguishable.
  */
-export declare function computeInjectContext(userPrompt: string, project: string, via: 'daemon' | 'fallback', sessionId?: string): Promise<string>;
+export declare function computeInjectContext(userPrompt: string, project: string, via: 'daemon' | 'fallback', sessionId?: string, meta?: InjectRequestMeta): Promise<string>;

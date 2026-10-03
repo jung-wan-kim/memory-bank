@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { canonicalizeProject } from './project-canon.js';
 import { EMBEDDING_VERSION } from './embeddings.js';
 import { getVecTableDtype, embeddingToVecBlob, vecParamSql, normalizeVecDistance, l2DistanceToSimilarity } from './db.js';
+import { factRejectReason } from './fact-validity.js';
 /** dtype-aware MATCH/INSERT param for a fact-side vec table: the SQL
  * placeholder (vec_int8(?) wrap for int8) and the correctly-encoded blob.
  * float32 tables (pre-migration DBs) and int8 tables (fresh DBs / migrated)
@@ -11,6 +12,11 @@ function vecParamFor(db, table, embedding) {
     return { sql: vecParamSql(dt), blob: embeddingToVecBlob(embedding, dt), dt };
 }
 export function insertFact(db, params) {
+    // Last line of defence for every writer (extractor, capture-decision, the
+    // cc-sync memory-doc importer): template residue never reaches the table.
+    const rejectReason = factRejectReason(params);
+    if (rejectReason)
+        throw new Error(`insertFact refused (${rejectReason}): ${String(params.fact).slice(0, 60)}`);
     const id = randomUUID();
     const now = new Date().toISOString();
     const scopeProject = params.scope_project
