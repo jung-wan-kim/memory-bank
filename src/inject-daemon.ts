@@ -1,9 +1,9 @@
 import net from 'node:net';
 import fs from 'node:fs';
-import path from 'node:path';
 import { getIndexDir } from './paths.js';
 import { computeInjectContext } from './inject-core.js';
 import { initEmbeddings } from './embeddings.js';
+import { injectSocketPathIn, ownPackageVersion } from './version-guard.js';
 
 /**
  * Warm inject daemon — a unix-socket sidecar inside the long-lived MCP server.
@@ -21,13 +21,16 @@ import { initEmbeddings } from './embeddings.js';
  *  - Only ONE server binds the socket. EADDRINUSE → probe the existing socket:
  *    alive → this server simply doesn't serve (another session's MCP server
  *    does); dead (stale file after SIGKILL) → unlink and bind.
+ *  - One socket per plugin version (injectSocketPathIn): a hook client only
+ *    ever reaches a daemon running its own code, and versions never touch each
+ *    other's socket file.
  *  - Socket mode 600 — same-user only; the payload is the user's own prompt.
  *  - Requests are line-delimited JSON; a malformed request gets {ok:false} and
  *    never throws into the MCP server.
  */
 
 export function injectSocketPath(): string {
-  return path.join(getIndexDir(), 'inject-daemon.sock');
+  return injectSocketPathIn(getIndexDir(), ownPackageVersion());
 }
 
 export function startInjectDaemon(): void {

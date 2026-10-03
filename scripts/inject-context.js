@@ -25,6 +25,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { promptSkipReason } from '../dist/prompt-gate.js';
 import { appendInjectLog } from '../dist/inject-log.js';
+import { injectSocketPathIn, ownPackageVersion } from '../dist/version-guard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -80,7 +81,8 @@ function injectSocketPath() {
   // Mirrors paths.ts getIndexDir() without importing the heavy dist chain.
   const base = process.env.MEMORY_BANK_CONFIG_DIR
     || path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'superpowers');
-  return path.join(base, 'conversation-index', 'inject-daemon.sock');
+  // Same version → same socket as this install's daemon (never an older one's).
+  return injectSocketPathIn(path.join(base, 'conversation-index'), ownPackageVersion());
 }
 
 /** Ask the warm daemon; resolve null (not reject) on ANY failure so the caller

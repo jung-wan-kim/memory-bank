@@ -12,7 +12,13 @@
  *    running from an older versioned plugin dir are terminated. MCP servers are
  *    never swept — killing one breaks a live session's tools; those only rotate
  *    on session restart.
+ *
+ * The inject daemon socket is also versioned (injectSocketPathIn) — see there.
  */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export interface LockMeta {
   pid: number;
@@ -113,4 +119,51 @@ const WORKER_DIR_RE =
 export function workerPluginDir(command: string): string | null {
   const m = WORKER_DIR_RE.exec(command);
   return m ? m[1] : null;
+}
+
+let ownVersionCache: string | null | undefined;
+
+/**
+ * This install's package.json version. Every caller sits one level below the
+ * package root (src/*.ts under vitest, dist/*.js, and the esbuild bundle
+ * dist/mcp-server.js), so '../package.json' is the root in all three. null
+ * when unreadable.
+ */
+export function ownPackageVersion(): string | null {
+  if (ownVersionCache !== undefined) return ownVersionCache;
+  try {
+    const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json');
+    const v = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version;
+    ownVersionCache = typeof v === 'string' && v ? v : null;
+  } catch {
+    ownVersionCache = null;
+  }
+  return ownVersionCache;
+}
+
+/** macOS sun_path is 104 bytes including the terminating NUL. */
+const MAX_UNIX_SOCKET_PATH_BYTES = 103;
+
+/**
+ * The inject daemon's socket path for one plugin version.
+ *
+ * Before v1.7.0 every version shared 'inject-daemon.sock', so a new session's
+ * hook client talked to whichever MCP server bound first — after an update
+ * that was an OLD server running the old injection logic until every old
+ * session ended (2026-10-03: all bound servers were v1.5.0 when v1.7.0 was
+ * built). Taking the socket over is not safe either: libuv unlinks a unix
+ * socket BY NAME when its server closes, including at process exit, so the old
+ * owner would delete the new owner's file on its way out (measured). One
+ * socket per version keeps client and daemon on the same code and never
+ * touches another version's file.
+ *
+ * The legacy name is kept for an unusable version string, and for a path too
+ * long for a unix socket — there a versioned name would fail to bind and leave
+ * every prompt on the ~2.3s cold path.
+ */
+export function injectSocketPathIn(indexDir: string, version: string | null): string {
+  const legacy = path.join(indexDir, 'inject-daemon.sock');
+  if (!version || !/^[0-9A-Za-z.+-]{1,32}$/.test(version)) return legacy;
+  const versioned = path.join(indexDir, `inject-daemon-${version}.sock`);
+  return Buffer.byteLength(versioned) <= MAX_UNIX_SOCKET_PATH_BYTES ? versioned : legacy;
 }
