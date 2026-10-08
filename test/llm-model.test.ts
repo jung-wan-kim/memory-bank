@@ -289,6 +289,14 @@ describe('Agent SDK 거절 신호와 대체 모델 (2차 검토)', () => {
   const fail500 = [{ type: 'result', subtype: 'success', is_error: true, stop_reason: null, result: 'API Error: 500 Internal Server Error' }];
   const fail400 = [{ type: 'result', subtype: 'success', is_error: true, stop_reason: null, result: 'API Error: 400 prompt is too long' }];
   const cutOff = [{ type: 'result', subtype: 'success', is_error: true, stop_reason: 'max_tokens', result: "API Error: Claude's response exceeded the 4096 output token maximum." }];
+  // Each signal alone, so dropping any one of them from the check fails a test.
+  const cutOffSignals: Array<[string, Array<Record<string, unknown>>]> = [
+    ['stop_reason 만', [{ type: 'result', subtype: 'success', is_error: true, stop_reason: 'max_tokens', result: 'API Error' }]],
+    ['구조화 신호만', [
+      { type: 'assistant', error: 'max_output_tokens', message: { content: [] } },
+      { type: 'result', subtype: 'success', is_error: true, stop_reason: null, result: 'API Error' },
+    ]],
+  ];
   const emptyOk = [{ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', result: '' }];
 
   // 청크 하나가 일시 장애로 실패하면 나머지 청크도 실패할 공산이 크고, 통과한 청크만으로 만든
@@ -345,6 +353,32 @@ describe('Agent SDK 거절 신호와 대체 모델 (2차 검토)', () => {
     const { summarizeConversation } = await import('../src/summarizer.js');
     await expect(summarizeConversation(longConversation())).rejects.toThrow(/output token cap/);
     expect(queryCalls.length).toBe(2);
+  });
+
+  it.each(cutOffSignals)('출력 한도 신호(%s)만 있어도 청크를 건너뛰지 않는다', async (_label, turn) => {
+    agentQueue.push(ok('첫 청크'), turn, ok('셋째 청크'), ok('합성'));
+    const { summarizeConversation } = await import('../src/summarizer.js');
+    await expect(summarizeConversation(longConversation())).rejects.toThrow(/output token cap/);
+  });
+
+  // 통과한 청크가 있어도 400 이 연달아 나면 그때부터 모든 요청이 거부되는 상황일 수 있다.
+  // 계속하면 남은 청크를 다 부르고, 통과한 앞부분만으로 요약을 영구히 쓴다 (6차 검토 M2).
+  it('통과한 청크 뒤에 400 이 연달아 두 번 나면 중단한다', async () => {
+    agentQueue.push(ok('첫 청크'), fail400, fail400, ok('넷째 청크'), ok('합성'));
+    const { summarizeConversation } = await import('../src/summarizer.js');
+    const conv = Array.from({ length: 32 }, (_, i) => ({
+      id: `e${i}`, project: 'p', timestamp: `2026-10-08T00:${String(i).padStart(2, '0')}:00Z`, archivePath: '/a.jsonl', lineStart: i, lineEnd: i + 1,
+      userMessage: `질문 ${i}`, assistantMessage: `답 ${i}`,
+    })); // 4청크
+    await expect(summarizeConversation(conv)).rejects.toThrow(/API Error: 400/);
+    expect(queryCalls.length).toBe(3);
+  });
+
+  it('400 사이에 통과한 청크가 있으면 연속으로 세지 않는다', async () => {
+    agentQueue.push(fail400, ok('둘째 청크'), fail400, ok('합성 결과'));
+    const { summarizeConversation } = await import('../src/summarizer.js');
+    await expect(summarizeConversation(longConversation())).resolves.toBe('합성 결과');
+    expect(queryCalls.length).toBe(4);
   });
 
   it('본문이 빈 청크(분류 불명)는 건너뛰지 않고 요약 전체를 실패로 끝낸다', async () => {

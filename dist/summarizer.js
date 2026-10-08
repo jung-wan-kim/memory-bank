@@ -51,9 +51,10 @@ class SummaryRefusedError extends Error {
     }
 }
 /**
- * The reply hit the output token cap. A setting to fix (a thinking model under
- * the cap), not a fault of this conversation: retried on a later run, never
- * skipped like a rejected chunk.
+ * The reply hit the output token cap. Taken as a setting to fix (a thinking
+ * model under the cap) rather than a fault of this conversation, as on the API
+ * key path: retried on a later run, never skipped like a rejected chunk. Not
+ * measured: a chunk whose content alone overruns the cap is retried for good.
  */
 class SummaryCutOffError extends Error {
     constructor(detail) {
@@ -65,8 +66,9 @@ class SummaryCutOffError extends Error {
  * Written as the summary of a conversation the model declines to summarize.
  * Writing nothing would have sync retry it on every run, and sync summarizes at
  * most `summaryLimit` files per run in directory order — conversations that are
- * declined every time would hold those slots for good. The marker is final:
- * whether a refusal repeats was not measured, and only a rebuild redoes it.
+ * declined every time would hold those slots for good. The marker stays until
+ * a rebuild (conversations still in the projects dir) or a repair after the
+ * conversation changed; whether a refusal repeats was not measured.
  * Failures that may pass (outage, API error, no result) still throw and write
  * nothing, so they retry.
  */
@@ -85,6 +87,7 @@ async function callClaudeOnce(prompt, sessionId, useFallback = false) {
     const fallbackModel = process.env.MEMORY_BANK_API_MODEL_FALLBACK || 'sonnet';
     const model = useFallback ? fallbackModel : primaryModel;
     let refused = false;
+    let cutOff = false;
     for await (const message of query({
         prompt,
         options: {
@@ -110,6 +113,10 @@ async function callClaudeOnce(prompt, sessionId, useFallback = false) {
             refused = true; // the SDK's structured refusal signal; stop_reason may not carry it
             continue;
         }
+        if (message.type === 'assistant' && message.error === 'max_output_tokens') {
+            cutOff = true; // the SDK's structured signal for the output cap
+            continue;
+        }
         if (message && typeof message === 'object' && 'type' in message && message.type === 'result') {
             const result = message.result;
             // Check if result is an API error (SDK returns errors as result strings)
@@ -131,7 +138,7 @@ async function callClaudeOnce(prompt, sessionId, useFallback = false) {
                 const detail = typeof result === 'string' ? result.slice(0, 300) : '';
                 // Read as "max_tokens" by classifyLlmError, i.e. a rejection that repeats,
                 // and a chunk that fails that way would be skipped for good.
-                if (message.stop_reason === 'max_tokens' || /output token maximum/i.test(detail)) {
+                if (cutOff || message.stop_reason === 'max_tokens') {
                     throw new SummaryCutOffError(detail);
                 }
                 throw new Error(`Summary call failed (${message.stop_reason ?? message.subtype}): ${detail}`);
@@ -210,7 +217,7 @@ ${conversationText}`;
     // Summarize each chunk
     const chunkSummaries = [];
     let refusedChunks = 0;
-    let rejectedChunks = 0;
+    let rejectedInARow = 0; // rejections since the last chunk that got through
     for (let i = 0; i < chunks.length; i++) {
         const chunkText = formatConversationText(chunks[i]);
         const prompt = `${SUMMARIZER_CONTEXT_MARKER}.
@@ -224,6 +231,7 @@ Example: <summary>Implemented HID keyboard functionality for ESP32. Hit Bluetoot
             const summary = await callClaude(prompt); // No sessionId for chunks
             const extracted = extractSummary(summary);
             chunkSummaries.push(extracted);
+            rejectedInARow = 0;
             console.log(`  Chunk ${i + 1}/${chunks.length}: ${extracted.split(/\s+/).length} words`);
         }
         catch (error) {
@@ -237,10 +245,11 @@ Example: <summary>Implemented HID keyboard functionality for ESP32. Hit Bluetoot
             const rejected = !refused && !(error instanceof SummaryCutOffError) && classifyLlmError(error) === 'deterministic';
             if (!refused && !rejected)
                 throw error;
-            // Two rejections before any chunk got through more likely mean every
-            // request is rejected (a setting, the account) than two bad chunks: stop
-            // spending a call per chunk on each sync. Retried on a later run.
-            if (rejected && ++rejectedChunks >= 2 && chunkSummaries.length === 0)
+            // Two rejections in a row more likely mean every request is now rejected
+            // (a setting, the account) than two bad chunks side by side: stop, rather
+            // than spend a call per chunk and write what got through for good. The
+            // two cannot be told apart; two adjacent bad chunks are retried for good.
+            if (rejected && ++rejectedInARow >= 2)
                 throw error;
             if (refused)
                 refusedChunks++;

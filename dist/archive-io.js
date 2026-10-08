@@ -1,4 +1,5 @@
 import fs from 'fs';
+import path from 'path';
 import { Readable, Transform, pipeline } from 'stream';
 import * as zlib from 'node:zlib';
 /**
@@ -70,6 +71,27 @@ export function resolveArchiveFile(filePath) {
 /** Whether a file name is a conversation summary, plain or compressed. */
 export function isSummaryFileName(fileName) {
     return canonicalArchiveName(fileName).endsWith('-summary.txt');
+}
+/**
+ * Delete every summary, plain or compressed, under the archive's project dirs
+ * (rebuild). Returns how many were removed.
+ */
+export function removeAllSummaries(archiveDir) {
+    let removed = 0;
+    if (!fs.existsSync(archiveDir))
+        return removed;
+    for (const project of fs.readdirSync(archiveDir)) {
+        const projectPath = path.join(archiveDir, project);
+        if (!fs.statSync(projectPath).isDirectory())
+            continue;
+        // A compressed summary left behind still counts as "has a summary", and
+        // the conversation would never be summarized again.
+        for (const name of fs.readdirSync(projectPath).filter(isSummaryFileName)) {
+            fs.unlinkSync(path.join(projectPath, name));
+            removed++;
+        }
+    }
+    return removed;
 }
 /** Remove an archive file in both its plain and compressed forms (either may be absent). */
 export function removeArchiveFile(filePath) {

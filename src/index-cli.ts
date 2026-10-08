@@ -3,9 +3,8 @@ import { verifyIndex, repairIndex } from './verify.js';
 import { indexSession, indexUnprocessed, indexConversations } from './indexer.js';
 import { initDatabase } from './db.js';
 import { getDbPath, getArchiveDir } from './paths.js';
-import { isSummaryFileName } from './archive-io.js';
+import { removeAllSummaries } from './archive-io.js';
 import fs from 'fs';
-import path from 'path';
 
 const command = process.argv[2];
 
@@ -87,21 +86,10 @@ async function main() {
           console.log('Deleted existing database');
         }
 
-        // Delete all summary files
+        // Delete all summary files (plain and compressed)
         const archiveDir = getArchiveDir();
         if (fs.existsSync(archiveDir)) {
-          const projects = fs.readdirSync(archiveDir);
-          for (const project of projects) {
-            const projectPath = path.join(archiveDir, project);
-            if (!fs.statSync(projectPath).isDirectory()) continue;
-
-            // Compressed summaries too: one left behind still counts as "has a
-            // summary", and the conversation would never be summarized again.
-            const summaries = fs.readdirSync(projectPath).filter(isSummaryFileName);
-            for (const summary of summaries) {
-              fs.unlinkSync(path.join(projectPath, summary));
-            }
-          }
+          removeAllSummaries(archiveDir);
           console.log('Deleted all summary files');
         }
 

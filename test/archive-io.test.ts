@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync, utimesSync } from 'fs';
+import { mkdtempSync, writeFileSync, rmSync, utimesSync, mkdirSync, readdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import * as zlib from 'node:zlib';
@@ -12,6 +12,7 @@ import {
   createArchiveReadStream,
   statArchiveFile,
   isSummaryFileName,
+  removeAllSummaries,
 } from '../src/archive-io.js';
 
 const zstdCompressSync: ((buf: Buffer) => Buffer) | undefined =
@@ -51,6 +52,24 @@ describe('archive-io', () => {
       expect(isSummaryFileName('abc.jsonl')).toBe(false);
       expect(isSummaryFileName('abc.jsonl.zst')).toBe(false);
       expect(isSummaryFileName('abc-summary.txt.bak')).toBe(false);
+    });
+  });
+
+  describe('removeAllSummaries (rebuild)', () => {
+    it('deletes plain and compressed summaries in every project dir, and nothing else', () => {
+      const root = mkdtempSync(join(tmpdir(), 'mb-rebuild-'));
+      try {
+        const proj = join(root, '-p');
+        mkdirSync(proj);
+        for (const f of ['a-summary.txt', 'b-summary.txt.zst', 'a.jsonl', 'b.jsonl.zst', 'notes.txt']) writeFileSync(join(proj, f), 'x');
+        writeFileSync(join(root, 'stray-summary.txt'), 'x'); // not in a project dir
+
+        expect(removeAllSummaries(root)).toBe(2);
+        expect(readdirSync(proj).sort()).toEqual(['a.jsonl', 'b.jsonl.zst', 'notes.txt']);
+        expect(existsSync(join(root, 'stray-summary.txt'))).toBe(true);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
     });
   });
 

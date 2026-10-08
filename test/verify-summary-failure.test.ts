@@ -126,7 +126,9 @@ describe('repairIndex with a failing summary', () => {
     const issues = await verifyIndex();
     expect(issues.missing.map((m) => m.path)).toContain(conversationPath);
     await repairIndex(issues);
-    expect(fs.readFileSync(conversationPath.replace('.jsonl', '-summary.txt'), 'utf-8')).toBe(REFUSED);
+    const summaryPath = conversationPath.replace('.jsonl', '-summary.txt');
+    expect(fs.existsSync(summaryPath)).toBe(true);
+    expect(fs.readFileSync(summaryPath, 'utf-8')).toBe(REFUSED);
   });
 
   it('keeps the existing summary when the new one is refused', async () => {

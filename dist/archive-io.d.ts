@@ -12,6 +12,11 @@ export declare function canonicalArchiveName(fileName: string): string;
 export declare function resolveArchiveFile(filePath: string): string | null;
 /** Whether a file name is a conversation summary, plain or compressed. */
 export declare function isSummaryFileName(fileName: string): boolean;
+/**
+ * Delete every summary, plain or compressed, under the archive's project dirs
+ * (rebuild). Returns how many were removed.
+ */
+export declare function removeAllSummaries(archiveDir: string): number;
 /** Remove an archive file in both its plain and compressed forms (either may be absent). */
 export declare function removeArchiveFile(filePath: string): void;
 /** Whether an archive file exists in either plain or compressed form. */
