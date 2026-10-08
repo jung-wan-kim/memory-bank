@@ -8,7 +8,7 @@ import { getFixturePath, suppressConsole } from './test-utils.js';
 /**
  * A failed summary must not cost the exchange index (2026-10-08).
  *
- * summarizeConversation now throws on an error/refusal turn instead of
+ * summarizeConversation now throws on an error turn instead of
  * returning the error text as the summary. indexSession called it with no
  * try, so the throw skipped every insertExchange and db.close() — and since
  * the archive copy was already fresh, the next sync never re-indexed the file.
@@ -18,7 +18,7 @@ const summaryMode: { fail: boolean } = { fail: true };
 
 vi.mock('../src/summarizer.js', () => ({
   summarizeConversation: async () => {
-    if (summaryMode.fail) throw new Error('Summary call failed (refusal): unable to respond');
+    if (summaryMode.fail) throw new Error('Summary call failed (error_during_execution): API Error: 500');
     return 'A summary';
   },
 }));

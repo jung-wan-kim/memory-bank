@@ -10,6 +10,8 @@ export declare function canonicalArchiveName(fileName: string): string;
  * Returns null when neither exists.
  */
 export declare function resolveArchiveFile(filePath: string): string | null;
+/** Remove an archive file in both its plain and compressed forms (either may be absent). */
+export declare function removeArchiveFile(filePath: string): void;
 /** Whether an archive file exists in either plain or compressed form. */
 export declare function archiveFileExists(filePath: string): boolean;
 /** Read an archive file as UTF-8, transparently decompressing `.zst`. */

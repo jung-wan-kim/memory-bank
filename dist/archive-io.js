@@ -67,6 +67,11 @@ export function resolveArchiveFile(filePath) {
         return variant;
     return null;
 }
+/** Remove an archive file in both its plain and compressed forms (either may be absent). */
+export function removeArchiveFile(filePath) {
+    fs.rmSync(filePath, { force: true });
+    fs.rmSync(filePath + ZST_SUFFIX, { force: true });
+}
 /** Whether an archive file exists in either plain or compressed form. */
 export function archiveFileExists(filePath) {
     return resolveArchiveFile(filePath) !== null;

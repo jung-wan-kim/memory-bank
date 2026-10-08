@@ -3,6 +3,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { SUMMARIZER_CONTEXT_MARKER } from './constants.js';
 import { llmWorkdir, ISOLATED_QUERY_OPTIONS, DEFAULT_LLM_MODEL } from './llm.js';
 import { noteSdkFailure } from './deps-heal.js';
+import { classifyLlmError } from './llm-error-class.js';
 
 /**
  * Get API environment overrides for summarization calls.
@@ -41,11 +42,11 @@ export function formatConversationText(exchanges: ConversationExchange[]): strin
 
 function extractSummary(text: string): string {
   const match = text.match(/<summary>(.*?)<\/summary>/s);
-  if (match) {
-    return match[1].trim();
-  }
-  // Fallback if no tags found
-  return text.trim();
+  const summary = match ? match[1].trim() : text.trim(); // no tags: the whole reply
+  // Written out, an empty summary is never redone (callers only check that the
+  // file exists). A reply with no text is a failed call, retried on a later run.
+  if (!summary) throw new Error('Summary call returned no summary text');
+  return summary;
 }
 
 /** The model declined to summarize. The same conversation is declined again. */
@@ -60,8 +61,10 @@ class SummaryRefusedError extends Error {
  * Written as the summary of a conversation the model declines to summarize.
  * Writing nothing would have sync retry it on every run, and sync summarizes at
  * most `summaryLimit` files per run in directory order — conversations that are
- * always declined would hold those slots for good. Failures that may pass
- * (outage, API error, no result) still throw and write nothing, so they retry.
+ * declined every time would hold those slots for good. The marker is final:
+ * whether a refusal repeats was not measured, and only a rebuild redoes it.
+ * Failures that may pass (outage, API error, no result) still throw and write
+ * nothing, so they retry.
  */
 export const REFUSED_SUMMARY = '[No summary: the model declined to summarize this conversation.]';
 
@@ -209,6 +212,7 @@ ${conversationText}`;
 
   // Summarize each chunk
   const chunkSummaries: string[] = [];
+  let refusedChunks = 0;
   for (let i = 0; i < chunks.length; i++) {
     const chunkText = formatConversationText(chunks[i]);
     const prompt = `${SUMMARIZER_CONTEXT_MARKER}.
@@ -225,16 +229,24 @@ Example: <summary>Implemented HID keyboard functionality for ESP32. Hit Bluetoot
       chunkSummaries.push(extracted);
       console.log(`  Chunk ${i + 1}/${chunks.length}: ${extracted.split(/\s+/).length} words`);
     } catch (error) {
-      // A failed call (outage, API error) would fail the remaining chunks too,
-      // and a summary of the chunks that got through would be written for good.
-      // Abort instead: no file is written, and the next sync retries it.
-      if (!(error instanceof SummaryRefusedError)) throw error;
-      console.log(`  Chunk ${i + 1} refused, skipping`);
+      // A refused or rejected chunk (400/413: too long, malformed) fails the
+      // same way next run: skip it, as before — aborting would redo every
+      // earlier chunk on each sync, forever. Any other failure (outage, no
+      // result) would fail the remaining chunks too, and a summary of the
+      // chunks that got through would be written for good: abort instead. No
+      // file is written, and the conversation is retried on a later run.
+      const refused = error instanceof SummaryRefusedError;
+      if (!refused && classifyLlmError(error) !== 'deterministic') throw error;
+      if (refused) refusedChunks++;
+      console.log(`  Chunk ${i + 1} ${refused ? 'refused' : 'rejected'}, skipping`);
     }
   }
 
-  // Every chunk was refused (any other failure has thrown above).
-  if (chunkSummaries.length === 0) return REFUSED_SUMMARY;
+  if (chunkSummaries.length === 0) {
+    if (refusedChunks === chunks.length) return REFUSED_SUMMARY;
+    // Rejected chunks leave nothing to write; the conversation is retried.
+    throw new Error(`Summary failed: all ${chunks.length} chunks were refused or rejected`);
+  }
 
   // Synthesize chunks into final summary
   const synthesisPrompt = `${SUMMARIZER_CONTEXT_MARKER}.
@@ -257,6 +269,8 @@ Your summary (max 200 words):`;
     const result = await callClaude(synthesisPrompt); // No sessionId for synthesis
     return extractSummary(result);
   } catch (error) {
+    // Unlike a skipped chunk this loses no content: every part summary is kept,
+    // only not merged into one paragraph.
     console.log(`  Synthesis failed, using chunk summaries`);
     return chunkSummaries.join(' ');
   }

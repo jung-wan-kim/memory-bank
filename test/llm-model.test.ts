@@ -217,6 +217,19 @@ describe('Agent SDK 경로의 오류 턴 (기본 경로)', () => {
       userMessage: `질문 ${i}`, assistantMessage: `답 ${i}`,
     })))).rejects.toThrow(/without a result/);
   });
+
+  // 성공 턴인데 본문이 비었거나 태그 안이 비면 '' 가 요약으로 쓰였다 (4차 검토 N6).
+  it.each([
+    ['본문이 빈 성공 턴', ''],
+    ['빈 summary 태그', '<summary>  </summary>'],
+  ])('요약기는 %s 을 빈 요약이 아니라 실패로 throw 한다', async (_label, text) => {
+    agentMessages = [{ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', result: text }];
+    const { summarizeConversation } = await import('../src/summarizer.js');
+    await expect(summarizeConversation([1, 2].map((i) => ({
+      id: `e${i}`, project: 'p', timestamp: `2026-10-08T00:0${i}:00Z`, archivePath: '/a.jsonl', lineStart: i, lineEnd: i + 1,
+      userMessage: `질문 ${i}`, assistantMessage: `답 ${i}`,
+    })))).rejects.toThrow(/no summary text/);
+  });
 });
 
 describe('API 키 경로의 max_tokens 소진', () => {
@@ -274,6 +287,7 @@ describe('Agent SDK 거절 신호와 대체 모델 (2차 검토)', () => {
   })); // 8개씩 3청크
   const ok = (text: string) => [{ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', result: `<summary>${text}</summary>` }];
   const fail500 = [{ type: 'result', subtype: 'success', is_error: true, stop_reason: null, result: 'API Error: 500 Internal Server Error' }];
+  const fail400 = [{ type: 'result', subtype: 'success', is_error: true, stop_reason: null, result: 'API Error: 400 prompt is too long' }];
 
   // 청크 하나가 일시 장애로 실패하면 나머지 청크도 실패할 공산이 크고, 통과한 청크만으로 만든
   // 요약은 영구히 쓰인다. 중단해 파일을 쓰지 않아야 다음 sync 가 다시 요약한다.
@@ -290,6 +304,21 @@ describe('Agent SDK 거절 신호와 대체 모델 (2차 검토)', () => {
     expect(await summarizeConversation(longConversation())).toBe('합성 결과');
     expect(queryCalls.length).toBe(4);
     expect(String((queryCalls[3] as unknown as { prompt: string }).prompt)).toContain('1. 첫 청크\n2. 셋째 청크');
+  });
+
+  // 다시 해도 같은 이유로 실패하는 청크에서 중단하면, sync 마다 그 앞 청크를 전부 다시
+  // 부르고도 요약은 끝내 쓰이지 않는다 (4차 검토 N2). 거절처럼 건너뛴다.
+  it('긴 대화의 청크가 다시 해도 같은 이유로 실패(400)하면 건너뛰고 나머지로 요약한다', async () => {
+    agentQueue.push(ok('첫 청크'), fail400, ok('셋째 청크'), ok('합성 결과'));
+    const { summarizeConversation } = await import('../src/summarizer.js');
+    await expect(summarizeConversation(longConversation())).resolves.toBe('합성 결과');
+    expect(queryCalls.length).toBe(4);
+  });
+
+  it('긴 대화의 청크가 전부 400 이면 아무것도 쓰지 않도록 throw 한다 (거절 표식도 아니다)', async () => {
+    agentMessages = fail400;
+    const { summarizeConversation } = await import('../src/summarizer.js');
+    await expect(summarizeConversation(longConversation())).rejects.toThrow(/all 3 chunks were refused or rejected/);
   });
 
   it('긴 대화의 청크가 전부 거절되면 거절 표식을 돌려준다', async () => {
