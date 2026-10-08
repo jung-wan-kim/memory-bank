@@ -292,9 +292,11 @@ describe('Agent SDK 거절 신호와 대체 모델 (2차 검토)', () => {
   // Each signal alone, so dropping any one of them from the check fails a test.
   const cutOffSignals: Array<[string, Array<Record<string, unknown>>]> = [
     ['stop_reason 만', [{ type: 'result', subtype: 'success', is_error: true, stop_reason: 'max_tokens', result: 'API Error' }]],
+    // The result text alone reads as a repeatable rejection (400), so only the
+    // structured signal keeps this chunk from being skipped.
     ['구조화 신호만', [
       { type: 'assistant', error: 'max_output_tokens', message: { content: [] } },
-      { type: 'result', subtype: 'success', is_error: true, stop_reason: null, result: 'API Error' },
+      { type: 'result', subtype: 'success', is_error: true, stop_reason: null, result: 'API Error: 400 bad request' },
     ]],
   ];
   const emptyOk = [{ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', result: '' }];

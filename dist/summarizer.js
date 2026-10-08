@@ -114,7 +114,10 @@ async function callClaudeOnce(prompt, sessionId, useFallback = false) {
             continue;
         }
         if (message.type === 'assistant' && message.error === 'max_output_tokens') {
-            cutOff = true; // the SDK's structured signal for the output cap
+            // The SDK's structured signal for the output cap. Only an error turn is
+            // treated as cut off; a turn the CLI recovered (is_error false) is taken
+            // as it is.
+            cutOff = true;
             continue;
         }
         if (message && typeof message === 'object' && 'type' in message && message.type === 'result') {
