@@ -48,6 +48,23 @@ function extractSummary(text: string): string {
   return text.trim();
 }
 
+/** The model declined to summarize. The same conversation is declined again. */
+class SummaryRefusedError extends Error {
+  constructor(detail: string) {
+    super(`Summary refused: ${detail}`);
+    this.name = 'SummaryRefusedError';
+  }
+}
+
+/**
+ * Written as the summary of a conversation the model declines to summarize.
+ * Writing nothing would have sync retry it on every run, and sync summarizes at
+ * most `summaryLimit` files per run in directory order — conversations that are
+ * always declined would hold those slots for good. Failures that may pass
+ * (outage, API error, no result) still throw and write nothing, so they retry.
+ */
+export const REFUSED_SUMMARY = '[No summary: the model declined to summarize this conversation.]';
+
 async function callClaude(prompt: string, sessionId?: string, useFallback = false): Promise<string> {
   try {
     return await callClaudeOnce(prompt, sessionId, useFallback);
@@ -62,6 +79,7 @@ async function callClaudeOnce(prompt: string, sessionId?: string, useFallback = 
   const fallbackModel = process.env.MEMORY_BANK_API_MODEL_FALLBACK || 'sonnet';
   const model = useFallback ? fallbackModel : primaryModel;
 
+  let refused = false;
   for await (const message of query({
     prompt,
     options: {
@@ -83,6 +101,10 @@ async function callClaudeOnce(prompt: string, sessionId?: string, useFallback = 
       })
     } as any
   })) {
+    if (message.type === 'system' && message.subtype === 'model_refusal_no_fallback') {
+      refused = true; // the SDK's structured refusal signal; stop_reason may not carry it
+      continue;
+    }
     if (message && typeof message === 'object' && 'type' in message && message.type === 'result') {
       const result = (message as any).result;
 
@@ -96,17 +118,22 @@ async function callClaudeOnce(prompt: string, sessionId?: string, useFallback = 
         throw new Error(`Summary call failed (${fallbackModel} thinking budget): ${result.slice(0, 300)}`);
       }
 
-      // Any other error turn (API error, refusal) carries its error text in
-      // `result`; returned, it would be written out as the summary. Callers
-      // catch the throw and retry the file on a later run.
-      if (message.is_error || message.stop_reason === 'refusal') {
+      // An error turn carries its error text in `result`; returned, it would be
+      // written out as the summary. A refusal is final; anything else is
+      // retried on a later run (callers write no summary file on a throw).
+      if (refused || message.stop_reason === 'refusal') {
+        throw new SummaryRefusedError(typeof result === 'string' ? result.slice(0, 300) : '');
+      }
+      if (message.is_error) {
         throw new Error(`Summary call failed (${message.stop_reason ?? message.subtype}): ${typeof result === 'string' ? result.slice(0, 300) : ''}`);
       }
 
       return result;
     }
   }
-  return '';
+  // No result message: a failed call. Returned as '', it became an empty
+  // summary file that was never redone.
+  throw new Error('Summary call ended without a result');
 }
 
 function chunkExchanges(exchanges: ConversationExchange[], chunkSize: number): ConversationExchange[][] {
@@ -160,7 +187,13 @@ Bad:
 
 ${conversationText}`;
 
-    const result = await callClaude(prompt, sessionId);
+    let result: string;
+    try {
+      result = await callClaude(prompt, sessionId);
+    } catch (error) {
+      if (error instanceof SummaryRefusedError) return REFUSED_SUMMARY;
+      throw error;
+    }
     return extractSummary(result);
   }
 
@@ -192,15 +225,16 @@ Example: <summary>Implemented HID keyboard functionality for ESP32. Hit Bluetoot
       chunkSummaries.push(extracted);
       console.log(`  Chunk ${i + 1}/${chunks.length}: ${extracted.split(/\s+/).length} words`);
     } catch (error) {
-      console.log(`  Chunk ${i + 1} failed, skipping`);
+      // A failed call (outage, API error) would fail the remaining chunks too,
+      // and a summary of the chunks that got through would be written for good.
+      // Abort instead: no file is written, and the next sync retries it.
+      if (!(error instanceof SummaryRefusedError)) throw error;
+      console.log(`  Chunk ${i + 1} refused, skipping`);
     }
   }
 
-  if (chunkSummaries.length === 0) {
-    // Returned, this line was written out as the summary and the file was never
-    // summarized again (callers only check that a summary file exists).
-    throw new Error(`Summary failed: all ${chunks.length} chunks failed`);
-  }
+  // Every chunk was refused (any other failure has thrown above).
+  if (chunkSummaries.length === 0) return REFUSED_SUMMARY;
 
   // Synthesize chunks into final summary
   const synthesisPrompt = `${SUMMARIZER_CONTEXT_MARKER}.

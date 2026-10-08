@@ -16,14 +16,17 @@ const queryCalls: Array<{ options: Record<string, unknown> }> = [];
 let agentThrows: unknown = null;
 /** Messages the mocked Agent SDK stream emits; null → one plain success result. */
 let agentMessages: Array<Record<string, unknown>> | null = null;
+/** Per-call scripts: each query() takes the next one; when empty, agentMessages applies. */
+const agentQueue: Array<Array<Record<string, unknown>>> = [];
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: (args: { options: Record<string, unknown> }) => {
     queryCalls.push(args);
+    const scripted = agentQueue.shift();
     return {
       async *[Symbol.asyncIterator]() {
         if (agentThrows) throw agentThrows;
-        for (const m of agentMessages ?? [{ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', result: 'agent-ok' }]) {
+        for (const m of scripted ?? agentMessages ?? [{ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', result: 'agent-ok' }]) {
           yield m as never;
         }
       },
@@ -45,11 +48,18 @@ vi.mock('@anthropic-ai/sdk', () => ({
   },
 }));
 
+/** A refused Agent SDK turn, as SDK 0.3.293 emits it. */
+const refusalTurn = [
+  { type: 'system', subtype: 'model_refusal_no_fallback', original_model: 'claude-haiku-5-5', request_id: null, api_refusal_category: 'cyber' },
+  { type: 'result', subtype: 'success', is_error: true, stop_reason: 'refusal', result: 'Claude Code is unable to respond to this request' },
+];
+
 beforeEach(() => {
   queryCalls.length = 0;
   createCalls.length = 0;
   agentThrows = null;
   agentMessages = null;
+  agentQueue.length = 0;
   apiResponse = {};
   process.env.MEMORY_BANK_LLM_RETRY_BASE_MS = '0';
   delete process.env.MEMORY_BANK_FACT_MODEL;
@@ -144,10 +154,6 @@ describe('API 키 경로 (Haiku 5.5)', () => {
 describe('Agent SDK 경로의 오류 턴 (기본 경로)', () => {
   // SDK 문서: subtype 'success' 라도 is_error 면 result 에 답이 아니라 오류 문구가 들어 있다.
   // 예전엔 그 문구를 답으로 돌려줘 호출자가 JSON 없음 → 배치를 조용히 비웠다.
-  const refusalTurn = [
-    { type: 'system', subtype: 'model_refusal_no_fallback', original_model: 'claude-haiku-5-5', request_id: null, api_refusal_category: 'cyber' },
-    { type: 'result', subtype: 'success', is_error: true, stop_reason: 'refusal', result: 'Claude Code is unable to respond to this request' },
-  ];
 
   it('거절은 LlmRefusalError(범주 포함)로 즉시 throw 하고, API 키 경로로 다시 보내지 않는다', async () => {
     agentMessages = refusalTurn;
@@ -182,12 +188,34 @@ describe('Agent SDK 경로의 오류 턴 (기본 경로)', () => {
   });
 
   it('요약기는 오류 턴의 문구를 요약으로 돌려주지 않고 throw 한다', async () => {
-    agentMessages = refusalTurn;
+    agentMessages = [{ type: 'result', subtype: 'success', is_error: true, stop_reason: null, result: 'API Error: 500 Internal Server Error' }];
     const { summarizeConversation } = await import('../src/summarizer.js');
     await expect(summarizeConversation([1, 2].map((i) => ({
       id: `e${i}`, project: 'p', timestamp: `2026-10-08T00:0${i}:00Z`, archivePath: '/a.jsonl', lineStart: i, lineEnd: i + 1,
+      userMessage: `질문 ${i}`, assistantMessage: `답 ${i}`,
+    })))).rejects.toThrow(/Summary call failed .*API Error: 500/);
+  });
+
+  // 거절은 다음 실행에도 같다. 아무것도 안 쓰면 sync 가 매번 다시 요약하고, 한 번에
+  // summaryLimit 개만 디렉터리 순서로 처리하므로 늘 거절되는 대화가 그 자리를 영구히 차지한다.
+  it('요약기는 거절된 대화에 거절 표식을 돌려준다 (오류 문구가 아니라, 끝없는 재시도도 아니라)', async () => {
+    agentMessages = refusalTurn;
+    const { summarizeConversation, REFUSED_SUMMARY } = await import('../src/summarizer.js');
+    expect(await summarizeConversation([1, 2].map((i) => ({
+      id: `e${i}`, project: 'p', timestamp: `2026-10-08T00:0${i}:00Z`, archivePath: '/a.jsonl', lineStart: i, lineEnd: i + 1,
       userMessage: `JWT 인증을 리프레시 토큰과 함께 구현해 줘 (${i})`, assistantMessage: `토큰 회전을 포함한 인증 컨텍스트를 만들었습니다 (${i})`,
-    })))).rejects.toThrow(/Summary call failed \(refusal\)/);
+    })))).toBe(REFUSED_SUMMARY);
+    expect(queryCalls.length).toBe(1);
+  });
+
+  // result 메시지 없이 끝난 스트림을 '' 로 돌려주면 빈 요약 파일이 쓰이고 다시는 요약되지 않았다.
+  it('요약기는 결과 메시지 없이 끝난 스트림을 빈 요약이 아니라 실패로 throw 한다', async () => {
+    agentMessages = [];
+    const { summarizeConversation } = await import('../src/summarizer.js');
+    await expect(summarizeConversation([1, 2].map((i) => ({
+      id: `e${i}`, project: 'p', timestamp: `2026-10-08T00:0${i}:00Z`, archivePath: '/a.jsonl', lineStart: i, lineEnd: i + 1,
+      userMessage: `질문 ${i}`, assistantMessage: `답 ${i}`,
+    })))).rejects.toThrow(/without a result/);
   });
 });
 
@@ -231,23 +259,44 @@ describe('Agent SDK 거절 신호와 대체 모델 (2차 검토)', () => {
     expect(await callHaiku('sys', 'ping')).toBe('{"ok":true}');
   });
 
-  it('요약기는 is_error 없이 stop_reason 만 refusal 인 턴도 요약으로 쓰지 않는다', async () => {
+  it('요약기는 is_error 없이 stop_reason 만 refusal 인 턴도 그 문구를 요약으로 쓰지 않는다', async () => {
     agentMessages = [{ type: 'result', subtype: 'success', is_error: false, stop_reason: 'refusal', result: 'I cannot help with that' }];
-    const { summarizeConversation } = await import('../src/summarizer.js');
-    await expect(summarizeConversation([1, 2].map((i) => ({
+    const { summarizeConversation, REFUSED_SUMMARY } = await import('../src/summarizer.js');
+    expect(await summarizeConversation([1, 2].map((i) => ({
       id: `e${i}`, project: 'p', timestamp: `2026-10-08T00:0${i}:00Z`, archivePath: '/a.jsonl', lineStart: i, lineEnd: i + 1,
       userMessage: `질문 ${i}`, assistantMessage: `답 ${i}`,
-    })))).rejects.toThrow(/Summary call failed \(refusal\)/);
+    })))).toBe(REFUSED_SUMMARY);
   });
 
-  it('긴 대화의 청크가 전부 실패하면 오류 문구를 요약으로 돌려주지 않고 throw 한다', async () => {
-    agentMessages = [{ type: 'result', subtype: 'success', is_error: true, stop_reason: null, result: 'API Error: 500 Internal Server Error' }];
+  const longConversation = () => Array.from({ length: 24 }, (_, i) => ({
+    id: `e${i}`, project: 'p', timestamp: `2026-10-08T00:${String(i).padStart(2, '0')}:00Z`, archivePath: '/a.jsonl', lineStart: i, lineEnd: i + 1,
+    userMessage: `질문 ${i}`, assistantMessage: `답 ${i}`,
+  })); // 8개씩 3청크
+  const ok = (text: string) => [{ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', result: `<summary>${text}</summary>` }];
+  const fail500 = [{ type: 'result', subtype: 'success', is_error: true, stop_reason: null, result: 'API Error: 500 Internal Server Error' }];
+
+  // 청크 하나가 일시 장애로 실패하면 나머지 청크도 실패할 공산이 크고, 통과한 청크만으로 만든
+  // 요약은 영구히 쓰인다. 중단해 파일을 쓰지 않아야 다음 sync 가 다시 요약한다.
+  it('긴 대화의 청크 호출이 실패하면 남은 청크를 부르지 않고 throw 한다 (부분 요약을 쓰지 않는다)', async () => {
+    agentQueue.push(ok('첫 청크'), fail500, ok('셋째 청크'), ok('합성'));
     const { summarizeConversation } = await import('../src/summarizer.js');
-    const exchanges = Array.from({ length: 16 }, (_, i) => ({
-      id: `e${i}`, project: 'p', timestamp: `2026-10-08T00:${String(i).padStart(2, '0')}:00Z`, archivePath: '/a.jsonl', lineStart: i, lineEnd: i + 1,
-      userMessage: `질문 ${i}`, assistantMessage: `답 ${i}`,
-    }));
-    await expect(summarizeConversation(exchanges)).rejects.toThrow(/all 2 chunks failed/);
+    await expect(summarizeConversation(longConversation())).rejects.toThrow(/API Error: 500/);
+    expect(queryCalls.length).toBe(2);
+  });
+
+  it('긴 대화의 거절된 청크는 건너뛰고 나머지로 요약한다', async () => {
+    agentQueue.push(ok('첫 청크'), refusalTurn, ok('셋째 청크'), ok('합성 결과'));
+    const { summarizeConversation } = await import('../src/summarizer.js');
+    expect(await summarizeConversation(longConversation())).toBe('합성 결과');
+    expect(queryCalls.length).toBe(4);
+    expect(String((queryCalls[3] as unknown as { prompt: string }).prompt)).toContain('1. 첫 청크\n2. 셋째 청크');
+  });
+
+  it('긴 대화의 청크가 전부 거절되면 거절 표식을 돌려준다', async () => {
+    agentMessages = refusalTurn;
+    const { summarizeConversation, REFUSED_SUMMARY } = await import('../src/summarizer.js');
+    expect(await summarizeConversation(longConversation())).toBe(REFUSED_SUMMARY);
+    expect(queryCalls.length).toBe(3);
   });
 });
 

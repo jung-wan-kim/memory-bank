@@ -230,6 +230,12 @@ describe('ontology-classifier', () => {
       await expect(classifyFactToOntology(db, fact)).rejects.toThrow(/unparseable/);
     });
 
+    it('names a refusal as a refusal, not as an unparseable reply (the caller logs this message)', async () => {
+      const { LlmRefusalError } = await import('../src/llm-error-class.js');
+      (callHaiku as ReturnType<typeof vi.fn>).mockRejectedValue(new LlmRefusalError('cyber'));
+      await expect(classifyFactToOntology(db, makeFact())).rejects.toThrow(/refused this fact/);
+    });
+
     it('should assign deterministically (no LLM call) when the gate is OPTED IN and cleared', async () => {
       process.env.MEMORY_BANK_ONTOLOGY_DET_GATE = '0.93';
       try {
@@ -393,9 +399,9 @@ describe('ontology-classifier', () => {
       expect(result.failed).toEqual([]);
     });
 
-    // A refused/rejected call fails the same way next run and the worker picks the
-    // same batch again — held as transient, the batch would stall forever.
-    it('classifies a rejected multi-fact batch one by one, so only the fact at fault fails', async () => {
+    // A refused call is refused again next run and the worker picks the same batch
+    // again — held as transient, the batch would stall forever.
+    it('classifies a refused multi-fact batch one by one, so only the refused fact fails', async () => {
       const { LlmRefusalError } = await import('../src/llm-error-class.js');
       const emb = new Array(384).fill(0.1);
       insertTestFact(db, 'ok-0', 'Use Vitest for unit tests', emb);
@@ -417,6 +423,45 @@ describe('ontology-classifier', () => {
       expect(result.classified).toEqual(['ok-0']);
       expect(result.transient).toEqual([]);
       expect(callHaiku).toHaveBeenCalledTimes(3); // 묶음 1회 + 하나씩 2회
+      // The single-fact results reach the caller (classifyFactToOntology reads them).
+      expect(result.assignments.get('ok-0')?.categoryId).toBeTruthy();
+      expect(result.assignments.has('bad-0')).toBe(false);
+      expect(result.refused).toEqual(['bad-0']);
+    });
+
+    it('stops splitting at the first failed call and defers the rest (no call per fact during an outage)', async () => {
+      const { LlmRefusalError } = await import('../src/llm-error-class.js');
+      const emb = new Array(384).fill(0.1);
+      for (const id of ['s-0', 's-1', 's-2']) insertTestFact(db, id, `Fact ${id}`, emb);
+
+      let calls = 0;
+      (callHaiku as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+        calls++;
+        if (calls === 1) throw new LlmRefusalError('cyber');
+        throw new Error('spawn ETIMEDOUT');
+      });
+
+      const result = await classifyFactsBatch(db, ['s-0', 's-1', 's-2'].map((id) => makeFact({ id, fact: `Fact ${id}` })));
+      expect(result.transient).toEqual(['s-0', 's-1', 's-2']);
+      expect(result.failed).toEqual([]);
+      expect(callHaiku).toHaveBeenCalledTimes(2); // 묶음 1회 + 첫 단건 1회에서 멈춤
+    });
+
+    // A 400 every request gets (exhausted credit) says nothing about these facts:
+    // burning attempts would park the whole queue in General/Misc, and splitting
+    // would multiply the calls.
+    it('holds a non-refusal 400 as transient: no split, no attempt burned', async () => {
+      const emb = new Array(384).fill(0.1);
+      for (const id of ['c-0', 'c-1']) insertTestFact(db, id, `Fact ${id}`, emb);
+
+      (callHaiku as ReturnType<typeof vi.fn>).mockRejectedValue(
+        Object.assign(new Error('Your credit balance is too low'), { status: 400 }),
+      );
+
+      const result = await classifyFactsBatch(db, ['c-0', 'c-1'].map((id) => makeFact({ id, fact: `Fact ${id}` })));
+      expect(result.transient).toEqual(['c-0', 'c-1']);
+      expect(result.failed).toEqual([]);
+      expect(callHaiku).toHaveBeenCalledTimes(1);
     });
 
     it('counts a refused call against the facts (failed, not transient)', async () => {

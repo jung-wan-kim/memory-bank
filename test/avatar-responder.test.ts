@@ -167,7 +167,32 @@ describe('avatar-responder', () => {
     const result = await askAvatar(db, 'question');
     expect(result.answer).toContain('거절');
     expect(result.answer).not.toContain('잠시 후 다시 시도');
+    expect(result.answer).not.toContain('재시도 후에도'); // callHaiku does not retry a refusal
     expect(result.confidence).toBe(0);
+  });
+
+  it('says a deterministic rejection will fail the same way, without claiming retries', async () => {
+    const emb = new Array(384).fill(0.1);
+    insertTestFact(db, 'fact-d', 'Some fact', emb);
+
+    (callHaiku as ReturnType<typeof vi.fn>).mockRejectedValue(Object.assign(new Error('prompt is too long'), { status: 413 }));
+
+    const result = await askAvatar(db, 'question');
+    expect(result.answer).toContain('(deterministic)');
+    expect(result.answer).toContain('다시 시도해도 같은 이유로 실패');
+    expect(result.answer).not.toContain('재시도 후에도');
+    expect(result.answer).not.toContain('잠시 후 다시 시도');
+  });
+
+  it('tells the user to try again later after a transient failure that outlasted the retries', async () => {
+    const emb = new Array(384).fill(0.1);
+    insertTestFact(db, 'fact-t', 'Some fact', emb);
+
+    (callHaiku as ReturnType<typeof vi.fn>).mockRejectedValue(Object.assign(new Error('overloaded'), { status: 529 }));
+
+    const result = await askAvatar(db, 'question');
+    expect(result.answer).toContain('재시도 후에도');
+    expect(result.answer).toContain('잠시 후 다시 시도');
   });
 
   it('should fallback to raw response when JSON parse fails', async () => {

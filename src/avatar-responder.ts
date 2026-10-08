@@ -130,13 +130,15 @@ export async function askAvatar(
     const cls = classifyLlmError(error);
     // A refusal or a rejected request is not retried and fails the same way
     // again — "try again later" would be wrong advice for it.
+    const retriable = cls !== 'deterministic';
     const advice = error instanceof LlmRefusalError
-      ? '모델이 이 질문에 답하기를 거절했습니다. 같은 질문은 다시 해도 같은 결과일 가능성이 큽니다.'
-      : cls === 'deterministic'
-        ? '이 요청은 다시 시도해도 같은 이유로 실패합니다. 질문을 줄이거나 바꿔 주세요.'
-        : '잠시 후 다시 시도해 주세요.';
+      ? '모델이 이 요청에 답하기를 거절했습니다. 같은 질문은 다시 해도 같은 결과일 가능성이 큽니다.'
+      : retriable
+        ? '잠시 후 다시 시도해 주세요.'
+        : '이 요청은 다시 시도해도 같은 이유로 실패합니다.';
+    // Only retriable failures were retried (callHaiku throws the rest at once).
     return {
-      answer: `⚠️ LLM 호출이 재시도 후에도 실패해 답변을 생성하지 못했습니다 (${cls}). ${advice}`,
+      answer: `⚠️ LLM 호출이 ${retriable ? '재시도 후에도 ' : ''}실패해 답변을 생성하지 못했습니다 (${cls}). ${advice}`,
       sources: [],
       confidence: 0,
       relatedDecisions,

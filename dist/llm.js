@@ -226,12 +226,12 @@ async function callOnce(systemPrompt, userMessage, maxTokens) {
         }
         const textBlock = response.content.find((b) => b.type === 'text');
         const text = textBlock?.text || '';
-        // The cap ran out before any answer text: a thinking model under an
-        // answer-sized cap. That is a setting to fix, not this request's fault, so
-        // it stays an empty (transient) response — the batch is deferred and comes
-        // back once the cap or model is fixed, instead of being dropped for good.
-        if (!text && response.stop_reason === 'max_tokens') {
-            console.error(`callHaiku: ${model} hit max_tokens (${maxTokens}) before any text`);
+        // The cap ran out: a thinking model under an answer-sized cap. That is a
+        // setting to fix, not this request's fault, so an empty answer stays an
+        // empty (transient) response — deferred, not dropped for good. Logged either
+        // way, since a cut-off answer usually fails to parse.
+        if (response.stop_reason === 'max_tokens') {
+            console.error(`callHaiku: ${model} hit max_tokens (${maxTokens}) — ${text ? 'answer cut off' : 'no answer text'}`);
         }
         return text;
     }

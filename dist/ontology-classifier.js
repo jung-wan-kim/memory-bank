@@ -1,6 +1,6 @@
 import { l2DistanceToSimilarity } from './db.js';
 import { callHaiku, parseJsonResponse } from './llm.js';
-import { classifyLlmError } from './llm-error-class.js';
+import { LlmRefusalError } from './llm-error-class.js';
 import { generateEmbedding } from './embeddings.js';
 import { searchSimilarFacts } from './fact-db.js';
 import { ontologyNameRejectReason } from './fact-validity.js';
@@ -457,10 +457,12 @@ export async function classifyFactToOntology(db, fact) {
     if (result.transient.includes(fact.id)) {
         throw new TransientLlmError('ontology classify: LLM call failed');
     }
-    // Unparseable/unusable output is a FAILED attempt, not a silent fallback:
-    // the pre-2026-07 behaviour returned fallback ids WITHOUT persisting them,
-    // leaving the fact NULL forever. Callers count the attempt and park at
-    // MAX_CLASSIFY_ATTEMPTS.
+    // Unparseable/unusable output or a refusal is a FAILED attempt, not a silent
+    // fallback: the pre-2026-07 behaviour returned fallback ids WITHOUT persisting
+    // them, leaving the fact NULL forever. Callers count the attempt and park at
+    // MAX_CLASSIFY_ATTEMPTS. The message names which, since callers log it.
+    if (result.refused?.includes(fact.id))
+        throw new Error('ontology classify: the model refused this fact');
     throw new Error('ontology classify: unparseable LLM response');
 }
 /**
@@ -474,10 +476,9 @@ export async function classifyFactToOntology(db, fact) {
  * - `failed`    — the LLM RESPONDED but produced no usable item for the fact
  *                 (unparseable array, missing/duplicate/out-of-range index).
  *                 These are content failures: the caller counts an attempt.
- *                 A call the model refuses or rejects (refusal, 400/413) counts
- *                 here too: the same batch fails the same way next run. A
- *                 rejected multi-fact batch is retried fact by fact first, so
- *                 only the fact at fault takes the attempt.
+ *                 A refused call counts here too (the same batch is refused
+ *                 again next run); a refused multi-fact batch is retried fact
+ *                 by fact first, so only the refused fact takes the attempt.
  * - `transient` — the CALL itself failed (SDK/network/spawn). The fact is not
  *                 the problem, so NO attempt is burned — burning attempts on
  *                 infrastructure downtime would park innocent facts in
@@ -553,32 +554,39 @@ export async function classifyFactsBatch(db, facts) {
         response = await callHaiku(BATCH_CLASSIFY_SYSTEM_PROMPT, JSON.stringify(payload), 256 * remaining.length + 512);
     }
     catch (error) {
-        // A request the model refuses or rejects (refusal, 400/413) fails the same
-        // way next run, and the worker picks the same batch again: held as
-        // transient it would stall these facts forever. Count it against them
-        // instead — they park after MAX_CLASSIFY_ATTEMPTS, as unusable replies do.
-        if (classifyLlmError(error) === 'deterministic') {
-            if (remaining.length > 1) {
-                // One fact can make the model refuse the whole batch, and the worker
-                // picks the same batch again — every fact in it would park in
-                // General/Misc. Classify each alone so only the one at fault fails.
-                console.error(`Batch classification call rejected (deterministic) — classifying ${remaining.length} facts one by one:`, error);
-                const failed = [...preFailed];
-                const transient = [...preTransient];
-                const classified = [];
-                for (const fact of remaining) {
-                    const one = await classifyFactsBatch(db, [fact]);
-                    classified.push(...one.classified);
-                    deterministic.push(...one.deterministic);
-                    failed.push(...one.failed);
-                    transient.push(...one.transient);
-                    for (const [id, a] of one.assignments)
-                        assignments.set(id, a);
-                }
-                return { classified, deterministic, failed, transient, assignments };
+        // A refusal is about content and comes back the same next run, when the
+        // worker picks the same batch again — held as transient it would stall these
+        // facts forever. One fact can make the model refuse the whole batch, so
+        // classify each alone: only the refused fact takes the attempt (it parks
+        // after MAX_CLASSIFY_ATTEMPTS). Any other failure, including a 400 that
+        // every request gets (an exhausted credit), says nothing about the facts
+        // and burns no attempt — splitting it would only multiply the calls.
+        if (error instanceof LlmRefusalError) {
+            if (remaining.length === 1) {
+                console.error(`Batch classification refused (attempt burned):`, error);
+                return { classified: [], deterministic, failed: [...preFailed, remaining[0].id], transient: preTransient, assignments, refused: [remaining[0].id] };
             }
-            console.error(`Batch classification call rejected (deterministic, attempt burned):`, error);
-            return { classified: [], deterministic, failed: [...preFailed, ...remaining.map((f) => f.id)], transient: preTransient, assignments };
+            console.error(`Batch classification refused — classifying ${remaining.length} facts one by one:`, error);
+            const failed = [...preFailed];
+            const transient = [...preTransient];
+            const classified = [];
+            const refused = [];
+            for (let i = 0; i < remaining.length; i++) {
+                const one = await classifyFactsBatch(db, [remaining[i]]);
+                classified.push(...one.classified);
+                refused.push(...(one.refused ?? []));
+                deterministic.push(...one.deterministic);
+                failed.push(...one.failed);
+                transient.push(...one.transient);
+                for (const [id, a] of one.assignments)
+                    assignments.set(id, a);
+                if (one.transient.length > 0) {
+                    // The call itself failed: the rest would only spend calls. Next run.
+                    transient.push(...remaining.slice(i + 1).map((f) => f.id));
+                    break;
+                }
+            }
+            return { classified, deterministic, failed, transient, assignments, refused };
         }
         console.error(`Batch classification call failed (transient, no attempt burned):`, error);
         return { classified: [], deterministic, failed: preFailed, transient: [...preTransient, ...remaining.map((f) => f.id)], assignments };

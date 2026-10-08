@@ -47,7 +47,10 @@ afterEach(() => {
 });
 
 describe('repairIndex with a failing summary', () => {
-  it('re-indexes the outdated file and keeps the old summary instead of an error text', async () => {
+  // The old summary was kept at first (2026-10-08 round 2), but then it never got
+  // redone: the file exists, so sync skips it, and the exchanges are indexed as
+  // current. Removed, the next sync writes a fresh one.
+  it('re-indexes the outdated file and removes the stale summary so sync redoes it', async () => {
     const { initDatabase, insertExchange } = await import('../src/db.js');
     const { verifyIndex, repairIndex } = await import('../src/verify.js');
 
@@ -85,6 +88,6 @@ describe('repairIndex with a failing summary', () => {
     } finally {
       dbAfter.close();
     }
-    expect(fs.readFileSync(summaryPath, 'utf-8')).toBe('Old summary');
+    expect(fs.existsSync(summaryPath)).toBe(false);
   });
 });

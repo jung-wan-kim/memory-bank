@@ -77,10 +77,9 @@ export declare function classifyFactToOntology(db: Database.Database, fact: Fact
  * - `failed`    — the LLM RESPONDED but produced no usable item for the fact
  *                 (unparseable array, missing/duplicate/out-of-range index).
  *                 These are content failures: the caller counts an attempt.
- *                 A call the model refuses or rejects (refusal, 400/413) counts
- *                 here too: the same batch fails the same way next run. A
- *                 rejected multi-fact batch is retried fact by fact first, so
- *                 only the fact at fault takes the attempt.
+ *                 A refused call counts here too (the same batch is refused
+ *                 again next run); a refused multi-fact batch is retried fact
+ *                 by fact first, so only the refused fact takes the attempt.
  * - `transient` — the CALL itself failed (SDK/network/spawn). The fact is not
  *                 the problem, so NO attempt is burned — burning attempts on
  *                 infrastructure downtime would park innocent facts in
@@ -98,6 +97,8 @@ export declare function classifyFactsBatch(db: Database.Database, facts: Fact[])
         domainId: string;
         categoryId: string;
     }>;
+    /** The subset of `failed` the model refused (vs an unusable reply), for the log. */
+    refused?: string[];
 }>;
 /**
  * Backfill-facing wrapper: load facts by id, classify them in sub-batches,

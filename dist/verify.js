@@ -121,8 +121,10 @@ export async function repairIndex(issues) {
                 continue;
             }
             // Generate/update summary
-            // A failed summary must not block re-indexing the exchanges; the next
-            // sync summarizes the file again (no summary file is written).
+            // A failed summary must not block re-indexing the exchanges. The stale
+            // summary is removed: kept, it would never be redone (the file exists and
+            // is indexed as current again), while a missing one is written by the
+            // next sync.
             const summaryPath = conversationPath.replace('.jsonl', '-summary.txt');
             try {
                 const summary = await summarizeConversation(exchanges);
@@ -130,7 +132,8 @@ export async function repairIndex(issues) {
                 console.log(`  Created summary: ${summary.split(/\s+/).length} words`);
             }
             catch (error) {
-                console.error(`  Summary failed (re-indexing continues): ${error instanceof Error ? error.message : String(error)}`);
+                fs.rmSync(summaryPath, { force: true });
+                console.error(`  Summary failed (re-indexing continues; next sync rewrites it): ${error instanceof Error ? error.message : String(error)}`);
             }
             // Index exchanges
             for (const exchange of exchanges) {
