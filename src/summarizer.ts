@@ -96,6 +96,13 @@ async function callClaudeOnce(prompt: string, sessionId?: string, useFallback = 
         return result;
       }
 
+      // Any other error turn (API error, refusal) carries its error text in
+      // `result`; returned, it would be written out as the summary. Callers
+      // catch the throw and retry the file on a later run.
+      if (message.is_error || message.stop_reason === 'refusal') {
+        throw new Error(`Summary call failed (${message.stop_reason ?? message.subtype}): ${typeof result === 'string' ? result.slice(0, 300) : ''}`);
+      }
+
       return result;
     }
   }

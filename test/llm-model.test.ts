@@ -14,6 +14,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 const queryCalls: Array<{ options: Record<string, unknown> }> = [];
 let agentThrows: unknown = null;
+/** Messages the mocked Agent SDK stream emits; null → one plain success result. */
+let agentMessages: Array<Record<string, unknown>> | null = null;
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: (args: { options: Record<string, unknown> }) => {
@@ -21,7 +23,9 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
     return {
       async *[Symbol.asyncIterator]() {
         if (agentThrows) throw agentThrows;
-        yield { type: 'result', result: 'agent-ok' } as never;
+        for (const m of agentMessages ?? [{ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', result: 'agent-ok' }]) {
+          yield m as never;
+        }
       },
     };
   },
@@ -45,9 +49,11 @@ beforeEach(() => {
   queryCalls.length = 0;
   createCalls.length = 0;
   agentThrows = null;
+  agentMessages = null;
   apiResponse = {};
   process.env.MEMORY_BANK_LLM_RETRY_BASE_MS = '0';
   delete process.env.MEMORY_BANK_FACT_MODEL;
+  delete process.env.MEMORY_BANK_API_MODEL; // the summarizer's override — a value left in the shell would mask its default
   delete process.env.ANTHROPIC_API_KEY;
   delete process.env.MEMORY_BANK_API_TOKEN;
 });
@@ -132,5 +138,69 @@ describe('API 키 경로 (Haiku 5.5)', () => {
     expect((err as InstanceType<typeof LlmRefusalError>).category).toBe('cyber');
     expect(classifyLlmError(err)).toBe('deterministic');
     expect(createCalls.length).toBe(1); // 재시도 없음 — 같은 입력은 다시 거절된다
+  });
+});
+
+describe('Agent SDK 경로의 오류 턴 (기본 경로)', () => {
+  // SDK 문서: subtype 'success' 라도 is_error 면 result 에 답이 아니라 오류 문구가 들어 있다.
+  // 예전엔 그 문구를 답으로 돌려줘 호출자가 JSON 없음 → 배치를 조용히 비웠다.
+  const refusalTurn = [
+    { type: 'system', subtype: 'model_refusal_no_fallback', original_model: 'claude-haiku-5-5', request_id: null, api_refusal_category: 'cyber' },
+    { type: 'result', subtype: 'success', is_error: true, stop_reason: 'refusal', result: 'Claude Code is unable to respond to this request' },
+  ];
+
+  it('거절은 LlmRefusalError(범주 포함)로 즉시 throw 하고, API 키 경로로 다시 보내지 않는다', async () => {
+    agentMessages = refusalTurn;
+    process.env.ANTHROPIC_API_KEY = 'test-key';
+    process.env.MEMORY_BANK_LLM_RETRIES = '3';
+    const { callHaiku } = await import('../src/llm.js');
+    const { LlmRefusalError, classifyLlmError } = await import('../src/llm-error-class.js');
+    const err = await callHaiku('sys', 'ping').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LlmRefusalError);
+    expect((err as InstanceType<typeof LlmRefusalError>).category).toBe('cyber');
+    expect(classifyLlmError(err)).toBe('deterministic');
+    expect(queryCalls.length).toBe(1);
+    expect(createCalls.length).toBe(0);
+  });
+
+  it('API 오류로 끝난 턴은 오류 문구로 throw 해 분류기가 읽는다 (500 → transient, 재시도)', async () => {
+    agentMessages = [{ type: 'result', subtype: 'success', is_error: true, stop_reason: null, result: 'API Error: 500 Internal Server Error' }];
+    process.env.MEMORY_BANK_LLM_RETRIES = '1';
+    const { callHaiku } = await import('../src/llm.js');
+    const { classifyLlmError } = await import('../src/llm-error-class.js');
+    const err = await callHaiku('sys', 'ping').catch((e: unknown) => e);
+    expect((err as Error).message).toMatch(/API Error: 500/);
+    expect(classifyLlmError(err)).toBe('transient');
+    expect(queryCalls.length).toBe(2); // 1 + 재시도 1
+  });
+
+  it('오류 subtype 으로 끝난 턴도 throw 한다', async () => {
+    agentMessages = [{ type: 'result', subtype: 'error_during_execution', is_error: true, stop_reason: null, errors: ['spawn failed'] }];
+    process.env.MEMORY_BANK_LLM_RETRIES = '0';
+    const { callHaiku } = await import('../src/llm.js');
+    await expect(callHaiku('sys', 'ping')).rejects.toThrow(/error_during_execution: spawn failed/);
+  });
+
+  it('요약기는 오류 턴의 문구를 요약으로 돌려주지 않고 throw 한다', async () => {
+    agentMessages = refusalTurn;
+    const { summarizeConversation } = await import('../src/summarizer.js');
+    await expect(summarizeConversation([1, 2].map((i) => ({
+      id: `e${i}`, project: 'p', timestamp: `2026-10-08T00:0${i}:00Z`, archivePath: '/a.jsonl', lineStart: i, lineEnd: i + 1,
+      userMessage: `JWT 인증을 리프레시 토큰과 함께 구현해 줘 (${i})`, assistantMessage: `토큰 회전을 포함한 인증 컨텍스트를 만들었습니다 (${i})`,
+    })))).rejects.toThrow(/Summary call failed \(refusal\)/);
+  });
+});
+
+describe('API 키 경로의 max_tokens 소진', () => {
+  it('본문 없이 max_tokens 로 끝나면 deterministic 으로 throw 한다 (빈 응답으로 무한 재시도하지 않는다)', async () => {
+    useApiPath();
+    process.env.MEMORY_BANK_LLM_RETRIES = '3';
+    apiResponse = { stop_reason: 'max_tokens', content: [{ type: 'thinking', thinking: '', signature: 's' }] };
+    const { callHaiku } = await import('../src/llm.js');
+    const { classifyLlmError } = await import('../src/llm-error-class.js');
+    const err = await callHaiku('sys', 'ping', 256).catch((e: unknown) => e);
+    expect((err as Error).message).toMatch(/max_tokens \(256\)/);
+    expect(classifyLlmError(err)).toBe('deterministic');
+    expect(createCalls.length).toBe(1);
   });
 });

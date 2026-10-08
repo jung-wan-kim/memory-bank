@@ -1,4 +1,4 @@
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { query, type SDKResultMessage } from '@anthropic-ai/claude-agent-sdk';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -159,6 +159,12 @@ const sleep = (ms: number) => (ms > 0 ? new Promise((r) => setTimeout(r, ms)) : 
 async function callOnce(systemPrompt: string, userMessage: string, maxTokens: number): Promise<string> {
   const model = process.env.MEMORY_BANK_FACT_MODEL || DEFAULT_LLM_MODEL;
 
+  // The result is judged after the try: a refusal or an error turn thrown inside
+  // it would land in the API-key fallback below and re-send a request that
+  // already failed on the same model.
+  let result: SDKResultMessage | null = null;
+  let refusalCategory: string | null = null;
+
   // Try Claude Agent SDK first (works inside Claude Code without API key)
   try {
     for await (const message of query({
@@ -176,12 +182,16 @@ async function callOnce(systemPrompt: string, userMessage: string, maxTokens: nu
         cwd: llmWorkdir(),
       } as any,
     })) {
-      if (message && typeof message === 'object' && 'type' in message && (message as any).type === 'result') {
-        return (message as any).result || '';
+      if (message.type === 'system' && message.subtype === 'model_refusal_no_fallback') {
+        refusalCategory = message.api_refusal_category ?? null;
+      } else if (message.type === 'system' && message.subtype === 'model_refusal_fallback') {
+        // The answer that follows came from another model, not the one asked for.
+        console.error(`callHaiku: ${message.original_model} refused; answered by ${message.fallback_model}`);
+      } else if (message.type === 'result') {
+        result = message;
+        break;
       }
     }
-    // 스트림이 result 메시지 없이 끝남 — 호출 실패이지 "빈 답변"이 아니다.
-    return '';
   } catch (agentSdkError) {
     noteSdkFailure(agentSdkError, 'memory-bank llm');
     // Fallback to direct Anthropic SDK if agent SDK fails (standalone mode)
@@ -212,8 +222,34 @@ async function callOnce(systemPrompt: string, userMessage: string, maxTokens: nu
       throw new LlmRefusalError(response.stop_details?.category ?? null);
     }
     const textBlock = response.content.find((b: any) => b.type === 'text');
-    return (textBlock as any)?.text || '';
+    const text = (textBlock as any)?.text || '';
+    // The cap ran out before any answer text — the same request hits it again,
+    // so it must not read as an empty (transient) response.
+    if (!text && response.stop_reason === 'max_tokens') {
+      throw new Error(`LLM hit max_tokens (${maxTokens}) before any text`);
+    }
+    return text;
   }
+
+  // 스트림이 result 메시지 없이 끝남 — 호출 실패이지 "빈 답변"이 아니다.
+  if (!result) return '';
+  return agentResultText(result, refusalCategory);
+}
+
+/**
+ * Text of a finished Agent SDK turn. A turn that ended on an API error still
+ * arrives as subtype 'success' with is_error and the error text in `result`;
+ * returning that text made callers parse an error message as the answer (no
+ * JSON → batch silently empty). Throw instead, so classifyLlmError can read it
+ * ("API Error: 500 …" → transient, "… 400 …" → deterministic).
+ */
+function agentResultText(result: SDKResultMessage, refusalCategory: string | null): string {
+  if (result.stop_reason === 'refusal') throw new LlmRefusalError(refusalCategory);
+  if ('errors' in result) {
+    throw new Error(`Agent SDK turn ended with ${result.subtype}: ${result.errors.join('; ')}`);
+  }
+  if (result.is_error) throw new Error(result.result || 'Agent SDK turn ended with an error');
+  return result.result || '';
 }
 
 /**
@@ -266,7 +302,24 @@ export async function callHaiku(
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
-export function parseJsonResponse<T>(text: string): T | null {
+/**
+ * Parse the JSON in an LLM reply. `expect: 'array'` is for callers that need a
+ * list (fact extraction, batch classification): a reply that wraps the list in
+ * an object ({"facts": [...]}) yields that list when it is the object's only
+ * array — the old array-first regex unwrapped this by accident.
+ */
+export function parseJsonResponse<T>(text: string, expect?: 'array'): T | null {
+  const value = parseJsonValue(text);
+  if (expect !== 'array' || value === null || Array.isArray(value) || typeof value !== 'object') {
+    return value as T | null;
+  }
+  const arrays = Object.values(value as Record<string, unknown>).filter(Array.isArray);
+  if (arrays.length === 1) return arrays[0] as T;
+  console.error(`parseJsonResponse: expected a JSON array, got an object with ${arrays.length} array fields:`, text.substring(0, 200));
+  return value as T;
+}
+
+function parseJsonValue(text: string): unknown {
   // The whole reply first: Haiku 5.5 answers with bare JSON, no fence. The
   // fallbacks below search inside text, and a bare object whose string values
   // hold brackets ("[ ] checklist item") used to come back as the inner "[ ]"
@@ -274,7 +327,7 @@ export function parseJsonResponse<T>(text: string): T | null {
   const whole = text.trim();
   if (whole.startsWith('{') || whole.startsWith('[')) {
     try {
-      return JSON.parse(whole) as T;
+      return JSON.parse(whole);
     } catch {
       /* not one JSON value — fall through to extraction */
     }
@@ -295,7 +348,7 @@ export function parseJsonResponse<T>(text: string): T | null {
   let firstError: Error | null = null;
   for (const match of candidates) {
     try {
-      return JSON.parse(match[1]) as T;
+      return JSON.parse(match[1]);
     } catch (e) {
       firstError ??= e as Error;
     }

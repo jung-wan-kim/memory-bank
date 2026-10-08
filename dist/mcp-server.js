@@ -55033,6 +55033,8 @@ function backoffMs(attempt) {
 var sleep2 = (ms) => ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve();
 async function callOnce(systemPrompt, userMessage, maxTokens) {
   const model = process.env.MEMORY_BANK_FACT_MODEL || DEFAULT_LLM_MODEL;
+  let result = null;
+  let refusalCategory = null;
   try {
     for await (const message of query({
       prompt: `${systemPrompt}
@@ -55051,11 +55053,15 @@ ${userMessage}`,
         cwd: llmWorkdir()
       }
     })) {
-      if (message && typeof message === "object" && "type" in message && message.type === "result") {
-        return message.result || "";
+      if (message.type === "system" && message.subtype === "model_refusal_no_fallback") {
+        refusalCategory = message.api_refusal_category ?? null;
+      } else if (message.type === "system" && message.subtype === "model_refusal_fallback") {
+        console.error(`callHaiku: ${message.original_model} refused; answered by ${message.fallback_model}`);
+      } else if (message.type === "result") {
+        result = message;
+        break;
       }
     }
-    return "";
   } catch (agentSdkError) {
     noteSdkFailure(agentSdkError, "memory-bank llm");
     const apiKey = process.env.ANTHROPIC_API_KEY || process.env.MEMORY_BANK_API_TOKEN;
@@ -55080,8 +55086,22 @@ ${userMessage}`,
       throw new LlmRefusalError(response.stop_details?.category ?? null);
     }
     const textBlock = response.content.find((b2) => b2.type === "text");
-    return textBlock?.text || "";
+    const text = textBlock?.text || "";
+    if (!text && response.stop_reason === "max_tokens") {
+      throw new Error(`LLM hit max_tokens (${maxTokens}) before any text`);
+    }
+    return text;
   }
+  if (!result) return "";
+  return agentResultText(result, refusalCategory);
+}
+function agentResultText(result, refusalCategory) {
+  if (result.stop_reason === "refusal") throw new LlmRefusalError(refusalCategory);
+  if ("errors" in result) {
+    throw new Error(`Agent SDK turn ended with ${result.subtype}: ${result.errors.join("; ")}`);
+  }
+  if (result.is_error) throw new Error(result.result || "Agent SDK turn ended with an error");
+  return result.result || "";
 }
 async function callHaiku(systemPrompt, userMessage, maxTokens = 2048) {
   const retries = retryBudget();
@@ -55106,7 +55126,17 @@ async function callHaiku(systemPrompt, userMessage, maxTokens = 2048) {
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
-function parseJsonResponse(text) {
+function parseJsonResponse(text, expect) {
+  const value = parseJsonValue(text);
+  if (expect !== "array" || value === null || Array.isArray(value) || typeof value !== "object") {
+    return value;
+  }
+  const arrays = Object.values(value).filter(Array.isArray);
+  if (arrays.length === 1) return arrays[0];
+  console.error(`parseJsonResponse: expected a JSON array, got an object with ${arrays.length} array fields:`, text.substring(0, 200));
+  return value;
+}
+function parseJsonValue(text) {
   const whole = text.trim();
   if (whole.startsWith("{") || whole.startsWith("[")) {
     try {

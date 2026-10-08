@@ -186,7 +186,7 @@ renewLease) {
         renewLease?.(); // 배치 직전 갱신 — LLM 왕복이 리스를 넘겨도 회수되지 않는다
         try {
             const response = await callHaiku(EXTRACTION_SYSTEM_PROMPT, prompt);
-            const extracted = parseJsonResponse(response);
+            const extracted = parseJsonResponse(response, 'array');
             if (extracted && Array.isArray(extracted)) {
                 let rejected = 0;
                 for (const fact of extracted) {

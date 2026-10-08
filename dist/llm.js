@@ -160,6 +160,11 @@ const sleep = (ms) => (ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.
 /** 단발 호출 — Agent SDK 우선, 실패 시(그리고 키가 있을 때만) Anthropic SDK 폴백. */
 async function callOnce(systemPrompt, userMessage, maxTokens) {
     const model = process.env.MEMORY_BANK_FACT_MODEL || DEFAULT_LLM_MODEL;
+    // The result is judged after the try: a refusal or an error turn thrown inside
+    // it would land in the API-key fallback below and re-send a request that
+    // already failed on the same model.
+    let result = null;
+    let refusalCategory = null;
     // Try Claude Agent SDK first (works inside Claude Code without API key)
     try {
         for await (const message of query({
@@ -177,12 +182,18 @@ async function callOnce(systemPrompt, userMessage, maxTokens) {
                 cwd: llmWorkdir(),
             },
         })) {
-            if (message && typeof message === 'object' && 'type' in message && message.type === 'result') {
-                return message.result || '';
+            if (message.type === 'system' && message.subtype === 'model_refusal_no_fallback') {
+                refusalCategory = message.api_refusal_category ?? null;
+            }
+            else if (message.type === 'system' && message.subtype === 'model_refusal_fallback') {
+                // The answer that follows came from another model, not the one asked for.
+                console.error(`callHaiku: ${message.original_model} refused; answered by ${message.fallback_model}`);
+            }
+            else if (message.type === 'result') {
+                result = message;
+                break;
             }
         }
-        // 스트림이 result 메시지 없이 끝남 — 호출 실패이지 "빈 답변"이 아니다.
-        return '';
     }
     catch (agentSdkError) {
         noteSdkFailure(agentSdkError, 'memory-bank llm');
@@ -211,8 +222,35 @@ async function callOnce(systemPrompt, userMessage, maxTokens) {
             throw new LlmRefusalError(response.stop_details?.category ?? null);
         }
         const textBlock = response.content.find((b) => b.type === 'text');
-        return textBlock?.text || '';
+        const text = textBlock?.text || '';
+        // The cap ran out before any answer text — the same request hits it again,
+        // so it must not read as an empty (transient) response.
+        if (!text && response.stop_reason === 'max_tokens') {
+            throw new Error(`LLM hit max_tokens (${maxTokens}) before any text`);
+        }
+        return text;
     }
+    // 스트림이 result 메시지 없이 끝남 — 호출 실패이지 "빈 답변"이 아니다.
+    if (!result)
+        return '';
+    return agentResultText(result, refusalCategory);
+}
+/**
+ * Text of a finished Agent SDK turn. A turn that ended on an API error still
+ * arrives as subtype 'success' with is_error and the error text in `result`;
+ * returning that text made callers parse an error message as the answer (no
+ * JSON → batch silently empty). Throw instead, so classifyLlmError can read it
+ * ("API Error: 500 …" → transient, "… 400 …" → deterministic).
+ */
+function agentResultText(result, refusalCategory) {
+    if (result.stop_reason === 'refusal')
+        throw new LlmRefusalError(refusalCategory);
+    if ('errors' in result) {
+        throw new Error(`Agent SDK turn ended with ${result.subtype}: ${result.errors.join('; ')}`);
+    }
+    if (result.is_error)
+        throw new Error(result.result || 'Agent SDK turn ended with an error');
+    return result.result || '';
 }
 /**
  * Call Haiku via Claude Agent SDK (no API key needed inside Claude Code —
@@ -257,7 +295,24 @@ export async function callHaiku(systemPrompt, userMessage, maxTokens = 2048) {
     }
     throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
-export function parseJsonResponse(text) {
+/**
+ * Parse the JSON in an LLM reply. `expect: 'array'` is for callers that need a
+ * list (fact extraction, batch classification): a reply that wraps the list in
+ * an object ({"facts": [...]}) yields that list when it is the object's only
+ * array — the old array-first regex unwrapped this by accident.
+ */
+export function parseJsonResponse(text, expect) {
+    const value = parseJsonValue(text);
+    if (expect !== 'array' || value === null || Array.isArray(value) || typeof value !== 'object') {
+        return value;
+    }
+    const arrays = Object.values(value).filter(Array.isArray);
+    if (arrays.length === 1)
+        return arrays[0];
+    console.error(`parseJsonResponse: expected a JSON array, got an object with ${arrays.length} array fields:`, text.substring(0, 200));
+    return value;
+}
+function parseJsonValue(text) {
     // The whole reply first: Haiku 5.5 answers with bare JSON, no fence. The
     // fallbacks below search inside text, and a bare object whose string values
     // hold brackets ("[ ] checklist item") used to come back as the inner "[ ]"

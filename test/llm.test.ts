@@ -86,6 +86,23 @@ describe('LLM Module', () => {
       expect(parseJsonResponse<any[]>(text)).toEqual([{ fact: 'x' }]);
     });
 
+    // Callers that need a list: a reply wrapping it in an object must still yield
+    // the list (the old array-first regex did this; the whole-reply parse returns
+    // the object). Fact extraction would otherwise drop the batch without a word.
+    it("expect: 'array' unwraps a list wrapped in an object", () => {
+      const text = '{"facts": [{"fact": "User uses Riverpod", "category": "decision"}]}';
+      expect(parseJsonResponse<any[]>(text, 'array')).toEqual([{ fact: 'User uses Riverpod', category: 'decision' }]);
+    });
+
+    it("expect: 'array' leaves an object with several arrays as it is", () => {
+      const text = '{"a": [1], "b": [2]}';
+      expect(parseJsonResponse<any>(text, 'array')).toEqual({ a: [1], b: [2] });
+    });
+
+    it('without expect, a wrapped list stays an object', () => {
+      expect(parseJsonResponse<any>('{"facts": [1]}')).toEqual({ facts: [1] });
+    });
+
     it('should parse pure object when no array present', () => {
       const text = '{"key": "value", "nested": {"n": 1}}';
       const result = parseJsonResponse<any>(text);

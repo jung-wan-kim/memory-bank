@@ -1,5 +1,6 @@
 import { l2DistanceToSimilarity } from './db.js';
 import { callHaiku, parseJsonResponse } from './llm.js';
+import { classifyLlmError } from './llm-error-class.js';
 import { generateEmbedding } from './embeddings.js';
 import { searchSimilarFacts } from './fact-db.js';
 import { ontologyNameRejectReason } from './fact-validity.js';
@@ -473,6 +474,8 @@ export async function classifyFactToOntology(db, fact) {
  * - `failed`    — the LLM RESPONDED but produced no usable item for the fact
  *                 (unparseable array, missing/duplicate/out-of-range index).
  *                 These are content failures: the caller counts an attempt.
+ *                 A call the model refuses or rejects (refusal, 400/413) counts
+ *                 here too: the same batch fails the same way next run.
  * - `transient` — the CALL itself failed (SDK/network/spawn). The fact is not
  *                 the problem, so NO attempt is burned — burning attempts on
  *                 infrastructure downtime would park innocent facts in
@@ -548,6 +551,14 @@ export async function classifyFactsBatch(db, facts) {
         response = await callHaiku(BATCH_CLASSIFY_SYSTEM_PROMPT, JSON.stringify(payload), 256 * remaining.length + 512);
     }
     catch (error) {
+        // A request the model refuses or rejects (refusal, 400/413) fails the same
+        // way next run, and the worker picks the same batch again: held as
+        // transient it would stall these facts forever. Count it against them
+        // instead — they park after MAX_CLASSIFY_ATTEMPTS, as unusable replies do.
+        if (classifyLlmError(error) === 'deterministic') {
+            console.error(`Batch classification call rejected (deterministic, attempt burned):`, error);
+            return { classified: [], deterministic, failed: [...preFailed, ...remaining.map((f) => f.id)], transient: preTransient, assignments };
+        }
         console.error(`Batch classification call failed (transient, no attempt burned):`, error);
         return { classified: [], deterministic, failed: preFailed, transient: [...preTransient, ...remaining.map((f) => f.id)], assignments };
     }
@@ -557,7 +568,7 @@ export async function classifyFactsBatch(db, facts) {
         console.error('Batch classification returned an empty response (transient, no attempt burned)');
         return { classified: [], deterministic, failed: preFailed, transient: [...preTransient, ...remaining.map((f) => f.id)], assignments };
     }
-    const parsed = parseJsonResponse(response);
+    const parsed = parseJsonResponse(response, 'array');
     // Index the response items; tolerate partial/malformed arrays — every fact
     // without a usable item is reported as failed (attempt counting is the
     // caller's responsibility, and honest failure counts matter: the previous

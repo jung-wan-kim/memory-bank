@@ -211,7 +211,7 @@ export async function extractFactsFromExchanges(
 
     try {
       const response = await callHaiku(EXTRACTION_SYSTEM_PROMPT, prompt);
-      const extracted = parseJsonResponse<ExtractedFact[]>(response);
+      const extracted = parseJsonResponse<ExtractedFact[]>(response, 'array');
 
       if (extracted && Array.isArray(extracted)) {
         let rejected = 0;

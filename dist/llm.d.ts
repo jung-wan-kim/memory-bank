@@ -45,4 +45,10 @@ export declare function pruneLlmTranscripts(now?: number): void;
  * 호출자 계약: 성공 반환값은 **비어있지 않음이 보장**된다.
  */
 export declare function callHaiku(systemPrompt: string, userMessage: string, maxTokens?: number): Promise<string>;
-export declare function parseJsonResponse<T>(text: string): T | null;
+/**
+ * Parse the JSON in an LLM reply. `expect: 'array'` is for callers that need a
+ * list (fact extraction, batch classification): a reply that wraps the list in
+ * an object ({"facts": [...]}) yields that list when it is the object's only
+ * array — the old array-first regex unwrapped this by accident.
+ */
+export declare function parseJsonResponse<T>(text: string, expect?: 'array'): T | null;
