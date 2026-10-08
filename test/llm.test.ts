@@ -48,19 +48,42 @@ describe('LLM Module', () => {
       expect(result?.key).toBe('value');
     });
 
+    // Haiku 5.5 replies with bare JSON (no fence). A verdict whose merged_fact
+    // holds a checklist "[ ]" came back as [] — the array regex ran first and
+    // grabbed the brackets inside the string. Reply text is from a real run
+    // (claude-haiku-5-5, 2026-10-08) on a pair of identical facts.
+    it('reads a bare object whose string values contain brackets as the object', () => {
+      const text = '{\n  "relation": "DUPLICATE",\n  "merged_fact": "체크 항목 (완료 선언 직전): [ ] 텔레그램 알림 + 소요시간 포함했는가?",\n  "reason": "Both facts are textually identical"\n}';
+      expect(parseJsonResponse<any>(text)?.relation).toBe('DUPLICATE');
+    });
+
+    it('takes the object when it starts before a bracket pair in prose', () => {
+      const text = 'Result:\n{"has_relation": true, "relation_type": "SUPPORTS", "reasoning": "both cite [L1] checks"}';
+      expect(parseJsonResponse<any>(text)?.relation_type).toBe('SUPPORTS');
+    });
+
+    it('still finds an array that starts first in prose', () => {
+      const text = 'Facts:\n[{"fact": "uses {braces} in text"}]';
+      expect(parseJsonResponse<any[]>(text)).toEqual([{ fact: 'uses {braces} in text' }]);
+    });
+
     it('should handle JSON with trailing text', () => {
       const text = '{"answer": "yes", "confidence": 0.9}\n\nSome trailing explanation';
       const result = parseJsonResponse<any>(text);
       expect(result?.answer).toBe('yes');
     });
 
-    it('should prefer array match over object match', () => {
-      // regex chain: json code block > array > object
-      // input with both array and object: array regex matches first
+    it('returns a complete JSON object as itself, not an array nested inside it', () => {
+      // This used to pin the array-first regex chain, which returned [1, 2, 3]
+      // here — the same defect that turned a bare verdict holding "[ ]" into [].
       const text = '{"a": {"b": {"c": [1, 2, 3]}}}';
       const result = parseJsonResponse<any>(text);
-      // Array regex [...]  matches [1, 2, 3] before {...} regex
-      expect(result).toEqual([1, 2, 3]);
+      expect(result).toEqual({ a: { b: { c: [1, 2, 3] } } });
+    });
+
+    it('falls back to the array when an earlier brace in prose is not JSON', () => {
+      const text = 'Facts like {this} follow:\n[{"fact": "x"}]';
+      expect(parseJsonResponse<any[]>(text)).toEqual([{ fact: 'x' }]);
     });
 
     it('should parse pure object when no array present', () => {

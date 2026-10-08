@@ -300,8 +300,8 @@ Claude Desktop will then have access to all your Claude Code conversations and e
 ## Configuration
 
 ```bash
-# Fact extraction model (default: claude-haiku-4-5-20251001)
-export MEMORY_BANK_FACT_MODEL=claude-haiku-4-5-20251001
+# Fact extraction model (default: claude-haiku-5-5)
+export MEMORY_BANK_FACT_MODEL=claude-haiku-5-5
 export ANTHROPIC_API_KEY=your-key
 
 # Summarization model

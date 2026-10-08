@@ -21,7 +21,7 @@ ${JSON.stringify(texts)}`;
     let result = '';
     for await (const message of query({
       prompt,
-      options: { model: 'haiku', max_tokens: 4096 }
+      options: { model: 'claude-haiku-5-5', max_tokens: 4096 }
     })) {
       if (message && typeof message === 'object' && 'type' in message && message.type === 'result') {
         result = message.result || '';

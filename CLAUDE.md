@@ -77,7 +77,7 @@ Consolidation relations: `DUPLICATE` (merge), `CONTRADICTION` (replace), `EVOLUT
 | Variable | Purpose |
 |----------|---------|
 | `ANTHROPIC_API_KEY` / `MEMORY_BANK_API_TOKEN` | API key for Haiku LLM calls |
-| `MEMORY_BANK_FACT_MODEL` | Override fact extraction model (default: `claude-haiku-4-5-20251001`) |
+| `MEMORY_BANK_FACT_MODEL` | Override fact extraction model (default: `claude-haiku-5-5`) |
 | `MEMORY_BANK_CONFIG_DIR` | Override config directory (useful for testing) |
 | `MEMORY_BANK_DB_PATH` / `TEST_DB_PATH` | Override database path |
 | `TEST_ARCHIVE_DIR` | Override archive directory for tests |

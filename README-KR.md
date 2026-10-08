@@ -180,8 +180,8 @@ Claude Desktop에서 동일한 `search`, `read`, `search_facts` 도구로 Claude
 ## 설정
 
 ```bash
-# 팩트 추출 모델 (기본값: claude-haiku-4-5-20251001)
-export MEMORY_BANK_FACT_MODEL=claude-haiku-4-5-20251001
+# 팩트 추출 모델 (기본값: claude-haiku-5-5)
+export MEMORY_BANK_FACT_MODEL=claude-haiku-5-5
 export ANTHROPIC_API_KEY=your-key
 
 # 요약 모델

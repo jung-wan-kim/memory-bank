@@ -1,4 +1,12 @@
 /**
+ * Default model for every headless call (fact extraction, consolidation,
+ * classification, summaries, translation). A full model id, not the 'haiku'
+ * alias: the alias resolves per bundled CLI version — Agent SDK 0.1.77 maps it
+ * to claude-haiku-4-5-20251001, 0.3.293 to claude-haiku-5-5 (measured
+ * 2026-10-08) — so the model changed with whatever SDK an install carried.
+ */
+export declare const DEFAULT_LLM_MODEL = "claude-haiku-5-5";
+/**
  * Isolation every headless query() shares (callHaiku, summarizer, translate).
  *  - settingSources: [] — no user settings/plugins, so the spawned session's own
  *    SessionStart/End hooks can't re-spawn workers (cascade prevention).

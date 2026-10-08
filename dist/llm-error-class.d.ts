@@ -40,6 +40,17 @@ export declare class EmptyLlmResponseError extends Error {
     constructor(detail?: string);
 }
 /**
+ * The model declined the request (`stop_reason: "refusal"`). Claude Haiku 5.5
+ * runs safety classifiers that Haiku 4.5 did not, and a refusal carries no text.
+ * Read as an empty response it would be 'transient' — retried, then held forever
+ * on the one fact the model keeps refusing. The same input is refused again, so
+ * it is a per-request failure: 'deterministic'.
+ */
+export declare class LlmRefusalError extends Error {
+    readonly category: string | null;
+    constructor(category?: string | null);
+}
+/**
  * Classify a callHaiku rejection into three states so the drain loop can satisfy
  * BOTH "an outage must never silently skip the backlog" AND "one un-processable
  * fact must never wedge the cursor forever" — a binary flag cannot do both under

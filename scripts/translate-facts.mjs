@@ -8,7 +8,7 @@ import Database from 'better-sqlite3';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import path from 'path';
 import os from 'os';
-import { llmWorkdir, ISOLATED_QUERY_OPTIONS } from '../dist/llm.js';
+import { llmWorkdir, ISOLATED_QUERY_OPTIONS, DEFAULT_LLM_MODEL } from '../dist/llm.js';
 
 const DB_PATH = process.env.MEMORY_BANK_DB_PATH || process.env.TEST_DB_PATH ||
   path.join(os.homedir(), '.config/superpowers/conversation-index/db.sqlite');
@@ -60,7 +60,7 @@ ${JSON.stringify(texts)}`;
   // Same containment as llm.ts callHaiku: one-shot call, transcript in the
   // reserved memory-bank-llm slug, no user settings/hooks (cascade prevention).
   for await (const message of query({ prompt, options: {
-    model: 'haiku', max_tokens: 4096, maxTurns: 1, ...ISOLATED_QUERY_OPTIONS, cwd: llmWorkdir(),
+    model: DEFAULT_LLM_MODEL, max_tokens: 4096, maxTurns: 1, ...ISOLATED_QUERY_OPTIONS, cwd: llmWorkdir(),
   } })) {
     if (message && typeof message === 'object' && 'type' in message && message.type === 'result') {
       result = message.result || '';

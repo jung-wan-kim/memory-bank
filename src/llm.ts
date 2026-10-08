@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { LLM_WORKDIR_BASENAME, getProjectsDir } from './paths.js';
-import { classifyLlmError, EmptyLlmResponseError } from './llm-error-class.js';
+import { classifyLlmError, EmptyLlmResponseError, LlmRefusalError } from './llm-error-class.js';
 import { noteSdkFailure } from './deps-heal.js';
 
 // Isolated working directory for headless Agent SDK sessions. The CLI that
@@ -12,6 +12,15 @@ import { noteSdkFailure } from './deps-heal.js';
 // project's dir, where a user `claude --resume` can pick one up as their own
 // session (observed 2026-07-05). A dedicated cwd keeps them in their own slug.
 const LLM_WORKDIR = path.join(os.tmpdir(), LLM_WORKDIR_BASENAME);
+
+/**
+ * Default model for every headless call (fact extraction, consolidation,
+ * classification, summaries, translation). A full model id, not the 'haiku'
+ * alias: the alias resolves per bundled CLI version — Agent SDK 0.1.77 maps it
+ * to claude-haiku-4-5-20251001, 0.3.293 to claude-haiku-5-5 (measured
+ * 2026-10-08) — so the model changed with whatever SDK an install carried.
+ */
+export const DEFAULT_LLM_MODEL = 'claude-haiku-5-5';
 
 /**
  * Isolation every headless query() shares (callHaiku, summarizer, translate).
@@ -148,7 +157,7 @@ const sleep = (ms: number) => (ms > 0 ? new Promise((r) => setTimeout(r, ms)) : 
 
 /** 단발 호출 — Agent SDK 우선, 실패 시(그리고 키가 있을 때만) Anthropic SDK 폴백. */
 async function callOnce(systemPrompt: string, userMessage: string, maxTokens: number): Promise<string> {
-  const model = process.env.MEMORY_BANK_FACT_MODEL || 'haiku';
+  const model = process.env.MEMORY_BANK_FACT_MODEL || DEFAULT_LLM_MODEL;
 
   // Try Claude Agent SDK first (works inside Claude Code without API key)
   try {
@@ -188,12 +197,20 @@ async function callOnce(systemPrompt: string, userMessage: string, maxTokens: nu
     const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
 
     const response = await client.messages.create({
-      model: process.env.MEMORY_BANK_FACT_MODEL || 'claude-haiku-4-5-20251001',
+      model,
       max_tokens: maxTokens,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
+      // Haiku 5.5 thinks by default and thinking counts toward max_tokens, but
+      // callers size maxTokens for the answer alone (256 for a relation verdict),
+      // so thinking could use up the cap before any text. Run without it, as
+      // Haiku 4.5 did here. Default model only: Opus 5.5 / Sonnet 5.5 reject 'disabled'.
+      ...(model === DEFAULT_LLM_MODEL ? { thinking: { type: 'disabled' as const } } : {}),
     });
 
+    if (response.stop_reason === 'refusal') {
+      throw new LlmRefusalError(response.stop_details?.category ?? null);
+    }
     const textBlock = response.content.find((b: any) => b.type === 'text');
     return (textBlock as any)?.text || '';
   }
@@ -250,18 +267,39 @@ export async function callHaiku(
 }
 
 export function parseJsonResponse<T>(text: string): T | null {
-  const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/)
-    || text.match(/(\[[\s\S]*\])/)
-    || text.match(/(\{[\s\S]*\})/);
-  if (!jsonMatch) {
+  // The whole reply first: Haiku 5.5 answers with bare JSON, no fence. The
+  // fallbacks below search inside text, and a bare object whose string values
+  // hold brackets ("[ ] checklist item") used to come back as the inner "[ ]"
+  // → [] (measured on a real fact pair; Haiku 4.5 fenced its JSON, hiding this).
+  const whole = text.trim();
+  if (whole.startsWith('{') || whole.startsWith('[')) {
+    try {
+      return JSON.parse(whole) as T;
+    } catch {
+      /* not one JSON value — fall through to extraction */
+    }
+  }
+  // A fenced block wins. In prose, try object / array in the order they start —
+  // not always the array — and move on to the other if the first doesn't parse.
+  const fenced = text.match(/```json\s*([\s\S]*?)\s*```/);
+  const candidates = fenced
+    ? [fenced]
+    : [text.match(/(\[[\s\S]*\])/), text.match(/(\{[\s\S]*\})/)]
+      .filter((m): m is RegExpMatchArray => m !== null)
+      .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+  if (candidates.length === 0) {
     console.error('parseJsonResponse: no JSON found in LLM response:', text.substring(0, 200));
     return null;
   }
 
-  try {
-    return JSON.parse(jsonMatch[1]) as T;
-  } catch (e) {
-    console.error('parseJsonResponse: invalid JSON:', (e as Error).message, jsonMatch[1].substring(0, 200));
-    return null;
+  let firstError: Error | null = null;
+  for (const match of candidates) {
+    try {
+      return JSON.parse(match[1]) as T;
+    } catch (e) {
+      firstError ??= e as Error;
+    }
   }
+  console.error('parseJsonResponse: invalid JSON:', firstError?.message, candidates[0][1].substring(0, 200));
+  return null;
 }

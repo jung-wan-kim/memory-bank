@@ -54860,9 +54860,18 @@ var EmptyLlmResponseError = class extends Error {
     this.name = "EmptyLlmResponseError";
   }
 };
+var LlmRefusalError = class extends Error {
+  category;
+  constructor(category = null) {
+    super(`LLM refused the request (stop_reason: refusal${category ? `, category: ${category}` : ""})`);
+    this.name = "LlmRefusalError";
+    this.category = category;
+  }
+};
 function classifyLlmError(err) {
   const unwrapped = err instanceof LlmCallError ? err.reason : err;
   if (unwrapped instanceof EmptyLlmResponseError) return "transient";
+  if (unwrapped instanceof LlmRefusalError) return "deterministic";
   const e = unwrapped;
   const byCode = (code) => {
     if (code === 401 || code === 403 || code === 404) return "transient";
@@ -54935,6 +54944,7 @@ function noteSdkFailure(err, label, root = pluginRoot()) {
 
 // src/llm.ts
 var LLM_WORKDIR = path10.join(os3.tmpdir(), LLM_WORKDIR_BASENAME);
+var DEFAULT_LLM_MODEL = "claude-haiku-5-5";
 var ISOLATED_QUERY_OPTIONS = {
   settingSources: [],
   tools: [],
@@ -55022,7 +55032,7 @@ function backoffMs(attempt) {
 }
 var sleep2 = (ms) => ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve();
 async function callOnce(systemPrompt, userMessage, maxTokens) {
-  const model = process.env.MEMORY_BANK_FACT_MODEL || "haiku";
+  const model = process.env.MEMORY_BANK_FACT_MODEL || DEFAULT_LLM_MODEL;
   try {
     for await (const message of query({
       prompt: `${systemPrompt}
@@ -55056,11 +55066,19 @@ ${userMessage}`,
     const baseURL = process.env.MEMORY_BANK_API_BASE_URL;
     const client = new Anthropic2({ apiKey, ...baseURL ? { baseURL } : {} });
     const response = await client.messages.create({
-      model: process.env.MEMORY_BANK_FACT_MODEL || "claude-haiku-4-5-20251001",
+      model,
       max_tokens: maxTokens,
       system: systemPrompt,
-      messages: [{ role: "user", content: userMessage }]
+      messages: [{ role: "user", content: userMessage }],
+      // Haiku 5.5 thinks by default and thinking counts toward max_tokens, but
+      // callers size maxTokens for the answer alone (256 for a relation verdict),
+      // so thinking could use up the cap before any text. Run without it, as
+      // Haiku 4.5 did here. Default model only: Opus 5.5 / Sonnet 5.5 reject 'disabled'.
+      ...model === DEFAULT_LLM_MODEL ? { thinking: { type: "disabled" } } : {}
     });
+    if (response.stop_reason === "refusal") {
+      throw new LlmRefusalError(response.stop_details?.category ?? null);
+    }
     const textBlock = response.content.find((b2) => b2.type === "text");
     return textBlock?.text || "";
   }
@@ -55089,17 +55107,29 @@ async function callHaiku(systemPrompt, userMessage, maxTokens = 2048) {
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 function parseJsonResponse(text) {
-  const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/(\[[\s\S]*\])/) || text.match(/(\{[\s\S]*\})/);
-  if (!jsonMatch) {
+  const whole = text.trim();
+  if (whole.startsWith("{") || whole.startsWith("[")) {
+    try {
+      return JSON.parse(whole);
+    } catch {
+    }
+  }
+  const fenced = text.match(/```json\s*([\s\S]*?)\s*```/);
+  const candidates = fenced ? [fenced] : [text.match(/(\[[\s\S]*\])/), text.match(/(\{[\s\S]*\})/)].filter((m2) => m2 !== null).sort((a, b2) => (a.index ?? 0) - (b2.index ?? 0));
+  if (candidates.length === 0) {
     console.error("parseJsonResponse: no JSON found in LLM response:", text.substring(0, 200));
     return null;
   }
-  try {
-    return JSON.parse(jsonMatch[1]);
-  } catch (e) {
-    console.error("parseJsonResponse: invalid JSON:", e.message, jsonMatch[1].substring(0, 200));
-    return null;
+  let firstError = null;
+  for (const match of candidates) {
+    try {
+      return JSON.parse(match[1]);
+    } catch (e) {
+      firstError ??= e;
+    }
   }
+  console.error("parseJsonResponse: invalid JSON:", firstError?.message, candidates[0][1].substring(0, 200));
+  return null;
 }
 
 // src/avatar-responder.ts

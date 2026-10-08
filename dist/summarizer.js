@@ -1,13 +1,13 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { SUMMARIZER_CONTEXT_MARKER } from './constants.js';
-import { llmWorkdir, ISOLATED_QUERY_OPTIONS } from './llm.js';
+import { llmWorkdir, ISOLATED_QUERY_OPTIONS, DEFAULT_LLM_MODEL } from './llm.js';
 import { noteSdkFailure } from './deps-heal.js';
 /**
  * Get API environment overrides for summarization calls.
  * Returns full env merged with process.env so subprocess inherits PATH, HOME, etc.
  *
  * Env vars (all optional):
- * - MEMORY_BANK_API_MODEL: Model to use (default: haiku)
+ * - MEMORY_BANK_API_MODEL: Model to use (default: DEFAULT_LLM_MODEL, claude-haiku-5-5)
  * - MEMORY_BANK_API_MODEL_FALLBACK: Fallback model on error (default: sonnet)
  * - MEMORY_BANK_API_BASE_URL: Custom API endpoint
  * - MEMORY_BANK_API_TOKEN: Auth token for custom endpoint
@@ -51,7 +51,7 @@ async function callClaude(prompt, sessionId, useFallback = false) {
     }
 }
 async function callClaudeOnce(prompt, sessionId, useFallback = false) {
-    const primaryModel = process.env.MEMORY_BANK_API_MODEL || 'haiku';
+    const primaryModel = process.env.MEMORY_BANK_API_MODEL || DEFAULT_LLM_MODEL;
     const fallbackModel = process.env.MEMORY_BANK_API_MODEL_FALLBACK || 'sonnet';
     const model = useFallback ? fallbackModel : primaryModel;
     for await (const message of query({

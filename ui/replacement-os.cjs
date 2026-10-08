@@ -548,7 +548,7 @@ async function callClaudeAgent(prompt) {
   for await (const message of query({
     prompt,
     options: {
-      model: process.env.REPLACEMENT_OS_CHAT_MODEL || process.env.MEMORY_BANK_FACT_MODEL || 'haiku',
+      model: process.env.REPLACEMENT_OS_CHAT_MODEL || process.env.MEMORY_BANK_FACT_MODEL || 'claude-haiku-5-5',
       max_tokens: Number(process.env.REPLACEMENT_OS_CHAT_MAX_TOKENS || 1400),
       systemPrompt: 'You are a safe local Hue OS web chat adapter. Answer in Korean unless asked otherwise.',
     },
