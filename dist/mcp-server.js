@@ -55034,6 +55034,7 @@ var sleep2 = (ms) => ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.re
 async function callOnce(systemPrompt, userMessage, maxTokens) {
   const model = process.env.MEMORY_BANK_FACT_MODEL || DEFAULT_LLM_MODEL;
   let result = null;
+  let refused = false;
   let refusalCategory = null;
   try {
     for await (const message of query({
@@ -55054,6 +55055,7 @@ ${userMessage}`,
       }
     })) {
       if (message.type === "system" && message.subtype === "model_refusal_no_fallback") {
+        refused = true;
         refusalCategory = message.api_refusal_category ?? null;
       } else if (message.type === "system" && message.subtype === "model_refusal_fallback") {
         console.error(`callHaiku: ${message.original_model} refused; answered by ${message.fallback_model}`);
@@ -55088,15 +55090,15 @@ ${userMessage}`,
     const textBlock = response.content.find((b2) => b2.type === "text");
     const text = textBlock?.text || "";
     if (!text && response.stop_reason === "max_tokens") {
-      throw new Error(`LLM hit max_tokens (${maxTokens}) before any text`);
+      console.error(`callHaiku: ${model} hit max_tokens (${maxTokens}) before any text`);
     }
     return text;
   }
   if (!result) return "";
-  return agentResultText(result, refusalCategory);
+  return agentResultText(result, refused, refusalCategory);
 }
-function agentResultText(result, refusalCategory) {
-  if (result.stop_reason === "refusal") throw new LlmRefusalError(refusalCategory);
+function agentResultText(result, refused, refusalCategory) {
+  if (refused || result.stop_reason === "refusal") throw new LlmRefusalError(refusalCategory);
   if ("errors" in result) {
     throw new Error(`Agent SDK turn ended with ${result.subtype}: ${result.errors.join("; ")}`);
   }
@@ -55243,8 +55245,10 @@ async function askAvatar(db, question, project) {
     response = await callHaiku(AVATAR_SYSTEM_PROMPT, prompt, 1024);
   } catch (error62) {
     console.error("ask_avatar: LLM call failed after retries:", error62);
+    const cls = classifyLlmError(error62);
+    const advice = error62 instanceof LlmRefusalError ? "\uBAA8\uB378\uC774 \uC774 \uC9C8\uBB38\uC5D0 \uB2F5\uD558\uAE30\uB97C \uAC70\uC808\uD588\uC2B5\uB2C8\uB2E4. \uAC19\uC740 \uC9C8\uBB38\uC740 \uB2E4\uC2DC \uD574\uB3C4 \uAC19\uC740 \uACB0\uACFC\uC77C \uAC00\uB2A5\uC131\uC774 \uD07D\uB2C8\uB2E4." : cls === "deterministic" ? "\uC774 \uC694\uCCAD\uC740 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uB3C4 \uAC19\uC740 \uC774\uC720\uB85C \uC2E4\uD328\uD569\uB2C8\uB2E4. \uC9C8\uBB38\uC744 \uC904\uC774\uAC70\uB098 \uBC14\uAFD4 \uC8FC\uC138\uC694." : "\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694.";
     return {
-      answer: `\u26A0\uFE0F LLM \uD638\uCD9C\uC774 \uC7AC\uC2DC\uB3C4 \uD6C4\uC5D0\uB3C4 \uC2E4\uD328\uD574 \uB2F5\uBCC0\uC744 \uC0DD\uC131\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4 (${classifyLlmError(error62)}). \uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694.`,
+      answer: `\u26A0\uFE0F LLM \uD638\uCD9C\uC774 \uC7AC\uC2DC\uB3C4 \uD6C4\uC5D0\uB3C4 \uC2E4\uD328\uD574 \uB2F5\uBCC0\uC744 \uC0DD\uC131\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4 (${cls}). ${advice}`,
       sources: [],
       confidence: 0,
       relatedDecisions

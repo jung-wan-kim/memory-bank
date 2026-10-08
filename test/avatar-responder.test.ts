@@ -157,6 +157,19 @@ describe('avatar-responder', () => {
     expect(result.confidence).toBe(0);
   });
 
+  it('tells the user a refusal will not change on retry (no "try again later")', async () => {
+    const { LlmRefusalError } = await import('../src/llm-error-class.js');
+    const emb = new Array(384).fill(0.1);
+    insertTestFact(db, 'fact-r', 'Some fact', emb);
+
+    (callHaiku as ReturnType<typeof vi.fn>).mockRejectedValue(new LlmRefusalError('cyber'));
+
+    const result = await askAvatar(db, 'question');
+    expect(result.answer).toContain('거절');
+    expect(result.answer).not.toContain('잠시 후 다시 시도');
+    expect(result.confidence).toBe(0);
+  });
+
   it('should fallback to raw response when JSON parse fails', async () => {
     const emb = new Array(384).fill(0.1);
     insertTestFact(db, 'fact-z', 'Some fact', emb);

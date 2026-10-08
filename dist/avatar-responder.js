@@ -1,6 +1,6 @@
 import { l2DistanceToSimilarity } from './db.js';
 import { callHaiku, parseJsonResponse } from './llm.js';
-import { classifyLlmError } from './llm-error-class.js';
+import { classifyLlmError, LlmRefusalError } from './llm-error-class.js';
 import { generateEmbedding, initEmbeddings } from './embeddings.js';
 import { searchSimilarFacts } from './fact-db.js';
 import { getRelatedFacts, listDomains, listCategories } from './ontology-db.js';
@@ -94,8 +94,16 @@ export async function askAvatar(db, question, project) {
         // 원문 provider 에러는 엔드포인트·토큰 조각 등을 담을 수 있어 사용자 대면 응답에
         // 그대로 싣지 않는다 — 분류만 노출하고 상세는 서버 로그로 (Codex 리뷰 MEDIUM).
         console.error('ask_avatar: LLM call failed after retries:', error);
+        const cls = classifyLlmError(error);
+        // A refusal or a rejected request is not retried and fails the same way
+        // again — "try again later" would be wrong advice for it.
+        const advice = error instanceof LlmRefusalError
+            ? '모델이 이 질문에 답하기를 거절했습니다. 같은 질문은 다시 해도 같은 결과일 가능성이 큽니다.'
+            : cls === 'deterministic'
+                ? '이 요청은 다시 시도해도 같은 이유로 실패합니다. 질문을 줄이거나 바꿔 주세요.'
+                : '잠시 후 다시 시도해 주세요.';
         return {
-            answer: `⚠️ LLM 호출이 재시도 후에도 실패해 답변을 생성하지 못했습니다 (${classifyLlmError(error)}). 잠시 후 다시 시도해 주세요.`,
+            answer: `⚠️ LLM 호출이 재시도 후에도 실패해 답변을 생성하지 못했습니다 (${cls}). ${advice}`,
             sources: [],
             confidence: 0,
             relatedDecisions,

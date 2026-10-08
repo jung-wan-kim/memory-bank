@@ -164,6 +164,7 @@ async function callOnce(systemPrompt, userMessage, maxTokens) {
     // it would land in the API-key fallback below and re-send a request that
     // already failed on the same model.
     let result = null;
+    let refused = false;
     let refusalCategory = null;
     // Try Claude Agent SDK first (works inside Claude Code without API key)
     try {
@@ -183,6 +184,8 @@ async function callOnce(systemPrompt, userMessage, maxTokens) {
             },
         })) {
             if (message.type === 'system' && message.subtype === 'model_refusal_no_fallback') {
+                // The SDK's structured refusal signal; the result's stop_reason may not carry it.
+                refused = true;
                 refusalCategory = message.api_refusal_category ?? null;
             }
             else if (message.type === 'system' && message.subtype === 'model_refusal_fallback') {
@@ -223,17 +226,19 @@ async function callOnce(systemPrompt, userMessage, maxTokens) {
         }
         const textBlock = response.content.find((b) => b.type === 'text');
         const text = textBlock?.text || '';
-        // The cap ran out before any answer text — the same request hits it again,
-        // so it must not read as an empty (transient) response.
+        // The cap ran out before any answer text: a thinking model under an
+        // answer-sized cap. That is a setting to fix, not this request's fault, so
+        // it stays an empty (transient) response — the batch is deferred and comes
+        // back once the cap or model is fixed, instead of being dropped for good.
         if (!text && response.stop_reason === 'max_tokens') {
-            throw new Error(`LLM hit max_tokens (${maxTokens}) before any text`);
+            console.error(`callHaiku: ${model} hit max_tokens (${maxTokens}) before any text`);
         }
         return text;
     }
     // 스트림이 result 메시지 없이 끝남 — 호출 실패이지 "빈 답변"이 아니다.
     if (!result)
         return '';
-    return agentResultText(result, refusalCategory);
+    return agentResultText(result, refused, refusalCategory);
 }
 /**
  * Text of a finished Agent SDK turn. A turn that ended on an API error still
@@ -242,8 +247,8 @@ async function callOnce(systemPrompt, userMessage, maxTokens) {
  * JSON → batch silently empty). Throw instead, so classifyLlmError can read it
  * ("API Error: 500 …" → transient, "… 400 …" → deterministic).
  */
-function agentResultText(result, refusalCategory) {
-    if (result.stop_reason === 'refusal')
+function agentResultText(result, refused, refusalCategory) {
+    if (refused || result.stop_reason === 'refusal')
         throw new LlmRefusalError(refusalCategory);
     if ('errors' in result) {
         throw new Error(`Agent SDK turn ended with ${result.subtype}: ${result.errors.join('; ')}`);

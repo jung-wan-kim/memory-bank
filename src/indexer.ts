@@ -234,9 +234,15 @@ export async function indexSession(sessionId: string, concurrency: number = 1, n
         // Generate summary (unless --no-summaries)
         const summaryPath = archivePath.replace('.jsonl', '-summary.txt');
         if (!noSummaries && !archiveFileExists(summaryPath)) {
-          const summary = await summarizeConversation(exchanges);
-          fs.writeFileSync(summaryPath, summary, 'utf-8');
-          console.log(`Summary: ${summary.split(/\s+/).length} words`);
+          // A failed summary must not cost the exchange index. No summary file
+          // is written, so the next sync summarizes this conversation again.
+          try {
+            const summary = await summarizeConversation(exchanges);
+            fs.writeFileSync(summaryPath, summary, 'utf-8');
+            console.log(`Summary: ${summary.split(/\s+/).length} words`);
+          } catch (error) {
+            console.error(`Summary failed (indexing continues; next sync retries it): ${error instanceof Error ? error.message : String(error)}`);
+          }
         }
 
         // Index

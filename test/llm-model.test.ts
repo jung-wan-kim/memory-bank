@@ -192,15 +192,73 @@ describe('Agent SDK 경로의 오류 턴 (기본 경로)', () => {
 });
 
 describe('API 키 경로의 max_tokens 소진', () => {
-  it('본문 없이 max_tokens 로 끝나면 deterministic 으로 throw 한다 (빈 응답으로 무한 재시도하지 않는다)', async () => {
+  // 사고하는 모델(덮어쓴 Sonnet 5.5 — thinking 을 끌 수 없다)에 답 길이로 잡은 한도를
+  // 주면 사고가 한도를 다 쓴다. 설정 문제이지 요청의 잘못이 아니므로 빈 응답(transient)
+  // 으로 남아 배치가 이연돼야 한다 — deterministic 이면 추출 배치가 영구 폐기된다.
+  it('본문 없이 max_tokens 로 끝나면 이연(transient)되고 영구 폐기되지 않는다', async () => {
     useApiPath();
-    process.env.MEMORY_BANK_LLM_RETRIES = '3';
+    process.env.MEMORY_BANK_FACT_MODEL = 'claude-sonnet-5-5';
+    process.env.MEMORY_BANK_LLM_RETRIES = '1';
     apiResponse = { stop_reason: 'max_tokens', content: [{ type: 'thinking', thinking: '', signature: 's' }] };
     const { callHaiku } = await import('../src/llm.js');
-    const { classifyLlmError } = await import('../src/llm-error-class.js');
+    const { classifyLlmError, EmptyLlmResponseError } = await import('../src/llm-error-class.js');
     const err = await callHaiku('sys', 'ping', 256).catch((e: unknown) => e);
-    expect((err as Error).message).toMatch(/max_tokens \(256\)/);
-    expect(classifyLlmError(err)).toBe('deterministic');
-    expect(createCalls.length).toBe(1);
+    expect(err).toBeInstanceOf(EmptyLlmResponseError);
+    expect(classifyLlmError(err)).toBe('transient');
+    expect(createCalls.length).toBe(2); // 1 + 재시도 1
+  });
+});
+
+describe('Agent SDK 거절 신호와 대체 모델 (2차 검토)', () => {
+  it('거절 알림(model_refusal_no_fallback)만 있고 stop_reason 이 비어 있어도 거절로 판정한다', async () => {
+    agentMessages = [
+      { type: 'system', subtype: 'model_refusal_no_fallback', original_model: 'claude-haiku-5-5', request_id: null, api_refusal_category: null },
+      { type: 'result', subtype: 'success', is_error: true, stop_reason: null, result: 'unable to respond' },
+    ];
+    process.env.MEMORY_BANK_LLM_RETRIES = '3';
+    const { callHaiku } = await import('../src/llm.js');
+    const { LlmRefusalError } = await import('../src/llm-error-class.js');
+    await expect(callHaiku('sys', 'ping')).rejects.toBeInstanceOf(LlmRefusalError);
+    expect(queryCalls.length).toBe(1);
+  });
+
+  it('대체 모델이 답한 턴은 그 답을 돌려준다 (거절로 버리지 않는다)', async () => {
+    agentMessages = [
+      { type: 'system', subtype: 'model_refusal_fallback', trigger: 'refusal', direction: 'retry', original_model: 'claude-haiku-5-5', fallback_model: 'claude-sonnet-5-5', request_id: null, content: '' },
+      { type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', result: '{"ok":true}' },
+    ];
+    const { callHaiku } = await import('../src/llm.js');
+    expect(await callHaiku('sys', 'ping')).toBe('{"ok":true}');
+  });
+
+  it('요약기는 is_error 없이 stop_reason 만 refusal 인 턴도 요약으로 쓰지 않는다', async () => {
+    agentMessages = [{ type: 'result', subtype: 'success', is_error: false, stop_reason: 'refusal', result: 'I cannot help with that' }];
+    const { summarizeConversation } = await import('../src/summarizer.js');
+    await expect(summarizeConversation([1, 2].map((i) => ({
+      id: `e${i}`, project: 'p', timestamp: `2026-10-08T00:0${i}:00Z`, archivePath: '/a.jsonl', lineStart: i, lineEnd: i + 1,
+      userMessage: `질문 ${i}`, assistantMessage: `답 ${i}`,
+    })))).rejects.toThrow(/Summary call failed \(refusal\)/);
+  });
+
+  it('긴 대화의 청크가 전부 실패하면 오류 문구를 요약으로 돌려주지 않고 throw 한다', async () => {
+    agentMessages = [{ type: 'result', subtype: 'success', is_error: true, stop_reason: null, result: 'API Error: 500 Internal Server Error' }];
+    const { summarizeConversation } = await import('../src/summarizer.js');
+    const exchanges = Array.from({ length: 16 }, (_, i) => ({
+      id: `e${i}`, project: 'p', timestamp: `2026-10-08T00:${String(i).padStart(2, '0')}:00Z`, archivePath: '/a.jsonl', lineStart: i, lineEnd: i + 1,
+      userMessage: `질문 ${i}`, assistantMessage: `답 ${i}`,
+    }));
+    await expect(summarizeConversation(exchanges)).rejects.toThrow(/all 2 chunks failed/);
+  });
+});
+
+describe('요약기의 사고 예산 분기', () => {
+  it('대체 모델도 thinking.budget 오류를 내면 그 문구를 요약으로 돌려주지 않고 throw 한다', async () => {
+    agentMessages = [{ type: 'result', subtype: 'success', is_error: true, stop_reason: null, result: 'API Error: 400 thinking.budget_tokens must be less than max_tokens' }];
+    const { summarizeConversation } = await import('../src/summarizer.js');
+    await expect(summarizeConversation([1, 2].map((i) => ({
+      id: `e${i}`, project: 'p', timestamp: `2026-10-08T00:0${i}:00Z`, archivePath: '/a.jsonl', lineStart: i, lineEnd: i + 1,
+      userMessage: `질문 ${i}`, assistantMessage: `답 ${i}`,
+    })))).rejects.toThrow(/thinking budget/);
+    expect(queryCalls.length).toBe(2); // 기본 모델 1회 + 대체 모델 1회
   });
 });

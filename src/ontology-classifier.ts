@@ -555,7 +555,9 @@ interface BatchClassifyItem extends ClassifyResponse {
  *                 (unparseable array, missing/duplicate/out-of-range index).
  *                 These are content failures: the caller counts an attempt.
  *                 A call the model refuses or rejects (refusal, 400/413) counts
- *                 here too: the same batch fails the same way next run.
+ *                 here too: the same batch fails the same way next run. A
+ *                 rejected multi-fact batch is retried fact by fact first, so
+ *                 only the fact at fault takes the attempt.
  * - `transient` — the CALL itself failed (SDK/network/spawn). The fact is not
  *                 the problem, so NO attempt is burned — burning attempts on
  *                 infrastructure downtime would park innocent facts in
@@ -649,6 +651,24 @@ export async function classifyFactsBatch(
     // transient it would stall these facts forever. Count it against them
     // instead — they park after MAX_CLASSIFY_ATTEMPTS, as unusable replies do.
     if (classifyLlmError(error) === 'deterministic') {
+      if (remaining.length > 1) {
+        // One fact can make the model refuse the whole batch, and the worker
+        // picks the same batch again — every fact in it would park in
+        // General/Misc. Classify each alone so only the one at fault fails.
+        console.error(`Batch classification call rejected (deterministic) — classifying ${remaining.length} facts one by one:`, error);
+        const failed = [...preFailed];
+        const transient = [...preTransient];
+        const classified: string[] = [];
+        for (const fact of remaining) {
+          const one = await classifyFactsBatch(db, [fact]);
+          classified.push(...one.classified);
+          deterministic.push(...one.deterministic);
+          failed.push(...one.failed);
+          transient.push(...one.transient);
+          for (const [id, a] of one.assignments) assignments.set(id, a);
+        }
+        return { classified, deterministic, failed, transient, assignments };
+      }
       console.error(`Batch classification call rejected (deterministic, attempt burned):`, error);
       return { classified: [], deterministic, failed: [...preFailed, ...remaining.map((f) => f.id)], transient: preTransient, assignments };
     }

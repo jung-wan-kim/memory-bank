@@ -14,13 +14,20 @@ import path from 'node:path';
  * deterministic 은 그 배치만 버리고 진행한다(=큐를 막지 않음).
  */
 
-const llmBehavior: { mode: 'transient' | 'deterministic' | 'ok' | 'unknown' } = { mode: 'ok' };
+const llmBehavior: { mode: 'transient' | 'deterministic' | 'ok' | 'unknown' | 'wrapped'; calls: number } = { mode: 'ok', calls: 0 };
 
 vi.mock('../src/llm.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/llm.js')>();
   return {
     ...actual,
     callHaiku: async () => {
+      llmBehavior.calls++;
+      if (llmBehavior.mode === 'wrapped') {
+        // 배열을 객체로 감싼 응답 — 추출 호출부가 parseJsonResponse(…, 'array') 로 받아야 산다
+        return JSON.stringify({ facts: [
+          { fact: 'User prefers Riverpod for Flutter state management', category: 'preference', scope_type: 'project', confidence: 0.9 },
+        ] });
+      }
       if (llmBehavior.mode === 'transient') {
         throw Object.assign(new Error('service unavailable'), { status: 503 });
       }
@@ -82,6 +89,7 @@ beforeEach(async () => {
   process.env.MEMORY_BANK_CONFIG_DIR = tmpDir;
   process.env.MEMORY_BANK_DB_PATH = path.join(tmpDir, 'test.sqlite');
   llmBehavior.mode = 'ok';
+  llmBehavior.calls = 0;
   db = await setupDb();
 });
 afterEach(() => {
@@ -146,6 +154,32 @@ describe('세션 영구 손실 방지 (transient vs deterministic)', () => {
     ).get(SESSION) as { dropped_batches: number } | undefined;
     // 폐기 사실이 DB 에 남아야 "왜 이 세션엔 fact 가 없나"를 사후에 답할 수 있다.
     expect(row?.dropped_batches).toBeGreaterThan(0);
+  });
+
+  it('배열을 객체로 감싼 응답에서도 fact 를 추출한다 (호출부의 array 기대 연결)', async () => {
+    const { runFactExtraction } = await import('../src/fact-extractor.js');
+    llmBehavior.mode = 'wrapped';
+    const result = await runFactExtraction(db, SESSION, PROJECT);
+    expect(result.extracted).toBe(1);
+  });
+
+  it('첫 transient 실패 뒤 남은 배치를 호출하지 않는다 (세션이 어차피 이연되므로)', async () => {
+    const { runFactExtraction } = await import('../src/fact-extractor.js');
+    const now = new Date().toISOString();
+    const insert = db.prepare(`
+      INSERT INTO exchanges (id, project, timestamp, user_message, assistant_message, archive_path, line_start, line_end, session_id, is_sidechain)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `);
+    // 교환을 8개 더 넣어 배치가 2개가 되게 한다(BATCH_SIZE 5)
+    for (let i = 2; i < 10; i++) {
+      insert.run(`ex-${i}`, PROJECT, now,
+        `데이터베이스 마이그레이션 전략을 정해야 합니다. 스키마 변경 ${i} 을 어떻게 배포할까요? 롤백 계획도 알려주세요.`,
+        `무중단 배포를 위해 확장-축소 방식을 권장합니다. 먼저 컬럼을 추가하고 코드를 바꾼 뒤 옛 컬럼을 지웁니다 (${i}).`,
+        `/tmp/archive-${i}.jsonl`, 1, 10, SESSION);
+    }
+    llmBehavior.mode = 'transient';
+    await expect(runFactExtraction(db, SESSION, PROJECT)).rejects.toThrow(/service unavailable/);
+    expect(llmBehavior.calls).toBe(1);
   });
 
   it('AC4f: 정상 처리 세션은 dropped_batches 가 0 이다', async () => {

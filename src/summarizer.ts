@@ -92,8 +92,8 @@ async function callClaudeOnce(prompt: string, sessionId?: string, useFallback = 
           console.log(`    ${primaryModel} hit thinking budget error, retrying with ${fallbackModel}`);
           return await callClaude(prompt, sessionId, true);
         }
-        // If fallback also fails, return error message
-        return result;
+        // The fallback hit it too: an error, not a summary to write out.
+        throw new Error(`Summary call failed (${fallbackModel} thinking budget): ${result.slice(0, 300)}`);
       }
 
       // Any other error turn (API error, refusal) carries its error text in
@@ -197,7 +197,9 @@ Example: <summary>Implemented HID keyboard functionality for ESP32. Hit Bluetoot
   }
 
   if (chunkSummaries.length === 0) {
-    return 'Error: Unable to summarize conversation.';
+    // Returned, this line was written out as the summary and the file was never
+    // summarized again (callers only check that a summary file exists).
+    throw new Error(`Summary failed: all ${chunks.length} chunks failed`);
   }
 
   // Synthesize chunks into final summary

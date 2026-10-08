@@ -395,6 +395,30 @@ describe('ontology-classifier', () => {
 
     // A refused/rejected call fails the same way next run and the worker picks the
     // same batch again — held as transient, the batch would stall forever.
+    it('classifies a rejected multi-fact batch one by one, so only the fact at fault fails', async () => {
+      const { LlmRefusalError } = await import('../src/llm-error-class.js');
+      const emb = new Array(384).fill(0.1);
+      insertTestFact(db, 'ok-0', 'Use Vitest for unit tests', emb);
+      insertTestFact(db, 'bad-0', 'REFUSE-TRIGGER payload', emb);
+
+      (callHaiku as ReturnType<typeof vi.fn>).mockImplementation(async (_sys: string, user: string) => {
+        if (user.includes('REFUSE-TRIGGER')) throw new LlmRefusalError('cyber');
+        return '[]';
+      });
+      (parseJsonResponse as ReturnType<typeof vi.fn>).mockReturnValue([
+        { index: 0, domain: 'Testing', category: 'Unit Tests', is_new_domain: true, is_new_category: true },
+      ]);
+
+      const result = await classifyFactsBatch(db, [
+        makeFact({ id: 'ok-0', fact: 'Use Vitest for unit tests' }),
+        makeFact({ id: 'bad-0', fact: 'REFUSE-TRIGGER payload' }),
+      ]);
+      expect(result.failed).toEqual(['bad-0']);
+      expect(result.classified).toEqual(['ok-0']);
+      expect(result.transient).toEqual([]);
+      expect(callHaiku).toHaveBeenCalledTimes(3); // 묶음 1회 + 하나씩 2회
+    });
+
     it('counts a refused call against the facts (failed, not transient)', async () => {
       const { LlmRefusalError } = await import('../src/llm-error-class.js');
       const emb = new Array(384).fill(0.1);

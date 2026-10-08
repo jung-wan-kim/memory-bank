@@ -239,6 +239,10 @@ renewLease) {
             else {
                 transientFailures.push(error);
                 console.error(`Batch ${b} extraction failed (${cls} — session deferred, will retry):`, error);
+                // The whole session is deferred and its facts discarded (throw below),
+                // so the remaining batches would be spent for nothing — during a usage
+                // limit that is up to 12 batches × 3 attempts per session per run.
+                break;
             }
         }
     }
