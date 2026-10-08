@@ -113,6 +113,22 @@ describe('repairIndex with a failing summary', () => {
 
   // The refusal marker is final; written over an existing summary it would
   // replace real content with nothing for good (4th review N3).
+  it('writes the refusal marker when there is no summary to keep', async () => {
+    summaryMode.value = 'refuse';
+    const { verifyIndex, repairIndex } = await import('../src/verify.js');
+    const projectArchive = path.join(testDir, 'archive', 'test-project');
+    fs.mkdirSync(projectArchive, { recursive: true });
+    const conversationPath = path.join(projectArchive, 'missing.jsonl');
+    const line = (type: string, content: string, ts: string) =>
+      JSON.stringify({ type, message: { role: type, content }, timestamp: ts });
+    fs.writeFileSync(conversationPath, [line('user', 'Hello', '2024-01-01T00:00:00Z'), line('assistant', 'Hi there!', '2024-01-01T00:00:01Z')].join('\n'));
+
+    const issues = await verifyIndex();
+    expect(issues.missing.map((m) => m.path)).toContain(conversationPath);
+    await repairIndex(issues);
+    expect(fs.readFileSync(conversationPath.replace('.jsonl', '-summary.txt'), 'utf-8')).toBe(REFUSED);
+  });
+
   it('keeps the existing summary when the new one is refused', async () => {
     summaryMode.value = 'refuse';
     const { summaryPath, reindexed } = await repairOutdated();

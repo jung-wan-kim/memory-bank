@@ -58,6 +58,18 @@ class SummaryRefusedError extends Error {
 }
 
 /**
+ * The reply hit the output token cap. A setting to fix (a thinking model under
+ * the cap), not a fault of this conversation: retried on a later run, never
+ * skipped like a rejected chunk.
+ */
+class SummaryCutOffError extends Error {
+  constructor(detail: string) {
+    super(`Summary call cut off at the output token cap: ${detail}`);
+    this.name = 'SummaryCutOffError';
+  }
+}
+
+/**
  * Written as the summary of a conversation the model declines to summarize.
  * Writing nothing would have sync retry it on every run, and sync summarizes at
  * most `summaryLimit` files per run in directory order — conversations that are
@@ -128,7 +140,13 @@ async function callClaudeOnce(prompt: string, sessionId?: string, useFallback = 
         throw new SummaryRefusedError(typeof result === 'string' ? result.slice(0, 300) : '');
       }
       if (message.is_error) {
-        throw new Error(`Summary call failed (${message.stop_reason ?? message.subtype}): ${typeof result === 'string' ? result.slice(0, 300) : ''}`);
+        const detail = typeof result === 'string' ? result.slice(0, 300) : '';
+        // Read as "max_tokens" by classifyLlmError, i.e. a rejection that repeats,
+        // and a chunk that fails that way would be skipped for good.
+        if (message.stop_reason === 'max_tokens' || /output token maximum/i.test(detail)) {
+          throw new SummaryCutOffError(detail);
+        }
+        throw new Error(`Summary call failed (${message.stop_reason ?? message.subtype}): ${detail}`);
       }
 
       return result;
@@ -213,6 +231,7 @@ ${conversationText}`;
   // Summarize each chunk
   const chunkSummaries: string[] = [];
   let refusedChunks = 0;
+  let rejectedChunks = 0;
   for (let i = 0; i < chunks.length; i++) {
     const chunkText = formatConversationText(chunks[i]);
     const prompt = `${SUMMARIZER_CONTEXT_MARKER}.
@@ -236,7 +255,12 @@ Example: <summary>Implemented HID keyboard functionality for ESP32. Hit Bluetoot
       // chunks that got through would be written for good: abort instead. No
       // file is written, and the conversation is retried on a later run.
       const refused = error instanceof SummaryRefusedError;
-      if (!refused && classifyLlmError(error) !== 'deterministic') throw error;
+      const rejected = !refused && !(error instanceof SummaryCutOffError) && classifyLlmError(error) === 'deterministic';
+      if (!refused && !rejected) throw error;
+      // Two rejections before any chunk got through more likely mean every
+      // request is rejected (a setting, the account) than two bad chunks: stop
+      // spending a call per chunk on each sync. Retried on a later run.
+      if (rejected && ++rejectedChunks >= 2 && chunkSummaries.length === 0) throw error;
       if (refused) refusedChunks++;
       console.log(`  Chunk ${i + 1} ${refused ? 'refused' : 'rejected'}, skipping`);
     }

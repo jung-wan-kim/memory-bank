@@ -288,6 +288,8 @@ describe('Agent SDK 거절 신호와 대체 모델 (2차 검토)', () => {
   const ok = (text: string) => [{ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', result: `<summary>${text}</summary>` }];
   const fail500 = [{ type: 'result', subtype: 'success', is_error: true, stop_reason: null, result: 'API Error: 500 Internal Server Error' }];
   const fail400 = [{ type: 'result', subtype: 'success', is_error: true, stop_reason: null, result: 'API Error: 400 prompt is too long' }];
+  const cutOff = [{ type: 'result', subtype: 'success', is_error: true, stop_reason: 'max_tokens', result: "API Error: Claude's response exceeded the 4096 output token maximum." }];
+  const emptyOk = [{ type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', result: '' }];
 
   // 청크 하나가 일시 장애로 실패하면 나머지 청크도 실패할 공산이 크고, 통과한 청크만으로 만든
   // 요약은 영구히 쓰인다. 중단해 파일을 쓰지 않아야 다음 sync 가 다시 요약한다.
@@ -315,10 +317,41 @@ describe('Agent SDK 거절 신호와 대체 모델 (2차 검토)', () => {
     expect(queryCalls.length).toBe(4);
   });
 
-  it('긴 대화의 청크가 전부 400 이면 아무것도 쓰지 않도록 throw 한다 (거절 표식도 아니다)', async () => {
+  it('400 청크 다음에 통과한 청크가 있으면 계속한다', async () => {
+    agentQueue.push(fail400, ok('둘째 청크'), ok('셋째 청크'), ok('합성 결과'));
+    const { summarizeConversation } = await import('../src/summarizer.js');
+    await expect(summarizeConversation(longConversation())).resolves.toBe('합성 결과');
+    expect(queryCalls.length).toBe(4);
+  });
+
+  // 모든 요청이 400 을 받는 상황(설정·계정)에서 청크마다 부르면 sync 마다 대화당 N회가 된다 (5차 검토 F-B).
+  it('통과한 청크 없이 400 이 두 번 나면 남은 청크를 부르지 않고 throw 한다', async () => {
     agentMessages = fail400;
     const { summarizeConversation } = await import('../src/summarizer.js');
+    await expect(summarizeConversation(longConversation())).rejects.toThrow(/API Error: 400/);
+    expect(queryCalls.length).toBe(2);
+  });
+
+  it('거절과 400 만으로 끝나 통과한 청크가 없으면 아무것도 쓰지 않도록 throw 한다 (거절 표식도 아니다)', async () => {
+    agentQueue.push(refusalTurn, fail400, refusalTurn);
+    const { summarizeConversation } = await import('../src/summarizer.js');
     await expect(summarizeConversation(longConversation())).rejects.toThrow(/all 3 chunks were refused or rejected/);
+  });
+
+  // 출력 한도 초과는 분류기에서 "다시 해도 같은 실패"로 읽힌다. 건너뛰면 부분 요약이 영구히
+  // 쓰이는데, 이는 요청이 아니라 설정(사고하는 모델의 한도) 문제다 (5차 검토 F-A).
+  it('출력 한도에 걸린 청크는 건너뛰지 않고 요약 전체를 실패로 끝낸다', async () => {
+    agentQueue.push(ok('첫 청크'), cutOff, ok('셋째 청크'), ok('합성'));
+    const { summarizeConversation } = await import('../src/summarizer.js');
+    await expect(summarizeConversation(longConversation())).rejects.toThrow(/output token cap/);
+    expect(queryCalls.length).toBe(2);
+  });
+
+  it('본문이 빈 청크(분류 불명)는 건너뛰지 않고 요약 전체를 실패로 끝낸다', async () => {
+    agentQueue.push(ok('첫 청크'), emptyOk, ok('셋째 청크'), ok('합성'));
+    const { summarizeConversation } = await import('../src/summarizer.js');
+    await expect(summarizeConversation(longConversation())).rejects.toThrow(/no summary text/);
+    expect(queryCalls.length).toBe(2);
   });
 
   it('긴 대화의 청크가 전부 거절되면 거절 표식을 돌려준다', async () => {

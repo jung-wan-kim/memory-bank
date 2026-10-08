@@ -73,6 +73,11 @@ export function resolveArchiveFile(filePath: string): string | null {
   return null;
 }
 
+/** Whether a file name is a conversation summary, plain or compressed. */
+export function isSummaryFileName(fileName: string): boolean {
+  return canonicalArchiveName(fileName).endsWith('-summary.txt');
+}
+
 /** Remove an archive file in both its plain and compressed forms (either may be absent). */
 export function removeArchiveFile(filePath: string): void {
   fs.rmSync(filePath, { force: true });

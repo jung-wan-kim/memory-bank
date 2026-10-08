@@ -11,6 +11,7 @@ import {
   readArchiveFile,
   createArchiveReadStream,
   statArchiveFile,
+  isSummaryFileName,
 } from '../src/archive-io.js';
 
 const zstdCompressSync: ((buf: Buffer) => Buffer) | undefined =
@@ -37,6 +38,19 @@ describe('archive-io', () => {
       expect(canonicalArchiveName('abc.jsonl.zst')).toBe('abc.jsonl');
       expect(canonicalArchiveName('abc.jsonl')).toBe('abc.jsonl');
       expect(canonicalArchiveName('abc-summary.txt.zst')).toBe('abc-summary.txt');
+    });
+  });
+
+  // rebuild deletes summaries by this test; it once matched only the plain name,
+  // and a compressed summary left behind kept the conversation from ever being
+  // summarized again.
+  describe('isSummaryFileName', () => {
+    it('matches plain and compressed summaries, not conversations', () => {
+      expect(isSummaryFileName('abc-summary.txt')).toBe(true);
+      expect(isSummaryFileName('abc-summary.txt.zst')).toBe(true);
+      expect(isSummaryFileName('abc.jsonl')).toBe(false);
+      expect(isSummaryFileName('abc.jsonl.zst')).toBe(false);
+      expect(isSummaryFileName('abc-summary.txt.bak')).toBe(false);
     });
   });
 
