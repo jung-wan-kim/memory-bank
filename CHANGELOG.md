@@ -26,7 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **백그라운드 동기화는 가장 낮은 우선순위**(nice 19, `MEMORY_BANK_SYNC_NICE=0` 이면 끔): 원조 #124 의 onnxruntime intra-op 스레드 제한은 @xenova/transformers 2.17 + onnxruntime-node 1.14 에서 효과가 없었다(intraOpNumThreads 1·2·미지정 모두 추론 중 약 8코어, 벡터는 동일). 그래서 코어를 막는 대신 사용자 작업에 양보하게 했다. 직접 실행한 `memory-bank sync` 는 그대로다.
 - **npm 설치 잠금**(obra #161 개념): MCP 래퍼의 첫 설치·복구 설치와 훅 자가 치유(deps-heal)가 같은 폴더에서 동시에 `npm install` 을 돌릴 수 없다(`.npm-install.lock`, 죽은 소유자·15분 넘은 잠금은 회수). 기다린 쪽은 다시 설치하지 않고 의존성이 갖춰졌는지만 본다. 처음 설치가 실패하면 그때 만든 `node_modules`·`package-lock.json` 을 지운다 — 2026-10-30 업데이트 직후 반쯤 설치된 트리(better-sqlite3 누락)와 버전 빈 잠금 파일 때문에 이후 설치가 모두 `Invalid Version` 으로 실패했다. 래퍼의 첫 설치 판단도 `node_modules` 존재가 아니라 선언된 의존성이 모두 있는지로 바꿨다.
 - `package.json` `allowScripts`: better-sqlite3·onnxruntime-node 허용, sharp 거부(obra #167).
-- upstream 병합 시 fork 전용 CLI 폴백 체인(`MEMORY_BANK_USE_CLI`, 기본 꺼짐)은 뺐다.
 
 ### 테스트
 
