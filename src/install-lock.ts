@@ -35,6 +35,17 @@ export function depsPresent(root: string): boolean {
   }
 }
 
+const ACTIVE_TREE_MS = 60_000;
+
+/** Time since npm last touched the tree (node_modules or its hidden lockfile); Infinity if neither exists. */
+function msSinceTreeChange(root: string): number {
+  let latest = 0;
+  for (const p of [path.join(root, 'node_modules'), path.join(root, 'node_modules', '.package-lock.json')]) {
+    try { latest = Math.max(latest, fs.statSync(p).mtimeMs); } catch { /* absent */ }
+  }
+  return latest === 0 ? Infinity : Date.now() - latest;
+}
+
 function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -59,6 +70,11 @@ export function acquireInstallLock(root: string): boolean {
     } catch { /* torn lock: no pid yet */ }
     if (holder > 0 && pidAlive(holder) && ageMs < STALE_MS) return false;
     if (holder === 0 && ageMs < 5_000) return false; // holder still writing its pid
+    // A dead holder can still have a live npm: killed mid-spawnSync (an MCP
+    // startup timeout), it leaves npm running on its own. Seen 2026-10-31: the
+    // install finished with the lock left behind. While node_modules is still
+    // changing, an install is in flight — reclaiming now would run a second one.
+    if (ageMs < STALE_MS && msSinceTreeChange(root) < ACTIVE_TREE_MS) return false;
     // Reclaim by rename, not rm: when two waiters both judge the lock stale,
     // only one rename succeeds — an rm by the slower one would delete the lock
     // the faster one had just re-created, and both would install at once.

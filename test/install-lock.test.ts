@@ -50,3 +50,20 @@ describe('install lock ownership', () => {
     expect(acquireInstallLock(root)).toBe(false);
   });
 });
+
+describe('dead holder with npm still running', () => {
+  let root: string;
+  beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-install-orphan-')); });
+  afterEach(() => { fs.rmSync(root, { recursive: true, force: true }); });
+
+  it('is not reclaimed while node_modules is still changing, and is once it settles', () => {
+    const lockDir = path.join(root, '.npm-install.lock');
+    fs.mkdirSync(lockDir);
+    fs.writeFileSync(path.join(lockDir, 'pid'), '999999'); // holder killed mid-install
+    fs.mkdirSync(path.join(root, 'node_modules'));         // its npm just wrote here
+    expect(acquireInstallLock(root)).toBe(false);
+    const settled = new Date(Date.now() - 120_000);
+    fs.utimesSync(path.join(root, 'node_modules'), settled, settled);
+    expect(acquireInstallLock(root)).toBe(true);
+  });
+});

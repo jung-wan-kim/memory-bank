@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.10] - 2026-10-31
+
+### 바뀐 점
+
+- **설치 잠금: 소유자가 죽었어도 npm 이 아직 돌고 있으면 회수하지 않는다.** MCP 시작 시간 초과로 래퍼가 `spawnSync` 도중 죽으면 npm 은 혼자 남아 설치를 끝내고 잠금만 남는다(1.7.9 설치 직후 실측). 그동안 다른 세션이 "죽은 소유자"로 보고 회수하면 두 번째 설치가 겹친다. 이제 `node_modules` 가 60초 안에 바뀌었으면 기다린다.
+
 ## [1.7.9] - 2026-10-31
 
 동기화가 쌓인 데이터를 매번 처음부터 다시 처리하던 것을 고쳤다. 실측(대화 원본 76GB·13,303개, 색인 DB 24GB): 동기화 한 번이 CPU 610%·메모리 3.1GB, 10분 안에 바뀐 대화 62개(1.8GB, 최대 1.2GB)를 전부 다시 임베딩하고, 요약 후보를 고르느라 요약 없는 대화 13,280개(16.8GB)를 통째로 읽었다. 원조 obra/episodic-memory v1.6.0 의 수정(#152·#139·#161·#167)을 옮기고, 원조에 남은 한 가지를 보정했다.
