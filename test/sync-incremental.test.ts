@@ -195,6 +195,23 @@ describe('summary candidates', () => {
     expect(fs.existsSync(oldest.replace('.jsonl', '-summary.txt'))).toBe(false);
   });
 
+  it('an empty conversation does not take a summary slot (obra #91)', async () => {
+    const empty = path.join(sourceDir, 'proj', '00000009-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl');
+    fs.writeFileSync(empty, JSON.stringify({ type: 'ai-title', title: 'x' }) + '\n'); // newest, but no messages
+    const real = session(1, 100);
+    const result = await syncConversations(sourceDir, destDir, { skipIndex: true, summaryLimit: 1 });
+    expect(result.summarized).toBe(1);
+    expect(summarized).toEqual([real]);
+  });
+
+  it('a dangling symlink among the projects does not abort the sync (obra #143)', async () => {
+    const real = session(1, 10);
+    fs.symlinkSync(path.join(testDir, 'gone'), path.join(sourceDir, 'broken-link'));
+    const result = await syncConversations(sourceDir, destDir, { skipIndex: true });
+    expect(result.copied).toBe(1);
+    expect(summarized).toEqual([real]);
+  });
+
   it('MEMORY_BANK_SKIP_SUMMARIES=1 skips the summary pass', async () => {
     session(1, 10);
     process.env.MEMORY_BANK_SKIP_SUMMARIES = '1';

@@ -55,6 +55,45 @@ export function shouldSkipConversation(filePath: string): boolean {
   }
 }
 
+/**
+ * Whether the transcript has both a user and an assistant message line — i.e.
+ * can yield an exchange to summarize. A transcript with none writes no summary
+ * file, so it stayed a candidate on every run (obra #91); picked newest-first,
+ * empty ones took the per-run summary slots ahead of real conversations
+ * (measured: 3 of the 50 newest candidates). Skipped, not marked: a session that
+ * has no messages *yet* is picked up once it does. Stops at the first of each.
+ */
+function hasConversationContent(filePath: string): boolean {
+  const resolved = resolveArchiveFile(filePath);
+  if (!resolved) return false;
+  const found = (text: string) => text.includes('"type":"user"') && text.includes('"type":"assistant"');
+  if (resolved !== filePath) {
+    try { return found(readArchiveFile(filePath)); } catch { return false; }
+  }
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.allocUnsafe(MARKER_SCAN_CHUNK_BYTES);
+    const decoder = new StringDecoder('utf8');
+    let user = false;
+    let assistant = false;
+    let carry = '';
+    let bytesRead: number;
+    while ((bytesRead = fs.readSync(fd, buf, 0, buf.length, null)) > 0) {
+      const window = carry + decoder.write(buf.subarray(0, bytesRead));
+      user ||= window.includes('"type":"user"');
+      assistant ||= window.includes('"type":"assistant"');
+      if (user && assistant) return true;
+      carry = window.slice(-32);
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* best effort */ } }
+  }
+}
+
 /** MEMORY_BANK_SKIP_SUMMARIES=1 skips the summary pass (obra #159) — for a nightly batch to own it. */
 function summariesDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const v = env.MEMORY_BANK_SKIP_SUMMARIES;
@@ -159,7 +198,15 @@ export async function syncConversations(
     }
 
     const projectPath = path.join(sourceDir, project);
-    const stat = fs.statSync(projectPath);
+    // A dangling symlink (or an entry removed mid-walk) used to throw here and
+    // abort the whole sync, not just this project (obra #143).
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(projectPath);
+    } catch (error) {
+      result.errors.push({ file: projectPath, error: error instanceof Error ? error.message : String(error) });
+      continue;
+    }
 
     if (!stat.isDirectory()) continue;
 
@@ -207,7 +254,7 @@ export async function syncConversations(
       summaryBacklog++;
       continue;
     }
-    if (!shouldSkipConversation(candidate.path)) {
+    if (hasConversationContent(candidate.path) && !shouldSkipConversation(candidate.path)) {
       filesToSummarize.push({ path: candidate.path, sessionId: candidate.sessionId });
     }
   }

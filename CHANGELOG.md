@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.11] - 2026-10-31
+
+### 바뀐 점
+
+- **빈 대화는 요약 자리를 차지하지 않는다**(obra #91 개념): 사용자·답 메시지 줄이 없는 대화는 요약 파일이 생기지 않아 매번 후보로 남았고, 최신순 선택에서 회차당 요약 자리를 먼저 차지했다(실측: 최신 후보 50개 중 3개). 표시를 남기지 않고 건너뛰므로, 아직 메시지가 없는 막 시작한 세션은 메시지가 생긴 뒤에 고른다.
+- **끊긴 심링크 하나가 동기화 전체를 멈추지 않는다**(obra #143): 프로젝트 폴더 `stat` 실패는 그 항목만 오류로 남기고 넘어간다.
+
 ## [1.7.10] - 2026-10-31
 
 ### 바뀐 점
