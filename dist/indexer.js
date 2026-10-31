@@ -6,6 +6,7 @@ import { initEmbeddings, generateExchangeEmbedding } from './embeddings.js';
 import { summarizeConversation } from './summarizer.js';
 import { getArchiveDir, getExcludedProjects, isExcludedProject, isWorkerPromptMessage, getProjectsDir } from './paths.js';
 import { archiveFileExists, statArchiveFile } from './archive-io.js';
+import { getMaxMessageBytes, isOversizeExchange } from './message-size.js';
 /**
  * Copy source → archive unless a current copy (plain or .zst) already exists.
  * A stale compressed copy must not mask a newer source file.
@@ -124,6 +125,8 @@ export async function indexConversations(limitToProject, maxConversations, concu
                 // project slugs, so the slug exclusion can't catch them).
                 if (isWorkerPromptMessage(exchange.userMessage))
                     continue;
+                if (isOversizeExchange(exchange, getMaxMessageBytes()))
+                    continue; // pasted transcript/tool dump, not a memory (obra #139)
                 const toolNames = exchange.toolCalls?.map(tc => tc.toolName);
                 const embedding = await generateExchangeEmbedding(exchange.userMessage, exchange.assistantMessage, toolNames);
                 insertExchange(db, exchange, embedding, toolNames);
@@ -189,6 +192,8 @@ export async function indexSession(sessionId, concurrency = 1, noSummaries = fal
                 for (const exchange of exchanges) {
                     if (isWorkerPromptMessage(exchange.userMessage))
                         continue; // worker prompt = ephemeral state, not knowledge
+                    if (isOversizeExchange(exchange, getMaxMessageBytes()))
+                        continue; // pasted transcript/tool dump, not a memory (obra #139)
                     const toolNames = exchange.toolCalls?.map(tc => tc.toolName);
                     const embedding = await generateExchangeEmbedding(exchange.userMessage, exchange.assistantMessage, toolNames);
                     insertExchange(db, exchange, embedding, toolNames);
@@ -279,6 +284,8 @@ export async function indexUnprocessed(concurrency = 1, noSummaries = false) {
         for (const exchange of conv.exchanges) {
             if (isWorkerPromptMessage(exchange.userMessage))
                 continue; // worker prompt = ephemeral state, not knowledge
+            if (isOversizeExchange(exchange, getMaxMessageBytes()))
+                continue; // pasted transcript/tool dump, not a memory (obra #139)
             const toolNames = exchange.toolCalls?.map(tc => tc.toolName);
             const embedding = await generateExchangeEmbedding(exchange.userMessage, exchange.assistantMessage, toolNames);
             insertExchange(db, exchange, embedding, toolNames);

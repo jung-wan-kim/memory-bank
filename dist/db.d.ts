@@ -68,4 +68,18 @@ export declare function getAllExchanges(db: Database.Database): Array<{
     archivePath: string;
 }>;
 export declare function getFileLastIndexed(db: Database.Database, archivePath: string): number | null;
+/**
+ * Resume point for incremental sync: the line_start of the last exchange
+ * indexed for this archive, or 0 when none is. Transcripts are append-only, so
+ * everything before it is final; the exchange AT it may have been indexed
+ * while its reply was still streaming and is re-read on the next sync.
+ */
+export declare function getResumeLine(db: Database.Database, archivePath: string): number;
+/**
+ * Drop rows at or past `fromLine` for this archive that the re-read did not
+ * produce again. An exchange's id hashes its last assistant line, so a reply
+ * that kept streaming after the previous sync comes back under a new id and
+ * leaves the cut-off row behind. Removes its tool calls and vector too.
+ */
+export declare function deleteSupersededExchanges(db: Database.Database, archivePath: string, fromLine: number, keepIds: string[]): number;
 export declare function deleteExchange(db: Database.Database, id: string): void;

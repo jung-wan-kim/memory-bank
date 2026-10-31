@@ -49,7 +49,10 @@ describe('SDK 플랫폼 실행 파일 누락', () => {
     const { noteSdkFailure } = await import('../src/deps-heal.js');
     noteSdkFailure(SDK_ERROR, 'memory-bank llm', root);
     noteSdkFailure(SDK_ERROR, 'memory-bank llm', root);
-    expect(spawned).toEqual([{ cmd: 'npm', args: ['install', '--no-audit', '--no-fund'], cwd: root }]);
+    // Runs through install-lock.js so it cannot race the MCP wrapper's install.
+    expect(spawned).toEqual([
+      { cmd: process.execPath, args: [path.join(root, 'dist', 'install-lock.js'), root, 'memory-bank llm'], cwd: root },
+    ]);
     expect(fs.existsSync(path.join(root, '.deps-heal-attempted'))).toBe(true);
     const msgs = stderr.filter((l) => l.includes('platform binary missing'));
     expect(msgs).toHaveLength(2);

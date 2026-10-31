@@ -32,7 +32,9 @@ export function selfHealDeps(root, label) {
         return false; // already attempted for this install
     }
     try {
-        const child = spawn('npm', ['install', '--no-audit', '--no-fund'], {
+        // Through install-lock.js so it never races the MCP wrapper's install in
+        // the same directory (2026-10-30 half-installed tree).
+        const child = spawn(process.execPath, [path.join(root, 'dist', 'install-lock.js'), root, label], {
             // windowsHide: a detached process without an inherited console opens a new
             // conhost window on Windows (no-op elsewhere).
             cwd: root, detached: true, stdio: 'ignore', windowsHide: true,

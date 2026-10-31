@@ -1,8 +1,10 @@
 import fs from 'fs';
 import path from 'path';
+import { StringDecoder } from 'string_decoder';
 import { SUMMARIZER_CONTEXT_MARKER } from './constants.js';
 import { getExcludedProjects, isExcludedProject, isWorkerPromptMessage, detectCodingAgent } from './paths.js';
-import { archiveFileExists, readArchiveFile, statArchiveFile } from './archive-io.js';
+import { archiveFileExists, readArchiveFile, resolveArchiveFile, statArchiveFile } from './archive-io.js';
+import { getMaxMessageBytes, isOversizeExchange } from './message-size.js';
 
 const EXCLUSION_MARKERS = [
   '<INSTRUCTIONS-TO-EPISODIC-MEMORY>DO NOT INDEX THIS CHAT</INSTRUCTIONS-TO-EPISODIC-MEMORY>',
@@ -10,14 +12,53 @@ const EXCLUSION_MARKERS = [
   SUMMARIZER_CONTEXT_MARKER,
 ];
 
-function shouldSkipConversation(filePath: string): boolean {
-  try {
-    const content = readArchiveFile(filePath);
-    return EXCLUSION_MARKERS.some(marker => content.includes(marker));
-  } catch (error) {
-    // If we can't read the file, don't skip it
-    return false;
+const MARKER_SCAN_CHUNK_BYTES = 1 << 20; // 1 MiB
+
+/**
+ * Stream the file looking for an exclusion marker, carrying an overlap between
+ * chunks so a marker split across a boundary is still found (obra #152).
+ * readFileSync(…, 'utf-8') throws ERR_STRING_TOO_LONG above ~512 MB, and the
+ * old catch returned false — a large transcript was indexed without its
+ * DO NOT INDEX marker ever being read. A read error now fails closed (skip).
+ * `.zst` archives are capped by the decompression limit, so they are read whole.
+ */
+export function shouldSkipConversation(filePath: string): boolean {
+  const resolved = resolveArchiveFile(filePath);
+  if (!resolved) return true;
+  if (resolved !== filePath) {
+    try {
+      const content = readArchiveFile(filePath);
+      return EXCLUSION_MARKERS.some(marker => content.includes(marker));
+    } catch {
+      return true;
+    }
   }
+  const maxMarkerLen = Math.max(...EXCLUSION_MARKERS.map(m => m.length));
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.allocUnsafe(MARKER_SCAN_CHUNK_BYTES);
+    const decoder = new StringDecoder('utf8');
+    let carry = '';
+    let bytesRead: number;
+    while ((bytesRead = fs.readSync(fd, buf, 0, buf.length, null)) > 0) {
+      const window = carry + decoder.write(buf.subarray(0, bytesRead));
+      if (EXCLUSION_MARKERS.some(marker => window.includes(marker))) return true;
+      carry = window.slice(Math.max(0, window.length - (maxMarkerLen - 1)));
+    }
+    const tail = carry + decoder.end();
+    return EXCLUSION_MARKERS.some(marker => tail.includes(marker));
+  } catch {
+    return true;
+  } finally {
+    if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* best effort */ } }
+  }
+}
+
+/** MEMORY_BANK_SKIP_SUMMARIES=1 skips the summary pass (obra #159) — for a nightly batch to own it. */
+function summariesDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = env.MEMORY_BANK_SKIP_SUMMARIES;
+  return v === '1' || v === 'true';
 }
 
 export interface SyncResult {
@@ -53,10 +94,12 @@ function copyIfNewer(src: string, dest: string): boolean {
     }
   }
 
-  // Atomic copy: temp file + rename
+  // Atomic copy: temp file + rename. FICLONE makes it a copy-on-write clone on
+  // APFS (no data copied — live transcripts reach 1 GB and change every few
+  // minutes); Node falls back to a byte copy where cloning is unsupported.
   const tempDest = dest + '.tmp.' + process.pid;
   try {
-    fs.copyFileSync(src, tempDest);
+    fs.copyFileSync(src, tempDest, fs.constants.COPYFILE_FICLONE);
     fs.renameSync(tempDest, dest); // Atomic on same filesystem
   } catch (e) {
     try { fs.unlinkSync(tempDest); } catch { /* cleanup best effort */ }
@@ -99,6 +142,11 @@ export async function syncConversations(
   // Collect files to index and summarize
   const filesToIndex: string[] = [];
   const filesToSummarize: Array<{ path: string; sessionId: string }> = [];
+  // Summary candidates are only stat'ed during the walk. Marker-scanning every
+  // unsummarized transcript each run read the whole backlog (measured: 13k
+  // files, 16.8 GB per sync) to pick at most summaryLimit of them.
+  const summaryCandidates: Array<{ path: string; sessionId: string; mtimeMs: number }> = [];
+  const skipSummaries = options.skipSummaries || summariesDisabled();
 
   // Walk source directory
   const projects = fs.readdirSync(sourceDir);
@@ -131,12 +179,13 @@ export async function syncConversations(
         }
 
         // Check if this file needs a summary (whether newly copied or existing)
-        if (!options.skipSummaries) {
+        if (!skipSummaries) {
           const summaryPath = destFile.replace('.jsonl', '-summary.txt');
-          if (!archiveFileExists(summaryPath) && !shouldSkipConversation(destFile)) {
+          if (!archiveFileExists(summaryPath)) {
             const sessionId = extractSessionIdFromPath(destFile);
-            if (sessionId) {
-              filesToSummarize.push({ path: destFile, sessionId });
+            // Source mtime: the archive copy carries the time it was copied.
+            if (sessionId && archiveFileExists(destFile)) {
+              summaryCandidates.push({ path: destFile, sessionId, mtimeMs: fs.statSync(srcFile).mtimeMs });
             }
           }
         }
@@ -149,14 +198,30 @@ export async function syncConversations(
     }
   }
 
+  // Newest first, marker-scanned lazily until the per-run limit is filled.
+  const summaryLimit = options.summaryLimit ?? 10;
+  summaryCandidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  let summaryBacklog = 0;
+  for (const candidate of summaryCandidates) {
+    if (filesToSummarize.length >= summaryLimit) {
+      summaryBacklog++;
+      continue;
+    }
+    if (!shouldSkipConversation(candidate.path)) {
+      filesToSummarize.push({ path: candidate.path, sessionId: candidate.sessionId });
+    }
+  }
+
   // Index copied files (unless skipIndex is set)
   if (!options.skipIndex && filesToIndex.length > 0) {
-    const { initDatabase, insertExchange } = await import('./db.js');
+    const { initDatabase, insertExchange, getResumeLine, deleteSupersededExchanges } = await import('./db.js');
     const { initEmbeddings, generateExchangeEmbedding } = await import('./embeddings.js');
     const { parseConversation } = await import('./parser.js');
 
     const db = initDatabase();
     await initEmbeddings();
+    const maxMessageBytes = getMaxMessageBytes();
+    let oversizeSkipped = 0;
 
     for (const file of filesToIndex) {
       try {
@@ -165,22 +230,47 @@ export async function syncConversations(
           continue; // Skip indexing but file is already copied
         }
 
+        // Incremental: a grown transcript used to re-embed every exchange on
+        // every sync (obra #152), so cost grew with session length. Resume at
+        // the last indexed exchange's line_start — not MAX(line_end) as obra
+        // does — so a reply still streaming at the previous sync is re-read
+        // whole instead of staying cut off.
+        const resumeLine = getResumeLine(db, file);
         const project = path.basename(path.dirname(file));
         const exchanges = await parseConversation(file, project, file);
+        const pending = resumeLine > 0
+          ? exchanges.filter(e => e.lineStart >= resumeLine)
+          : exchanges;
+        const writtenIds: string[] = [];
 
-        for (const exchange of exchanges) {
-          // Worker-prompt exchange = ephemeral state, not knowledge — never index.
-          if (isWorkerPromptMessage(exchange.userMessage)) continue;
-          // Tag each exchange with the coding agent
-          exchange.codingAgent = codingAgent;
+        try {
+          for (const exchange of pending) {
+            // Worker-prompt exchange = ephemeral state, not knowledge — never index.
+            if (isWorkerPromptMessage(exchange.userMessage)) continue;
+            if (isOversizeExchange(exchange, maxMessageBytes)) {
+              oversizeSkipped++;
+              continue;
+            }
+            // Tag each exchange with the coding agent
+            exchange.codingAgent = codingAgent;
 
-          const toolNames = exchange.toolCalls?.map(tc => tc.toolName);
-          const embedding = await generateExchangeEmbedding(
-            exchange.userMessage,
-            exchange.assistantMessage,
-            toolNames
-          );
-          insertExchange(db, exchange, embedding, toolNames);
+            const toolNames = exchange.toolCalls?.map(tc => tc.toolName);
+            const embedding = await generateExchangeEmbedding(
+              exchange.userMessage,
+              exchange.assistantMessage,
+              toolNames
+            );
+            insertExchange(db, exchange, embedding, toolNames);
+            writtenIds.push(exchange.id);
+          }
+        } finally {
+          // Also after a failure part-way: once later rows land, the next
+          // resume point moves past resumeLine and a cut-off row left here
+          // would never be cleaned. Dropping a not-yet-rewritten row is safe —
+          // the resume point falls back and the next sync re-reads it.
+          if (resumeLine > 0) {
+            deleteSupersededExchanges(db, file, resumeLine, writtenIds);
+          }
         }
 
         result.indexed++;
@@ -193,23 +283,22 @@ export async function syncConversations(
     }
 
     db.close();
+    if (oversizeSkipped > 0) {
+      console.error(`  Skipped ${oversizeSkipped} oversize exchange(s) (> ${maxMessageBytes} bytes; set MEMORY_BANK_MAX_MESSAGE_BYTES to change)`);
+    }
   }
 
   // Generate summaries for files that need them
-  if (!options.skipSummaries && filesToSummarize.length > 0) {
+  if (!skipSummaries && filesToSummarize.length > 0) {
     const { parseConversation } = await import('./parser.js');
     const { summarizeConversation } = await import('./summarizer.js');
 
-    const summaryLimit = options.summaryLimit ?? 10;
-    const toSummarize = filesToSummarize.slice(0, summaryLimit);
-    const remaining = filesToSummarize.length - toSummarize.length;
-
-    console.error(`Generating summaries for ${toSummarize.length} conversation(s)...`);
-    if (remaining > 0) {
-      console.error(`  (${remaining} more need summaries - will process on next sync)`);
+    console.error(`Generating summaries for ${filesToSummarize.length} conversation(s)...`);
+    if (summaryBacklog > 0) {
+      console.error(`  (${summaryBacklog} more need summaries - will process on next sync)`);
     }
 
-    for (const { path: filePath } of toSummarize) {
+    for (const { path: filePath } of filesToSummarize) {
       try {
         const project = path.basename(path.dirname(filePath));
         const exchanges = await parseConversation(filePath, project, filePath);

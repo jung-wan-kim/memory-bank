@@ -22,7 +22,7 @@
  * Protocol logic lives in ../dist/wrapper-core.js (unit-tested).
  */
 
-import { spawn, spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import os from 'os';
 import { dirname, join } from 'path';
@@ -35,6 +35,7 @@ import {
   abortedRequestError,
 } from '../dist/wrapper-core.js';
 import { compatibleNodeFor } from '../dist/node-abi.js';
+import { depsPresent, runNpmLocked } from '../dist/install-lock.js';
 
 /** Map a signal name to its conventional exit code (128 + signum). */
 function signalExitCode(signal) {
@@ -61,14 +62,9 @@ function diskVersion() {
 function runNpm(args, reason) {
   if (NO_NPM) return false;
   console.error(`memory-bank wrapper: running npm ${args[0]} (${reason})...`);
-  const isWindows = process.platform === 'win32';
-  const r = spawnSync(isWindows ? 'npm.cmd' : 'npm', args, {
-    cwd: PLUGIN_ROOT,
-    stdio: ['ignore', 'ignore', 'inherit'],
-    shell: isWindows,
-    timeout: 300_000,
-  });
-  const ok = r.status === 0;
+  // Locked: sessions started together after an update must not run npm in
+  // the same directory at once (2026-10-30 half-installed tree).
+  const ok = runNpmLocked(PLUGIN_ROOT, args, 'memory-bank wrapper');
   console.error(ok ? `memory-bank wrapper: npm ${args[0]} done.` : `memory-bank wrapper: npm ${args[0]} FAILED.`);
   return ok;
 }
@@ -237,7 +233,9 @@ function onChildExit(code, signal) {
 
 async function main() {
   try {
-    if (!existsSync(join(PLUGIN_ROOT, 'node_modules'))) {
+    // Declared deps, not mere existence of node_modules: a half-finished tree
+    // passed the old existsSync check and the server died on import.
+    if (!depsPresent(PLUGIN_ROOT)) {
       if (!npmInstall('first run') && !NO_NPM) {
         console.error(`Please run manually: cd "${PLUGIN_ROOT}" && npm install`);
         process.exit(1);
