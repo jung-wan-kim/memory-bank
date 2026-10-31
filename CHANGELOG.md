@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.13] - 2026-10-31
+
+### 바뀐 점
+
+- **`tool_calls` 를 호출 단위 집합으로 저장한다.** 행 id 를 파싱마다 새로 만드는 무작위 값 대신 `md5(아카이브 경로 + 트랜스크립트의 tool_use id)` 로 만든다. Claude Code 는 같은 tool_use 를 여러 줄에 기록하므로(실측: 212줄에 호출 106개), 무작위 id 로는 한 번 색인할 때도 줄 수만큼, 다시 색인할 때마다 그만큼 더 쌓였다. 이제 `INSERT OR REPLACE` 가 같은 호출을 한 행으로 합치고, 입력까지 같은 서로 다른 두 호출은 두 행으로 남는다(내용 기준 중복 제거는 이 경우 하나로 합친다 — 표본 760건 중 1건). 경로를 함께 넣는 이유는, 이어서 열거나 갈라 연 세션이 이전 메시지를 새 트랜스크립트로 복사하므로 tool_use id 만으로는 원래 대화의 행이 새 대화로 옮겨 가기 때문이다. id 가 없는 줄은 줄 번호와 블록 순번으로 고정 id 를 만든다.
+
 ## [1.7.12] - 2026-10-31
 
 ### 바뀐 점

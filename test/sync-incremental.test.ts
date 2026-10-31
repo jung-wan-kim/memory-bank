@@ -140,6 +140,29 @@ describe('incremental sync (obra #152 port)', () => {
     expect(tools).toBe(1);
   });
 
+  it('tool_calls is a set keyed by the transcript tool_use id (per archive)', async () => {
+    const use = (toolId: string, input: object) => JSON.stringify({
+      type: 'assistant', uuid: `u-${toolId}-${Math.random()}`, parentUuid: null, sessionId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      timestamp: '2026-10-31T00:00:00Z', isSidechain: false,
+      message: { role: 'assistant', content: [{ type: 'tool_use', id: toolId, name: 'Read', input }] },
+    }) + '\n';
+    // toolu_A written twice (Claude Code repeats a tool_use across lines); toolu_B and
+    // toolu_C are two real calls with identical input.
+    fs.writeFileSync(src, line('user', 'q1') + use('toolu_A', { f: 1 }) + use('toolu_A', { f: 1 })
+      + use('toolu_B', { f: 2 }) + use('toolu_C', { f: 2 }) + line('assistant', 'a1'));
+    await syncConversations(sourceDir, destDir);
+    // A forked session copies the same calls into another transcript.
+    const fork = path.join(sourceDir, 'proj', 'ffffffff-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl');
+    fs.copyFileSync(src, fork);
+    await syncConversations(sourceDir, destDir);
+    const db = new Database(process.env.TEST_DB_PATH!);
+    const perArchive = db.prepare(
+      'SELECT e.archive_path AS p, COUNT(*) AS c FROM tool_calls t JOIN exchanges e ON e.id = t.exchange_id GROUP BY e.archive_path'
+    ).all() as Array<{ p: string; c: number }>;
+    db.close();
+    expect(perArchive.map(r => r.c)).toEqual([3, 3]);
+  });
+
   it('does not re-embed an unchanged file', async () => {
     fs.writeFileSync(src, line('user', 'q1') + line('assistant', 'a1'));
     await syncConversations(sourceDir, destDir);
