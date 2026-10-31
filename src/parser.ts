@@ -127,10 +127,10 @@ export async function parseConversation(
             blockIndex++;
             if (block.type === 'tool_use') {
               // The transcript's own tool_use id (toolu_…), so tool_calls is a set
-              // keyed by call: Claude Code writes the same tool_use on several
-              // lines (measured: 212 lines for 106 calls), and a random id per
-              // parse stored every line, on every re-index — 95.8% of 15.4M rows
-              // were copies. INSERT OR REPLACE on this id keeps one row per call,
+              // keyed by call: a random id per parse added every call again on
+              // every re-index of its exchange — 15.4M rows for 648k calls
+              // (23.7x) after <=1.7.8 re-read growing transcripts each sync.
+              // INSERT OR REPLACE on this id keeps one row per call,
               // and two real calls with identical input stay two rows. Scoped to
               // the archive: a resumed or forked session copies earlier messages
               // into a new transcript, and a bare toolu_ id would move the row
