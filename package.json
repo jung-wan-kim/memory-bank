@@ -1,6 +1,6 @@
 {
   "name": "memory-bank",
-  "version": "1.7.11",
+  "version": "1.7.12",
   "description": "Semantic search for Claude Code conversations",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -21,7 +21,7 @@
   "allowScripts": {
     "better-sqlite3": true,
     "onnxruntime-node": true,
-    "sharp": false
+    "sharp": true
   },
   "keywords": [
     "claude-code",

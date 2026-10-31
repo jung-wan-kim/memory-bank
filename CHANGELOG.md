@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.12] - 2026-10-31
+
+### 바뀐 점
+
+- **`allowScripts` 에서 sharp 를 허용한다 — 1.7.9~1.7.11 의 동기화 전면 실패 수정.** obra #167 은 sharp 를 거부하는데, obra 는 sharp 를 쓰지 않는 @huggingface/transformers 를 쓰기 때문이다. 이 포크의 @xenova/transformers 2.17 은 불러올 때 sharp 를 읽으므로(`src/utils/image.js`), 설치 스크립트를 막자 네이티브 바이너리가 없어 임베딩 모듈이 로드되지 않았고 모든 동기화가 `Cannot find module '../build/Release/sharp-darwin-arm64v8.node'` 로 끝났다(완료 기록 없음 — 그 사이 대화는 다음 동기화가 따라잡는다). 단위 테스트는 임베딩을 대체했고 실데이터 비교는 sharp 가 이미 설치된 개발 폴더에서 돌아 잡지 못했다. `test/allow-scripts.test.ts` 로 고정.
+
 ## [1.7.11] - 2026-10-31
 
 ### 바뀐 점
