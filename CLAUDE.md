@@ -44,6 +44,7 @@ The build is two-step: `tsc` compiles `src/` → `dist/`, then `esbuild` bundles
 | `vec-compact.ts` | Rebuild a fact-side vec0 table without deleted slots (same ids, bytes, dtype, scale) |
 | `vec-migrate-guard.ts` | Refuses a vec format change while processes or install dirs run older code |
 | `node-abi.ts` | Finds a node whose ABI matches better-sqlite3 and re-runs a hook under it |
+| `native/inject-client/` (Rust) | Optional thin client of the UserPromptSubmit hook — the warm path of `scripts/inject-context.js` field for field (envelope, prompt gate with UTF-16 lengths, daemon socket, ledger, skipped log); built by `scripts/build-native-client.sh` at SessionStart when cargo exists, run by the wrapper only when `<indexDir>/bin/…srchash` equals `native/inject-client/SRC_HASH` (`scripts/native-src-hash.mjs` is the one definition over `Cargo.toml`·`Cargo.lock`·`src/**` — rerun `--write` after touching the crate); hands the prompt to the node client with `MEMORY_BANK_INJECT_DAEMON_FAILED` + the same `MEMORY_BANK_INJECT_REQ_ID` when the daemon does not answer |
 | `cli-args.ts` | Strict argument parsing for scripts that write the live DB |
 | `paths.ts` | Config/data directory resolution (supports `MEMORY_BANK_CONFIG_DIR` override) |
 | `sync.ts` | File sync + incremental indexing + summary generation |
@@ -99,6 +100,9 @@ Consolidation relations: `DUPLICATE` (merge), `CONTRADICTION` (replace), `EVOLUT
 | `MEMORY_BANK_MAINTENANCE_INTERVAL_MIN` | Session-start maintenance interval in minutes (default 360, 0 = every start; a partial run retries after 60) |
 | `MEMORY_BANK_NODE` | Node binary for hooks when the default node's ABI does not match better-sqlite3 |
 | `MEMORY_BANK_INJECT_HOOK_BUDGET_MS` | Injection hook time budget that bounds its native-ABI re-run (default 30000 = Claude Code's UserPromptSubmit default) |
+| `MEMORY_BANK_NATIVE_CLIENT` | Path of the native inject client the hook wrapper runs (default `<indexDir>/bin/memory-bank-inject-client`; used only when its `.srchash` matches `SRC_HASH`) |
+| `MEMORY_BANK_SQLITE_MMAP_BYTES` | `PRAGMA mmap_size` of the search connection (writable, used only for reads) (default 268435456; `0` turns mmap off; a non-integer falls back to the default with one stderr line) |
+| `MEMORY_BANK_CARGO` | `build-native-client.sh`: explicit cargo path, or `none` to behave as if cargo were absent (tests) |
 | `MEMORY_BANK_SESSION_START_SPAWN` | `0` = maintenance logs the workers it would spawn instead of spawning them (tests) |
 | `MEMORY_BANK_PLUGIN_CACHE_DIR` / `MEMORY_BANK_PROCESS_SCAN_ROOT` | Test-only: narrow the int8 migration guard's install-dir / process scan (the migration prints them when set) |
 

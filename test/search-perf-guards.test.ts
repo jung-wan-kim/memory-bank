@@ -73,3 +73,42 @@ describe('MCP search knowledge section', () => {
     expect(tail).toMatch(/Related knowledge unavailable/);
   });
 });
+
+// 2026-11-02 — the read-only search connection memory-maps the DB (plan native-inject-client AC-007 / TC-MMAP-001).
+describe('search connection mmap (AC-007)', () => {
+  it('searchMmapBytes: default 256MB, "0" turns it off, a bad value falls back to the default and warns once', async () => {
+    const { searchMmapBytes, DEFAULT_SEARCH_MMAP_BYTES } = await import('../src/search.js');
+    const warnings: string[] = [];
+    const warn = (m: string) => warnings.push(m);
+    expect(DEFAULT_SEARCH_MMAP_BYTES).toBe(268_435_456);
+    expect(searchMmapBytes(undefined, warn)).toBe(268_435_456);
+    expect(searchMmapBytes('', warn)).toBe(268_435_456);
+    expect(searchMmapBytes('0', warn)).toBe(0);
+    expect(searchMmapBytes('134217728', warn)).toBe(134_217_728);
+    expect(warnings).toEqual([]);
+    expect(searchMmapBytes('abc', warn)).toBe(268_435_456);
+    expect(searchMmapBytes('-5', warn)).toBe(268_435_456);
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toMatch(/MEMORY_BANK_SQLITE_MMAP_BYTES/);
+  });
+
+  it('getSearchDb() applies PRAGMA mmap_size to the search connection only', async () => {
+    const os = await import('node:os');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-mmap-'));
+    const prev = { db: process.env.MEMORY_BANK_DB_PATH, mm: process.env.MEMORY_BANK_SQLITE_MMAP_BYTES };
+    process.env.MEMORY_BANK_DB_PATH = path.join(tmp, 'search.db');
+    delete process.env.MEMORY_BANK_SQLITE_MMAP_BYTES;
+    try {
+      const { getSearchDb } = await import('../src/search.js');
+      const { initDatabase } = await import('../src/db.js');
+      const search = getSearchDb();
+      expect(search.pragma('mmap_size', { simple: true })).toBe(268_435_456);
+      const writer = initDatabase();
+      expect(writer.pragma('mmap_size', { simple: true })).toBe(0);
+      writer.close();
+    } finally {
+      if (prev.db === undefined) delete process.env.MEMORY_BANK_DB_PATH; else process.env.MEMORY_BANK_DB_PATH = prev.db;
+      if (prev.mm !== undefined) process.env.MEMORY_BANK_SQLITE_MMAP_BYTES = prev.mm;
+    }
+  });
+});

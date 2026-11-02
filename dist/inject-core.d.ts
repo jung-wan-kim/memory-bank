@@ -10,6 +10,8 @@ export interface InjectRequestMeta {
      * block computed but never delivered is not counted as a second injection.
      */
     req_id?: string;
+    /** Which thin client made the hook request: the native binary or the node script (inject log only). */
+    client_impl?: 'native' | 'node';
 }
 /**
  * The block plus the ledger keys (fact id + text key per injected fact) that

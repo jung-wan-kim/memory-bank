@@ -52808,6 +52808,13 @@ function fileIdent(p) {
     return null;
   }
 }
+var DEFAULT_SEARCH_MMAP_BYTES = 268435456;
+function searchMmapBytes(raw = process.env.MEMORY_BANK_SQLITE_MMAP_BYTES, warn = (m2) => process.stderr.write(m2 + "\n")) {
+  if (raw === void 0 || raw === "") return DEFAULT_SEARCH_MMAP_BYTES;
+  if (/^\d{1,15}$/.test(raw.trim())) return Number(raw.trim());
+  warn(`memory-bank: MEMORY_BANK_SQLITE_MMAP_BYTES=${JSON.stringify(raw)} is not a non-negative integer \u2014 using ${DEFAULT_SEARCH_MMAP_BYTES}`);
+  return DEFAULT_SEARCH_MMAP_BYTES;
+}
 function getSearchDb() {
   const p = getDbPath();
   const ident = fileIdent(p);
@@ -52819,6 +52826,10 @@ function getSearchDb() {
   } catch {
   }
   cachedSearchDb = initDatabase();
+  try {
+    cachedSearchDb.pragma(`mmap_size = ${searchMmapBytes()}`);
+  } catch {
+  }
   cachedSearchDbPath = p;
   cachedSearchDbIdent = fileIdent(p);
   return cachedSearchDb;
@@ -53499,7 +53510,10 @@ import { createHash as createHash2 } from "node:crypto";
 var FACT_CHAR_CAP = 160;
 function truncateFact(text) {
   const t = text.replace(/\s+/g, " ").trim();
-  return t.length > FACT_CHAR_CAP ? t.slice(0, FACT_CHAR_CAP - 1) + "\u2026" : t;
+  if (t.length <= FACT_CHAR_CAP) return t;
+  let cut = t.slice(0, FACT_CHAR_CAP - 1);
+  if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+  return cut + "\u2026";
 }
 function factTextKey(fact) {
   const norm = fact.fact.replace(/\s+/g, " ").trim().toLowerCase();
@@ -53635,6 +53649,7 @@ async function computeInjectResult(userPrompt, project, via, sessionId, meta3 = 
     has_session: Boolean(sessionId),
     fallback_reason: meta3.fallback_reason || void 0,
     req_id: meta3.req_id || void 0,
+    client_impl: meta3.client_impl === "native" || meta3.client_impl === "node" ? meta3.client_impl : void 0,
     session_key: sessionKey(sessionId),
     plugin_version: pluginVersion()
   };
@@ -53833,7 +53848,9 @@ function startInjectDaemon() {
               client: req.client ? String(req.client).slice(0, 40) : void 0,
               entrypoint: req.entrypoint ? String(req.entrypoint).slice(0, 40) : void 0,
               // Ties this log line to the client's fallback line when the client gave up.
-              req_id: req.req_id ? String(req.req_id).replace(/[^A-Za-z0-9-]/g, "").slice(0, 40) || void 0 : void 0
+              req_id: req.req_id ? String(req.req_id).replace(/[^A-Za-z0-9-]/g, "").slice(0, 40) || void 0 : void 0,
+              // Which thin client asked — only the two known values are recorded; anything else is dropped.
+              client_impl: req.client_impl === "native" || req.client_impl === "node" ? req.client_impl : void 0
             }
           );
           reply(failed ? { ok: false } : { ok: true, context, ledger_keys: ledgerKeys });

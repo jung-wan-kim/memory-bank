@@ -9,7 +9,14 @@ import { createHash } from 'node:crypto';
 export const FACT_CHAR_CAP = 160;
 export function truncateFact(text) {
     const t = text.replace(/\s+/g, ' ').trim();
-    return t.length > FACT_CHAR_CAP ? t.slice(0, FACT_CHAR_CAP - 1) + '…' : t;
+    if (t.length <= FACT_CHAR_CAP)
+        return t;
+    let cut = t.slice(0, FACT_CHAR_CAP - 1);
+    // Never end on a high surrogate: a split astral character would travel to the hook client as a lone
+    // surrogate escape, which JSON.parse accepts but a strict parser (the native client's) refuses.
+    if (/[\uD800-\uDBFF]$/.test(cut))
+        cut = cut.slice(0, -1);
+    return cut + '…';
 }
 /**
  * Text identity of a fact for in-session dedup. The same sentence is stored

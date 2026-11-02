@@ -32,6 +32,21 @@ function fileIdent(p: string): string | null {
   }
 }
 
+/** Default mmap window for the search connection (writable, used only for reads): 256MB covers the fact vector tables. */
+export const DEFAULT_SEARCH_MMAP_BYTES = 268_435_456;
+
+/**
+ * Bytes for `PRAGMA mmap_size` on the search connection — MEMORY_BANK_SQLITE_MMAP_BYTES (integer ≥ 0; 0 turns
+ * mmap off) or the default. A value that is not a non-negative integer falls back to the default and says so
+ * once on stderr (a silent fallback would hide a typo in the user's shell profile).
+ */
+export function searchMmapBytes(raw: string | undefined = process.env.MEMORY_BANK_SQLITE_MMAP_BYTES, warn: (msg: string) => void = (m) => process.stderr.write(m + '\n')): number {
+  if (raw === undefined || raw === '') return DEFAULT_SEARCH_MMAP_BYTES;
+  if (/^\d{1,15}$/.test(raw.trim())) return Number(raw.trim());
+  warn(`memory-bank: MEMORY_BANK_SQLITE_MMAP_BYTES=${JSON.stringify(raw)} is not a non-negative integer — using ${DEFAULT_SEARCH_MMAP_BYTES}`);
+  return DEFAULT_SEARCH_MMAP_BYTES;
+}
+
 export function getSearchDb(): DatabaseType.Database {
   const p = getDbPath();
   const ident = fileIdent(p);
@@ -44,6 +59,12 @@ export function getSearchDb(): DatabaseType.Database {
   }
   try { cachedSearchDb?.close(); } catch { /* already closed */ }
   cachedSearchDb = initDatabase();
+  // Read path only: the brute-force KNN over the fact vector tables reads them whole on every prompt, so the
+  // scan is served from the page cache through the map. Measured gain is within noise once the cache is warm
+  // (2026-11-02, 9-run medians, LIMIT 50: vec_facts 8.1 → 8.0ms, vec_facts_kr 7.0 → 6.7ms — .qa-artifacts/knn-mmap.json);
+  // the design-phase "16.8 → 9.6ms" was a cold-first-call ordering effect. Kept because it costs nothing.
+  // Writers (indexer, workers) open their own connections and are left alone.
+  try { cachedSearchDb.pragma(`mmap_size = ${searchMmapBytes()}`); } catch { /* an SQLite built without mmap — the scan still works */ }
   cachedSearchDbPath = p;
   cachedSearchDbIdent = fileIdent(p);
   return cachedSearchDb;

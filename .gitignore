@@ -30,3 +30,15 @@ galaxy-*.png
 
 # QA 로그·스크린샷 전문 — 상태 지문에서 제외(team 규칙 7)
 .qa-artifacts/
+.codex-review-deferred
+.deploy-pending-verify
+.qa-inventory.json
+.qa-evidence-cache.json
+.qa-required
+.qa-history/
+.claude/auto-issue/
+.claude/logs/
+__pycache__/
+.claude/.settings.lock
+.claude/scheduled_tasks.lock
+native/inject-client/target/

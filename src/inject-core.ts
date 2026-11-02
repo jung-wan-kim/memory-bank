@@ -31,6 +31,8 @@ export interface InjectRequestMeta {
    * block computed but never delivered is not counted as a second injection.
    */
   req_id?: string;
+  /** Which thin client made the hook request: the native binary or the node script (inject log only). */
+  client_impl?: 'native' | 'node';
 }
 
 /**
@@ -85,6 +87,7 @@ export async function computeInjectResult(
     has_session: Boolean(sessionId),
     fallback_reason: meta.fallback_reason || undefined,
     req_id: meta.req_id || undefined,
+    client_impl: meta.client_impl === 'native' || meta.client_impl === 'node' ? meta.client_impl : undefined,
     session_key: sessionKey(sessionId),
     plugin_version: pluginVersion(),
   };

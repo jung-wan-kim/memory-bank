@@ -5,36 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.7.13] - 2026-10-31
+## [Unreleased]
 
-### 바뀐 점
+버전 번호는 메인테이너 판단에 맡기고, 이 PR 의 변경을 한 항목에 모았다(포크에서는 1.7.9~1.7.13 으로 나눠 배포·검증했다).
 
-- **`tool_calls` 를 호출 단위 집합으로 저장한다.** 행 id 를 파싱마다 새로 만드는 무작위 값 대신 `md5(아카이브 경로 + 트랜스크립트의 tool_use id)` 로 만든다. 무작위 id 로는 교환을 다시 색인할 때마다 그 교환의 호출이 새 행으로 더해졌다 — 1.7.8 이하가 커지는 트랜스크립트를 동기화마다 다시 읽으면서 호출 64.8만 개가 1,539만 행(23.7배)이 됐다. (트랜스크립트에는 `api-request-blob` 줄이 이전 메시지를 다시 담지만 파서는 `user`/`assistant` 외 줄을 건너뛰므로 한 번 색인할 때는 중복이 없다 — 실데이터 표본 760호출 = 760행.) 이제 `INSERT OR REPLACE` 가 같은 호출을 한 행으로 합치고, 입력까지 같은 서로 다른 두 호출은 두 행으로 남는다(내용 기준 중복 제거는 이 경우 하나로 합친다 — 표본 760건 중 1건). 경로를 함께 넣는 이유는, 이어서 열거나 갈라 연 세션이 이전 메시지를 새 트랜스크립트로 복사하므로 tool_use id 만으로는 원래 대화의 행이 새 대화로 옮겨 가기 때문이다. id 가 없는 줄은 줄 번호와 블록 순번으로 고정 id 를 만든다.
-
-## [1.7.12] - 2026-10-31
-
-### 바뀐 점
-
-- **`allowScripts` 에서 sharp 를 허용한다 — 1.7.9~1.7.11 의 동기화 전면 실패 수정.** obra #167 은 sharp 를 거부하는데, obra 는 sharp 를 쓰지 않는 @huggingface/transformers 를 쓰기 때문이다. 이 포크의 @xenova/transformers 2.17 은 불러올 때 sharp 를 읽으므로(`src/utils/image.js`), 설치 스크립트를 막자 네이티브 바이너리가 없어 임베딩 모듈이 로드되지 않았고 모든 동기화가 `Cannot find module '../build/Release/sharp-darwin-arm64v8.node'` 로 끝났다(완료 기록 없음 — 그 사이 대화는 다음 동기화가 따라잡는다). 단위 테스트는 임베딩을 대체했고 실데이터 비교는 sharp 가 이미 설치된 개발 폴더에서 돌아 잡지 못했다. `test/allow-scripts.test.ts` 로 고정.
-
-## [1.7.11] - 2026-10-31
-
-### 바뀐 점
-
-- **빈 대화는 요약 자리를 차지하지 않는다**(obra #91 개념): 사용자·답 메시지 줄이 없는 대화는 요약 파일이 생기지 않아 매번 후보로 남았고, 최신순 선택에서 회차당 요약 자리를 먼저 차지했다(실측: 최신 후보 50개 중 3개). 표시를 남기지 않고 건너뛰므로, 아직 메시지가 없는 막 시작한 세션은 메시지가 생긴 뒤에 고른다.
-- **끊긴 심링크 하나가 동기화 전체를 멈추지 않는다**(obra #143): 프로젝트 폴더 `stat` 실패는 그 항목만 오류로 남기고 넘어간다.
-
-## [1.7.10] - 2026-10-31
-
-### 바뀐 점
-
-- **설치 잠금: 소유자가 죽었어도 npm 이 아직 돌고 있으면 회수하지 않는다.** MCP 시작 시간 초과로 래퍼가 `spawnSync` 도중 죽으면 npm 은 혼자 남아 설치를 끝내고 잠금만 남는다(1.7.9 설치 직후 실측). 그동안 다른 세션이 "죽은 소유자"로 보고 회수하면 두 번째 설치가 겹친다. 이제 `node_modules` 가 60초 안에 바뀌었으면 기다린다.
-
-## [1.7.9] - 2026-10-31
+### 동기화 경량화(이어서 임베딩·요약 후보·설치 잠금 등)
 
 동기화가 쌓인 데이터를 매번 처음부터 다시 처리하던 것을 고쳤다. 실측(대화 원본 76GB·13,303개, 색인 DB 24GB): 동기화 한 번이 CPU 610%·메모리 3.1GB, 10분 안에 바뀐 대화 62개(1.8GB, 최대 1.2GB)를 전부 다시 임베딩하고, 요약 후보를 고르느라 요약 없는 대화 13,280개(16.8GB)를 통째로 읽었다. 원조 obra/episodic-memory v1.6.0 의 수정(#152·#139·#161·#167)을 옮기고, 원조에 남은 한 가지를 보정했다.
 
-### 바뀐 점
+#### 바뀐 점
 
 - **이어서 임베딩**(obra #152): 파일마다 마지막으로 색인한 교환의 `line_start` 부터 다시 읽는다. 그 앞은 다시 임베딩하지 않는다. 원조는 `MAX(line_end)` 뒤만 보는데, 그러면 직전 동기화 때 답이 아직 쓰이던 마지막 교환이 잘린 채 남는다(교환 id 가 마지막 답 줄을 해시하므로 완성본은 새 id 로 생기고 잘린 행도 그대로 남는다). 이제 그 교환은 완성본으로 바뀌고, 다시 읽은 범위에서 다시 나오지 않은 옛 행은 도구 호출·벡터와 함께 지운다(`deleteSupersededExchanges`).
 - **교환을 다시 저장하면 도구 호출을 갈아끼운다**: 도구 호출 id 는 파싱할 때마다 새로 만드는 무작위 값이라, 같은 교환을 다시 넣을 때 `INSERT OR REPLACE` 가 옛 행을 덮지 못하고 새 행을 더했다. 1.7.8 은 동기화마다 파일 전체를 다시 넣었으므로 동기화 횟수만큼 쌓였다 — 실측 DB `tool_calls` 1,536만 행 중 서로 다른 것은 약 64.7만(교환·도구 이름·입력 앞부분·시각 기준 근사, 약 96% 중복). 이제 `insertExchange` 가 그 교환의 도구 호출을 먼저 지운다. 이미 쌓인 중복은 이 변경으로 지워지지 않는다(별도 정리 필요).
@@ -44,13 +23,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **지나치게 큰 메시지는 색인하지 않는다**(obra #139): 기본 256KB(`MEMORY_BANK_MAX_MESSAGE_BYTES`). 임베딩은 어차피 앞 2000자만 쓴다. sync 와 indexer 세 경로 모두.
 - **백그라운드 동기화는 가장 낮은 우선순위**(nice 19, `MEMORY_BANK_SYNC_NICE=0` 이면 끔): 원조 #124 의 onnxruntime intra-op 스레드 제한은 @xenova/transformers 2.17 + onnxruntime-node 1.14 에서 효과가 없었다(intraOpNumThreads 1·2·미지정 모두 추론 중 약 8코어, 벡터는 동일). 그래서 코어를 막는 대신 사용자 작업에 양보하게 했다. 직접 실행한 `memory-bank sync` 는 그대로다.
 - **npm 설치 잠금**(obra #161 개념): MCP 래퍼의 첫 설치·복구 설치와 훅 자가 치유(deps-heal)가 같은 폴더에서 동시에 `npm install` 을 돌릴 수 없다(`.npm-install.lock`, 죽은 소유자·15분 넘은 잠금은 회수). 기다린 쪽은 다시 설치하지 않고 의존성이 갖춰졌는지만 본다. 처음 설치가 실패하면 그때 만든 `node_modules`·`package-lock.json` 을 지운다 — 2026-10-30 업데이트 직후 반쯤 설치된 트리(better-sqlite3 누락)와 버전 빈 잠금 파일 때문에 이후 설치가 모두 `Invalid Version` 으로 실패했다. 래퍼의 첫 설치 판단도 `node_modules` 존재가 아니라 선언된 의존성이 모두 있는지로 바꿨다.
-- `package.json` `allowScripts`: better-sqlite3·onnxruntime-node 허용, sharp 거부(obra #167).
+- `package.json` `allowScripts`: better-sqlite3·onnxruntime-node·sharp 허용(obra #167 은 sharp 를 거부하지만 이 저장소의 @xenova/transformers 2.x 는 로드 시 sharp 가 필요 — 아래 "sharp 허용" 참조).
 
-### 테스트
+#### 테스트
 
 - `test/sync-incremental.test.ts`: 다시 색인해도 도구 호출이 늘지 않음, 덧붙인 교환만 임베딩(재개 지점 교환 1개 포함), 쓰이던 답이 완성본으로 바뀌고 행이 늘지 않음·벡터 수 일치, 바뀌지 않은 파일은 임베딩 0, 큰 메시지 건너뜀, 요약은 최신순·한도까지, 요약 끄기, 1MB 경계에 걸친 표시 찾기, 없는 파일은 건너뜀.
 - 실데이터 동등성(대화 4개·교환 509개·도구 호출 1,317개): 답이 쓰이던 도중 지점에서 잘라 6단계로 이어서 색인한 결과가 한 번에 전체 색인한 결과(1.7.8·1.7.9)와 내용·id·벡터·도구 호출까지 같다. 같은 DB 에서 검색 12질의(의미 6·텍스트 6) 상위 5개 결과·순서·점수도 같다. 덧붙인 뒤 동기화: 1.7.8 162.4초·CPU 612.9초 → 1.7.9 2.3초·CPU 4.9초(대화 3개 127MB, 교환 10개씩 추가).
 - `test/install-lock.test.ts`: 살아 있는 소유자가 있으면 실패·해제 후 성공, 죽은 소유자 잠금 회수, 의존성 일부만 있으면 미설치로 판단.
+
+### 설치 잠금 보정
+
+#### 바뀐 점
+
+- **설치 잠금: 소유자가 죽었어도 npm 이 아직 돌고 있으면 회수하지 않는다.** MCP 시작 시간 초과로 래퍼가 `spawnSync` 도중 죽으면 npm 은 혼자 남아 설치를 끝내고 잠금만 남는다(1.7.9 설치 직후 실측). 그동안 다른 세션이 "죽은 소유자"로 보고 회수하면 두 번째 설치가 겹친다. 이제 `node_modules` 가 60초 안에 바뀌었으면 기다린다.
+
+### 빈 대화·끊긴 심링크
+
+#### 바뀐 점
+
+- **빈 대화는 요약 자리를 차지하지 않는다**(obra #91 개념): 사용자·답 메시지 줄이 없는 대화는 요약 파일이 생기지 않아 매번 후보로 남았고, 최신순 선택에서 회차당 요약 자리를 먼저 차지했다(실측: 최신 후보 50개 중 3개). 표시를 남기지 않고 건너뛰므로, 아직 메시지가 없는 막 시작한 세션은 메시지가 생긴 뒤에 고른다.
+- **끊긴 심링크 하나가 동기화 전체를 멈추지 않는다**(obra #143): 프로젝트 폴더 `stat` 실패는 그 항목만 오류로 남기고 넘어간다.
+
+### sharp 허용
+
+#### 바뀐 점
+
+- **`allowScripts` 에서 sharp 를 허용한다 — 1.7.9~1.7.11 의 동기화 전면 실패 수정.** obra #167 은 sharp 를 거부하는데, obra 는 sharp 를 쓰지 않는 @huggingface/transformers 를 쓰기 때문이다. 이 포크의 @xenova/transformers 2.17 은 불러올 때 sharp 를 읽으므로(`src/utils/image.js`), 설치 스크립트를 막자 네이티브 바이너리가 없어 임베딩 모듈이 로드되지 않았고 모든 동기화가 `Cannot find module '../build/Release/sharp-darwin-arm64v8.node'` 로 끝났다(완료 기록 없음 — 그 사이 대화는 다음 동기화가 따라잡는다). 단위 테스트는 임베딩을 대체했고 실데이터 비교는 sharp 가 이미 설치된 개발 폴더에서 돌아 잡지 못했다. `test/allow-scripts.test.ts` 로 고정.
+
+### tool_calls 를 호출 단위 집합으로
+
+#### 바뀐 점
+
+- **`tool_calls` 를 호출 단위 집합으로 저장한다.** 행 id 를 파싱마다 새로 만드는 무작위 값 대신 `md5(아카이브 경로 + 트랜스크립트의 tool_use id)` 로 만든다. 무작위 id 로는 교환을 다시 색인할 때마다 그 교환의 호출이 새 행으로 더해졌다 — 1.7.8 이하가 커지는 트랜스크립트를 동기화마다 다시 읽으면서 호출 64.8만 개가 1,539만 행(23.7배)이 됐다. (트랜스크립트에는 `api-request-blob` 줄이 이전 메시지를 다시 담지만 파서는 `user`/`assistant` 외 줄을 건너뛰므로 한 번 색인할 때는 중복이 없다 — 실데이터 표본 760호출 = 760행.) 이제 `INSERT OR REPLACE` 가 같은 호출을 한 행으로 합치고, 입력까지 같은 서로 다른 두 호출은 두 행으로 남는다(내용 기준 중복 제거는 이 경우 하나로 합친다 — 표본 760건 중 1건). 경로를 함께 넣는 이유는, 이어서 열거나 갈라 연 세션이 이전 메시지를 새 트랜스크립트로 복사하므로 tool_use id 만으로는 원래 대화의 행이 새 대화로 옮겨 가기 때문이다. id 가 없는 줄은 줄 번호와 블록 순번으로 고정 id 를 만든다.
+
+## [1.7.9] - 2026-11-02
+
+Rust 전환 분석(2026-11-02)의 권고 두 가지를 로컬 플러그인에 반영했다: 프롬프트 훅의 얇은 클라이언트를 네이티브로, 검색 연결에 mmap. 데몬·검색·색인은 그대로 TypeScript 다 — 분석 결론은 "전부 Rust 로 바꿀 이득은 없고, 프롬프트마다 뜨는 node 프로세스 하나만 비싸다"였다.
+
+### 바뀐 점
+
+- **네이티브 inject 클라이언트(선택, cargo 필요)** — `native/inject-client/`(Rust, 의존 `serde_json`·`uuid` 둘). UserPromptSubmit 훅의 웜 경로(stdin 봉투 → 프롬프트 게이트 → 데몬 소켓 → 블록 출력 → 세션 원장)를 `scripts/inject-context.js` 와 필드 단위로 같게 포팅했다: 같은 stdout 바이트, 같은 원장 파일, 같은 요청 키 순서, 같은 skipped 로그 필드(UTF-16 길이 규칙 포함), Codex 봉투 풀기까지. 가짜 데몬 기준 끝-끝 중앙값 **3.4ms(node 75.0ms)** — 단독 실행 7회, 2026-11-02 06:06Z, 릴리즈 바이너리(소스 해시 `d9428017839de77b`), 측정 파일 `.qa-artifacts/ac-005-timing-cited.json`(전체 테스트와 동시에 돌리면 경합으로 2배 가까이 느려진다 — `test-full.log` 의 AC-005 줄). 데몬이 답하지 않으면(없음·3초 초과·끊김·`ok:false`) 그 자리에서 node 클라이언트에 넘긴다 — 사유는 `MEMORY_BANK_INJECT_DAEMON_FAILED`, 요청 id 는 `MEMORY_BANK_INJECT_REQ_ID` 로 이어져 데몬 로그 줄과 폴백 줄이 한 프롬프트로 묶인다(JS 는 두 값을 정규식으로 검증한다). 블록은 응답 전체를 받은 뒤 한 번에 쓰고, 쓰기 시작 뒤에는 폴백하지 않는다(부분 출력 + 재출력 없음). 데몬의 `warming` 신호는 **첫 신호부터 20초 상한**이고 다음 `warming` 이 기한을 늘리지 않는다 — 두 클라이언트 모두. 레벨3 적대 시나리오(A-001(e), warming 만 반복하는 데몬)가 두 클라이언트가 끝없이 기다리는 것을 찾았고(JS 는 warming 마다 20초 타이머를 다시 걸었다), 같은 규칙으로 함께 고쳤다. 두 기한(3초·20초)은 네이티브에서도 바이트 단위 절대 기한이다 — 줄바꿈 없이 조금씩 보내는 데몬도 JS 와 같은 시각에 끊는다(2라운드 반박 F11). 데몬 블록에 짝 없는 서로게이트 이스케이프가 실리면(사실이 UTF-16 경계에서 잘릴 때) 네이티브는 `\ufffd` 로 바꿔 JS 와 같은 바이트를 낸다 — 근본은 데몬 쪽 `truncateFact` 가 코드포인트 경계에서 자르도록 같은 릴리즈에서 고쳤다. 네이티브가 node 에 넘긴 폴백 줄은 `client_impl: native` 로 남아 네이티브의 폴백률을 셀 수 있다. index 디렉터리 우선순위는 JS 와 같다(`MEMORY_BANK_CONFIG_DIR` → `PERSONAL_SUPERPOWERS_DIR` → `XDG_CONFIG_HOME/superpowers` → `~/.config/superpowers`). 계획의 "프로세스 몫 ≤ 10ms" 는 **미달**이다: 실데몬 끝-끝 32.5ms(node 112ms, 5회 중앙값, `.qa-artifacts/e2e-live-cited.json`, 커밋 `012f4a6` 의 바이너리 — 그 뒤의 Rust 변경은 이스케이프 정리·기한 처리만) 에서 데몬 몫 16~17ms(주입 로그 중앙값) 를 빼면 약 15ms(래퍼 12.3 + 바이너리 3.4). 독립 반박 2라운드(MEDIUM 2·LOW 7)도 반영했다: 짝 없는 서로게이트 정리기가 `\` 바로 뒤에 비ASCII 바이트가 오면 패닉하던 결함(1라운드 수정이 만든 회귀 — 패닉은 폴백이 아니라 블록 없는 종료다)을 고치고 같은 정리를 봉투(stdin·`USER_PROMPT`) 파싱 앞에도 걸었으며, 데몬 소켓 쓰기도 3초 절대 기한 안에서 끊는다(`daemon-timeout`).
+- **빌드는 SessionStart 가 비동기로** — `scripts/build-native-client.sh` 가 cargo 가 있고 설치된 바이너리의 `.srchash` 가 플러그인의 `native/inject-client/SRC_HASH`(`Cargo.toml`·`Cargo.lock`·`src/**` 의 sha256 앞 16자, `scripts/native-src-hash.mjs` 가 유일한 정의) 와 다를 때만 `<indexDir>/native-build` 에 빌드해 `<indexDir>/bin/memory-bank-inject-client` 로 임시 이름 → rename 설치한다(플러그인 캐시 밖 — live-apply 가 지워도 남는다). cargo 가 없거나 어떤 단계든 실패하면 `logs/native-build.log` 한 줄 + node 경로 유지. 바이너리는 컴파일된 해시를 `--src-hash` 로 보고하고, 설치는 그 값이 핀과 같을 때만 — 옛 `.srchash` 를 먼저 지우고 바이너리 → 새 핀 순으로 옮겨, 중간에 끊겨도 새 바이너리가 옛 핀과 짝지어지지 않는다(그때 래퍼는 node 로 간다). `live-apply` 가 옮기는 항목에 `native/` 를 넣어 코드와 핀이 늘 함께 움직인다.
+- **훅 래퍼 선택 규칙** — `hooks/inject-context.sh` 는 바이너리가 실행 가능하고 `.srchash` == `SRC_HASH` 일 때만 네이티브를 돌리고, 그 밖(없음·해시 불일치·실행 불가·디렉터리)은 예전처럼 node 를 돈다. `MEMORY_BANK_NATIVE_CLIENT` 로 바이너리 경로를 바꿀 수 있다. 옛 바이너리가 새 프로토콜을 말하는 일이 없다. 바이너리가 신호로 죽어도(segfault) bash 의 종료 안내까지 `inject-context.err.log` 로 보내 훅 stderr 는 비어 있다. `native-src-hash.mjs` 의 "직접 실행" 판별은 실제 경로로 비교한다(`/tmp` → `/private/tmp` 같은 심링크 뒤에서 `--check`·`--write` 가 무출력 exit 0 으로 끝나던 결함, 레벨2 H-004 가 찾음). 래퍼 자체도 서브프로세스를 없앴다(`cd/dirname/pwd`·`tr`×2·`mkdir`·`wc` → 문자열 치환·`read` 내장·존재 검사): 즉시 종료하는 바이너리 기준 래퍼 왕복 중앙값이 첫 네이티브 래퍼(c59ffb5) 29.7ms → 지금 12.3ms(같은 실행에서 교차로 15쌍, `.qa-artifacts/wrapper-overhead.json`, 2026-11-02T05:39Z).
+- **검색 연결 mmap** — `getSearchDb()` 의 검색 경로 연결(쓰기 가능한 연결이지만 읽기만 한다)에 `PRAGMA mmap_size`(기본 268,435,456 = 256MB, `MEMORY_BANK_SQLITE_MMAP_BYTES` 로 바꿈, 0 이면 끔; 정수가 아니면 기본값 + stderr 1줄). 사실 벡터 표의 brute-force KNN 이 매 프롬프트 표 전체를 읽으므로 페이지 캐시가 그 스캔을 받게 한 것인데, **실측 이득은 잡음 수준이다**: 같은 질의 LIMIT 50, 워밍 뒤 9회 중앙값(2026-11-02, `c780271`, `.qa-artifacts/knn-mmap.json`)이 `vec_facts` 8.1 → 8.0ms, `vec_facts_kr` 7.0 → 6.7ms. 분석 단계의 "16.8 → 9.6ms" 는 캐시가 식은 첫 호출을 기본값 쪽에 둔 순서 효과였다. 운영 비용이 없어 유지하지만(식은 캐시의 첫 프롬프트에는 도움이 될 수 있다 — 재지 않았다) 성능 개선으로 세지 않는다. 쓰기 연결(색인·워커)은 건드리지 않는다.
+- **npm 패키지 내용(첫 npm 발행 준비)** — `package.json` 에 `files` 화이트리스트와 `publishConfig.access=public` 을 넣고 `.npmignore` 의 `src/` 를 `/src/` 로 고정했다. 태그 트리를 `npm pack --dry-run` 해 보니 깊이 무관한 `src/`·`scripts/` 규칙이 훅이 참조하는 `scripts/` 전부와 `native/inject-client/src/` 를 지우고 `.codex`·`docs`·`bench`·`.claude` 등 개발 파일 100여 개를 담고 있었다 — 그대로 발행하면 설치본의 SessionStart·UserPromptSubmit 훅이 깨진다. `test/npm-pack-contents.test.ts` 가 훅·plugin.json 이 가리키는 경로 전부·`bin`·`main`·네이티브 소스 전건 포함과 개발 파일 제외를 고정한다. 마켓플레이스(git) 설치본은 영향이 없다.
+- **주입 로그 필드 `client_impl`** — 데몬 로그 줄과 skipped 줄에 어느 얇은 클라이언트가 요청했는지(`native` | `node`) 남는다. 두 값 외는 버린다. 라이브 search_ms p50 246ms(격리 17ms) 의 원인 확정은 이 필드로 가른다(open-questions).
+
+### 한계
+
+- 네이티브 클라이언트는 macOS/리눅스의 cargo 가 있는 기계에서만 만들어진다(프리빌트 없음) — 없으면 아무것도 바뀌지 않는다.
+- 패리티 테스트(`test/native-inject-client.test.ts`)는 cargo 가 없으면 건너뛰고 그 사실을 콘솔에 남긴다.
 
 ## [1.7.8] - 2026-10-19
 

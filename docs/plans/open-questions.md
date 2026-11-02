@@ -10,3 +10,9 @@
 - [ ] 긴 프롬프트의 붙여 넣은 블록 제거 질의(C7 대체안). 졸업 트리거: 사람이 친 긴 프롬프트의 하드 부분집합 손실 확인.
 - [ ] 관계 확장 재설계. 졸업 트리거: 관계 줄 판정≥1 51.7% 를 올릴 다른 방식(예: 이웃의 관계 유형별 가중, 확장 seed 수)을 재생 판정으로 비교할 계획.
 - [ ] 저장소 밖에 놓인 worktree 의 가족. 여러 저장소의 worktree 를 한 상위 폴더(`<umbrella>/.auto-issue-worktrees/<ORG>-<REPO>/issue-N`)에 두는 배치에서는 worktree 세션이 본 저장소 사실만 보고 같은 저장소의 형제 worktree 사실은 보지 못하며, 지워진 그런 worktree 는 재생에서 가족이 없다. 졸업 트리거: 본 저장소의 `.git/worktrees/*/gitdir` 로 형제 worktree 를 열거하는 방식의 재생 판정 계획(지워진 worktree 의 소속을 남길 기록이 먼저 필요).
+
+## 2026-11-02 네이티브 inject 클라이언트 (`docs/plans/2026-11-02-native-inject-client.md`)
+
+- [ ] 라이브 search_ms p50 246ms(격리 17ms) 의 원인 확정 — 프롬프트 제출 순간의 훅 다발 CPU 경합 가설. 졸업 트리거: 1.7.9 라이브 로그 1주 뒤 `client_impl=native` 줄의 search_ms 분포가 그대로면(≥200ms) 데몬 안 측정 보강(`process.cpuUsage` 전/후·동시 프로세스 수)으로 재진단.
+- [ ] 사실 벡터 표 int8@600 이행(2026-10-16 계획 7단계) — 지금도 float32(37+31MB). 가드가 1.7.6 프로세스(아직 실행 중)를 거부한다. 졸업 트리거: 옛 세션 종료 뒤 `scripts/migrate-vec-facts-int8.mjs` 실행 결정.
+- [ ] 다른 플랫폼(linux-x64 등) 프리빌트 배포 여부. 졸업 트리거: cargo 없는 사용자의 요청 또는 GitHub Release 자산 빌드 파이프라인 결정.

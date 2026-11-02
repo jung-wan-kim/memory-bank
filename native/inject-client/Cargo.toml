@@ -1,0 +1,22 @@
+[package]
+name = "memory-bank-inject-client"
+version = "0.1.0"
+edition = "2021"
+description = "UserPromptSubmit thin client for the memory-bank inject daemon — a 1:1 port of scripts/inject-context.js's warm path; every failure falls back to that script."
+publish = false
+
+[[bin]]
+name = "memory-bank-inject-client"
+path = "src/main.rs"
+
+[dependencies]
+# preserve_order: the inject log and the daemon request must carry keys in the same order as the JS client
+# (JSON.stringify of an object literal) — the parity tests compare lines as text.
+serde_json = { version = "1", features = ["preserve_order"] }
+uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

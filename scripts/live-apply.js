@@ -66,6 +66,7 @@ const CODE_ITEMS = [
   'scripts',
   'cli',
   'hooks',
+  'native', // the inject client's sources + SRC_HASH pin — must move with the hooks/scripts that read the pin
   'commands',
   'agents',
   'skills',

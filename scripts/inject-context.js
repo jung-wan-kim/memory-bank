@@ -53,8 +53,11 @@ const LOG_MARGIN_MS = 3_000;
 const MIN_RERUN_MS = 3_000; // the cold path measured ~2.3s
 
 function injectSocketPath() {
-  // Mirrors paths.ts getIndexDir() without importing the heavy dist chain.
-  const base = process.env.MEMORY_BANK_CONFIG_DIR
+  // Mirrors paths.ts getSuperpowersDir() without importing the heavy dist chain:
+  // MEMORY_BANK_CONFIG_DIR → PERSONAL_SUPERPOWERS_DIR → XDG_CONFIG_HOME/superpowers → ~/.config/superpowers.
+  // (PERSONAL_SUPERPOWERS_DIR was missing here — with it set, this client looked for the daemon in a directory
+  // the daemon never used, and only the native client reached it.)
+  const base = process.env.MEMORY_BANK_CONFIG_DIR || process.env.PERSONAL_SUPERPOWERS_DIR
     || path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'superpowers');
   // Same version → same socket as this install's daemon (never an older one's).
   return injectSocketPathIn(path.join(base, 'conversation-index'), ownPackageVersion());
@@ -71,6 +74,7 @@ function askDaemon(prompt, cwd, sessionId, meta) {
   return new Promise((resolve) => {
     let settled = false;
     let connected = false;
+    let warmed = false; // the warming deadline is armed once — a daemon that only ever says warming cannot hold the prompt
     let timer = null;
     const done = (v) => { if (!settled) { settled = true; clearTimeout(timer); resolve(v); } };
     let conn;
@@ -105,7 +109,7 @@ function askDaemon(prompt, cwd, sessionId, meta) {
             return done({ failed: 'daemon-error' });
           }
           if (res && res.warming) {
-            arm(SOCKET_WARMING_TIMEOUT_MS, 'daemon-timeout');
+            if (!warmed) { warmed = true; arm(SOCKET_WARMING_TIMEOUT_MS, 'daemon-timeout'); }
             continue;
           }
           conn.destroy();
@@ -211,10 +215,18 @@ async function main() {
   }
   if (!cwd) cwd = process.env.CWD || process.cwd();
   if (!sessionId) sessionId = process.env.SESSION_ID || '';
+  // The native client (native/inject-client) hands a prompt over here when the daemon did not answer it:
+  // it passes its own request id so the daemon's log line and this fallback line stay one prompt, and the
+  // reason, so the daemon is not asked a second time. Both are validated — env is not a trusted channel.
+  const inheritedReqId = /^[A-Za-z0-9-]{1,40}$/.test(process.env.MEMORY_BANK_INJECT_REQ_ID || '') ? process.env.MEMORY_BANK_INJECT_REQ_ID : null;
+  const daemonFailed = /^[a-z-]{1,40}$/.test(process.env.MEMORY_BANK_INJECT_DAEMON_FAILED || '') ? process.env.MEMORY_BANK_INJECT_DAEMON_FAILED : null;
   const meta = {
     client: client || 'manual',
     entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT || undefined,
-    req_id: randomUUID(), // same id on the daemon's log line and on a fallback line
+    req_id: inheritedReqId || randomUUID(), // same id on the daemon's log line and on a fallback line
+    // Which thin client made the hook request. A prompt the native client handed over keeps 'native', so its
+    // fallback lines can be told apart from node-only runs (the native fallback rate is measurable from the log).
+    client_impl: daemonFailed ? 'native' : 'node',
   };
 
   // Harness-generated prompts (task notifications, slash-command expansions …)
@@ -232,7 +244,7 @@ async function main() {
   // FAST PATH — warm daemon inside a running MCP server. A re-run for the
   // native ABI (below) skips it: the daemon already failed in the parent.
   const reexecReason = process.env.MEMORY_BANK_INJECT_FALLBACK_REASON;
-  const answer = reexecReason ? { failed: reexecReason } : await askDaemon(prompt, cwd, sessionId, meta);
+  const answer = reexecReason ? { failed: reexecReason } : daemonFailed ? { failed: daemonFailed } : await askDaemon(prompt, cwd, sessionId, meta);
   if (!answer.failed) {
     await deliver(answer.context, sessionId, answer.ledgerKeys);
     return;

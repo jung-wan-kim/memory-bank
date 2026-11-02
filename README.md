@@ -124,6 +124,7 @@ Every user prompt (≥20 chars) triggers the `UserPromptSubmit` hook, which vect
   Since v1.7.8 a line also carries `top_margins` (each candidate's similarity minus the baseline), `gated_ids` (ids that cleared the gate before the session ledger), `injected_ids`, `session_key` (sha256 prefix of the session id) and `plugin_version`, and the SessionStart key-facts block writes its own `"via":"session-start"` line (count, chars, ids, `source`).
 
   Node-level crashes (missing `node_modules`, import failures) land in `logs/inject-context.err.log` instead of being discarded.
+- **Native thin client (v1.7.9, optional)** — when `cargo` is installed, SessionStart builds `native/inject-client` (Rust) once into `~/.config/superpowers/conversation-index/bin/` and the hook wrapper runs it instead of the node script whenever its recorded source hash equals the plugin's `native/inject-client/SRC_HASH`. It is the warm path of `scripts/inject-context.js` field for field (same stdout bytes, ledger, request keys and skipped-log fields). Measured on one machine: against an instantly answering fake daemon the client itself costs ~3.4ms where the node client needs ~75ms to start; against the real daemon the hook's end-to-end median was 32.5ms native vs 112ms node, of which the daemon's own search is ~17ms in both. When the daemon does not answer it hands the prompt to the node client with the reason in `MEMORY_BANK_INJECT_DAEMON_FAILED` and the same `MEMORY_BANK_INJECT_REQ_ID`. Without cargo nothing changes. Each log line now says which client asked (`client_impl`: `native` | `node`).
 
 **Injection replay bench (v1.7.8)** — replays prompts the hook really saw (inject log ∩ indexed conversation, as of each prompt's moment) through selection variants and has an isolated LLM judge score each injected line 0/1/2 against random-fact controls:
 
@@ -355,6 +356,12 @@ export MEMORY_BANK_MAINTENANCE_INTERVAL_MIN=360
 # re-run. Default 30000 = Claude Code's default for this hook; set it to match
 # if you give the hook a different timeout.
 # export MEMORY_BANK_INJECT_HOOK_BUDGET_MS=30000
+
+# Native inject client (v1.7.9): binary path the hook wrapper runs when its .srchash
+# matches the plugin's SRC_HASH (default below); mmap window of the search connection
+# in bytes (used only for reads; 0 = off; default 256MB).
+# export MEMORY_BANK_NATIVE_CLIENT=~/.config/superpowers/conversation-index/bin/memory-bank-inject-client
+# export MEMORY_BANK_SQLITE_MMAP_BYTES=268435456
 ```
 
 Maintenance scripts (run by hand, never automatically):

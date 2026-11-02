@@ -91,6 +91,8 @@ export function startInjectDaemon() {
                         entrypoint: req.entrypoint ? String(req.entrypoint).slice(0, 40) : undefined,
                         // Ties this log line to the client's fallback line when the client gave up.
                         req_id: req.req_id ? String(req.req_id).replace(/[^A-Za-z0-9-]/g, '').slice(0, 40) || undefined : undefined,
+                        // Which thin client asked — only the two known values are recorded; anything else is dropped.
+                        client_impl: req.client_impl === 'native' || req.client_impl === 'node' ? req.client_impl : undefined,
                     });
                     reply(failed ? { ok: false } : { ok: true, context, ledger_keys: ledgerKeys });
                 }
