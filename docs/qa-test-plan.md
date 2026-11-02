@@ -20,6 +20,7 @@
 - AC-009: `npm run build` rc 0 · `npm test` 전체 통과(네이티브 테스트 포함) · SRC_HASH 핀 일치 → TC-BUILD-002, TC-HASH-001
 - AC-010: 릴리스 1.7.9 — 버전 3곳·CHANGELOG·태그·GitHub 릴리스·설치 캐시 → TC-REL-001
 - AC-011: 라이브 — SessionStart 빌드 산출물, 실제 프롬프트 로그 줄의 `plugin_version 1.7.9`·`client_impl native`, 래퍼 끝에서 끝 5회 중앙값 ≤ 40ms → TC-E2E-001
+- AC-012: npm 발행 — 타르볼이 플러그인 런타임 파일만 담는다(hooks.json·plugin.json 이 가리키는 경로 전부·`bin`·`main`·네이티브 소스 포함, 개발·QA·작업 공간 파일 제외), 레지스트리 `memory-bank@1.7.9` 의 `gitHead` 가 발행 커밋 → TC-REL-002
 
 ## 공통 전제 조건
 
@@ -113,6 +114,14 @@
 - 기대: 전부 1.7.9, 릴리스 노트에 네이티브 클라이언트·mmap·`client_impl`
 - 증거: 명령 출력 `.qa-artifacts/release-1.7.9.log`
 
+#### TC-REL-002: npm 타르볼 내용
+**심각도**: HIGH
+- Given: `package.json` 의 `files` 화이트리스트 + `publishConfig.access=public`, `.npmignore` 의 `/src/`(깊이 고정)
+- When: 테스트가 저장소 루트에서 `npm pack --dry-run --json --ignore-scripts` 를 돌려 파일 목록을 읽는다(작업 트리의 추적되지 않은 로컬 파일도 같은 규칙으로 걸러진다)
+- Then: hooks.json·plugin.json 이 `${CLAUDE_PLUGIN_ROOT}/` 로 가리키는 파일 전부(8개 이상), `bin` 4개·`main` 대상, `native/inject-client/{Cargo.toml,Cargo.lock,SRC_HASH}` 와 디스크의 `.rs` 전건이 들어 있고, `.codex/`·`.claude/`·`docs/`·`bench/`·`test/`·`src/`·`vercel/`·`.qa-*`·`CLAUDE.md`·`CODEX.md`·`marketplace.json`·`.env*` 는 없다. 압축 전 20MB 미만
+- verify: `npx vitest run test/npm-pack-contents.test.ts` / evidence: 테스트 이름(3건)
+- 발행 뒤(자격 있을 때): `npm view memory-bank@1.7.9 version gitHead dist.fileCount` 가 1.7.9·발행 커밋·테스트가 본 파일 수와 같다 → `.qa-artifacts/npm-publish.log`
+
 ### NEG: 금지 동작이 일어나지 않음
 
 #### TC-NEG-001: 블록을 두 번 쓰지 않는다
@@ -156,7 +165,7 @@
 | NAT | TC-NAT-001·002·003 | CRITICAL ×3 |
 | WRAP·BUILD | TC-WRAP-001·TC-BUILD-001·TC-HASH-001·TC-BUILD-002 | HIGH ×3 · CRITICAL ×1 |
 | PERF·MMAP·LOG | TC-PERF-001·TC-MMAP-001·TC-LOG-001 | HIGH ×2 · MEDIUM ×1 |
-| REL | TC-REL-001 | HIGH |
+| REL | TC-REL-001·TC-REL-002 | HIGH ×2 |
 | NEG | TC-NEG-001·002·003 | HIGH ×2 · MEDIUM ×1 |
 | E2E | TC-E2E-001 | CRITICAL |
 
@@ -210,3 +219,4 @@
 - 하네스 결함 2건을 고치고 시나리오는 그대로 유지: ① 클라이언트 실행을 `spawnSync` → 비동기 `spawn`(`runChild`) — 동기 실행은 같은 프로세스의 가짜 데몬이 답할 수 없어 TC-NAT-001~003·TC-PERF-001·TC-NEG-001·A-001·A-002 가 전부 폴백으로 끝났다(거짓 실패). ② `baseEnv` 의 환경 정리를 `extra` 적용 **앞**으로 — 뒤에 지우면 Codex 봉투 경우(TC-NAT-002 의 `USER_PROMPT`)가 두 클라이언트 모두 skipped/empty 로 끝나 비교가 공허했다.
 - TC-NAT-003 의 폴백 env 이름은 `MEMORY_BANK_INJECT_DAEMON_FAILED`(계획 D1). 구조 리팩토링(`jsval.rs`·`parse` 분리·`INDEX_DIR`)으로 `SRC_HASH` 가 `c81fdeeed2288d48` 로 재고정됐고 TC-HASH-001 은 재고정 뒤 통과.
 - 레벨3 A-001(e)(warming 만 반복하는 데몬)에서 네이티브·JS 둘 다 끝없이 기다리는 것을 찾아(322초 뒤 강제 종료) 두 클라이언트에 첫 warming 부터 절대 20초 기한을 넣었다(계획 D8). 패리티 테스트 'A-001 (e)' 추가 — TC 수는 그대로(기존 TC-NAT-001 블록의 경우 추가).
+- 2026-11-02 npm 발행 요청: AC-012·TC-REL-002 추가(타르볼 내용 테스트). 태그 트리의 dry-run 에서 `scripts/`·네이티브 소스 누락과 개발 파일 포함을 확인한 뒤의 보강.

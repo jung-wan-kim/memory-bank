@@ -9,15 +9,16 @@ video/
 docs/*.gif
 docs/*.svg
 
-# Source (dist is enough)
-src/
+# Source (dist is enough) — anchored: native/inject-client/src must ship (SessionStart build)
+/src/
 
 # Dev config
 .omc/
-.claude-plugin/
 tsconfig.json
-scripts/
 
 # Git
 .git/
 .gitignore
+
+# Build output of the native client (never published; built on the user machine)
+native/inject-client/target/

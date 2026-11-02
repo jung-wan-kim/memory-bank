@@ -3,6 +3,29 @@
   "version": "1.7.9",
   "description": "Semantic search for Claude Code conversations",
   "main": "dist/index.js",
+  "files": [
+    "dist/",
+    "cli/",
+    "hooks/",
+    "scripts/",
+    "native/inject-client/Cargo.toml",
+    "native/inject-client/Cargo.lock",
+    "native/inject-client/SRC_HASH",
+    "native/inject-client/src/",
+    ".claude-plugin/plugin.json",
+    "skills/",
+    "agents/",
+    "commands/",
+    "prompts/",
+    "ui/",
+    "README.md",
+    "README-KR.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "types": "dist/index.d.ts",
   "bin": {
     "memory-bank": "./cli/memory-bank.js",

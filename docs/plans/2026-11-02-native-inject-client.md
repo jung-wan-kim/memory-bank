@@ -81,6 +81,9 @@ CPU 경합(훅 다발 기동)으로 추정되며 이 계획은 그것을 재지 
 - AC-011 라이브: 설치 뒤 SessionStart 빌드가 `<indexDir>/bin/memory-bank-inject-client` 를 만들고(로그 `native-build.log`), 실제 프롬프트의 주입 로그 줄에
   `plugin_version 1.7.9`·`client_impl native` 가 찍히며, 래퍼 끝에서 끝 5회 중앙값 ≤ 40ms(데몬 웜).
   verify: `tail` 로그 + `/usr/bin/time -p bash hooks/inject-context.sh <<< '<봉투>'` ×5 / evidence: 명령 출력
+- AC-012 npm 발행(2026-11-02 사용자 요청 "npm 도 릴리즈해"): 타르볼이 플러그인으로 동작할 파일만 담는다 — hooks.json·plugin.json 이 `${CLAUDE_PLUGIN_ROOT}/` 로 가리키는 경로 전부, `bin`·`main` 대상,
+  `native/inject-client/{Cargo.toml,Cargo.lock,SRC_HASH,src/*.rs}`, `dist/`·`cli/`·`hooks/`·`scripts/`; `.codex/`·`.claude/`·`docs/`·`bench/`·`test/`·`src/`·`CLAUDE.md`·`marketplace.json` 은 없다. 레지스트리의 `memory-bank@1.7.9` 는 `gitHead` 가 발행 커밋이다.
+  verify: `npx vitest run test/npm-pack-contents.test.ts` · `npm view memory-bank@1.7.9 version gitHead dist.fileCount` / evidence: 테스트 이름 · 명령 출력(`.qa-artifacts/npm-publish.log`)
 
 **Steps:**
 
@@ -188,6 +191,11 @@ test/native-inject-client.test.ts · test/inject-hook-wrapper.test.ts · test/bu
   읽기만 한다" ⑧ 인덱스 디렉터리 우선순위(`MEMORY_BANK_CONFIG_DIR` → `PERSONAL_SUPERPOWERS_DIR` → `XDG_CONFIG_HOME/superpowers` → `~/.config/superpowers`)를 JS·래퍼·빌드 스크립트에 같게 ⑨ 보고서
   수치 일치. 정리기는 `src/jsval.rs` 로 옮겼고 소스 해시는 `14bd07782bcccd12` → `d9428017839de77b`. 잔여(고치지 않음): 빌드 실패 백오프, stdin 2초 절단의 멀티바이트 경계. 끝-끝 32.5/112ms 인용은
   `012f4a6` 바이너리의 측정이다 — 그 뒤 변경은 시간 경로를 건드리지 않고, 최종 HEAD 의 E2E 재실행은 레벨1 판정(≤40ms·블록 동일)으로만 `.qa-evidence.json` 에 남긴다(수치 재인용 없음).
+- D12 npm 발행(AC-012, 태그 뒤 추가): 태그 `v1.7.9` 트리를 `git archive` 로 꺼내 `npm pack --dry-run` 한 결과 `.npmignore` 의 `src/`·`scripts/` 가 깊이 무관하게 적용돼 **`scripts/`(SessionStart·UserPromptSubmit 훅이 전부 참조)와
+  `native/inject-client/src/` 가 빠지고** `.codex` 46·`docs` 25·`bench` 19·`.claude` 16 파일 등이 들어갔다(276 파일, 7.8MB) — 그대로 발행하면 npm 설치본은 훅이 깨진 패키지다. `package.json` 에 `files` 화이트리스트
+  (+`publishConfig.access=public`)를 넣고 `.npmignore` 의 `src/` 를 `/src/` 로 고정, `scripts/`·`.claude-plugin/` 제외를 없앴다. 내용은 `test/npm-pack-contents.test.ts`(TC-REL-002) 가 훅·plugin.json 참조 경로 전부·`bin`·`main`·
+  네이티브 .rs 전건 포함과 개발 파일 제외를 고정한다. 따라서 npm 1.7.9 타르볼은 태그 커밋이 아니라 이 패키징 커밋(문서·패키징만 다름, 코드·dist 동일)에서 나오며 `gitHead` 로 식별한다. 발행 자격: `~/.npmrc` 의 토큰이
+  `GET /-/whoami` 에서 E401 — 환경변수·키체인·발행 자동화 어디에도 다른 자격이 없어 발행 명령 자체는 사용자가 토큰을 갱신한 뒤 깨끗한 worktree 에서 `npm publish` 로 돈다(비밀값은 적지 않는다).
 - D7 mmap 실측 수치(계획 Step 4 "보고에 숫자"): 구현 뒤 재측정(실DB 읽기 전용, 같은 질의 LIMIT 50, 워밍 뒤 9회 중앙값, `c780271`, `.qa-artifacts/knn-mmap.json`)은
   mmap 끔 → 256MB 가 `vec_facts` 8.1 → 8.0ms, `vec_facts_kr` 7.0 → 6.7ms 로 **잡음 수준**. 설계 단계의 16.8 → 9.6ms 는 캐시가 식은 첫 호출을 기본값 쪽에 둔 순서
   효과였다(권고 ④의 근거 정정). mmap 은 비용이 없어 유지하되 성능 개선으로 세지 않는다. AC-005 인용 수치는 단독 실행 3.4/75.0ms(`ac-005-timing-cited.json`, 06:06Z, 릴리즈 바이너리 소스 해시 `d9428017839de77b`).
