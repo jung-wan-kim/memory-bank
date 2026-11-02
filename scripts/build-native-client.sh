@@ -45,7 +45,9 @@ BUILT="$TARGET_DIR/release/memory-bank-inject-client"
 GOT="$("$BUILT" --src-hash 2>/dev/null || true)"
 [[ "$GOT" == "$WANT" ]] || { say "바이너리 해시 불일치($GOT ≠ $WANT) — 설치하지 않음, node 경로 유지"; exit 0; }
 TMP_BIN="$BIN.tmp.$$"; TMP_HASH="$BIN.srchash.tmp.$$"
-cp "$BUILT" "$TMP_BIN" && chmod 755 "$TMP_BIN" && printf '%s\n' "$WANT" > "$TMP_HASH" && mv -f "$TMP_BIN" "$BIN" && mv -f "$TMP_HASH" "$BIN.srchash" \
+# Old pin first, then binary, then new pin: if this stops half-way the binary has no pin and the wrapper runs node —
+# never a new binary paired with an old pin.
+cp "$BUILT" "$TMP_BIN" && chmod 755 "$TMP_BIN" && printf '%s\n' "$WANT" > "$TMP_HASH" && rm -f "$BIN.srchash" && mv -f "$TMP_BIN" "$BIN" && mv -f "$TMP_HASH" "$BIN.srchash" \
   || { rm -f "$TMP_BIN" "$TMP_HASH"; say "설치 실패 — node 경로 유지"; exit 0; }
 say "built $WANT in $(( $(date +%s) - START ))s → $BIN"
 exit 0

@@ -36,16 +36,20 @@ pub fn js_len(s: &str) -> usize {
     s.encode_utf16().count()
 }
 
-/// JS String.prototype.trim(): WhiteSpace + LineTerminator, which is Unicode White_Space plus U+FEFF.
-fn is_js_space(c: char) -> bool {
-    c.is_whitespace() || c == '\u{FEFF}'
+/// JS String.prototype.trim(): ECMAScript WhiteSpace (TAB VT FF SP NBSP ZWNBSP + Unicode Zs) and
+/// LineTerminator (LF CR LS PS). Not Rust's `char::is_whitespace`: that one also strips U+0085 and U+001C..1F,
+/// which JS keeps — a prompt starting with U+0085 must be judged like JS judges it.
+pub(crate) fn is_js_space(c: char) -> bool {
+    matches!(c,
+        '\u{9}' | '\u{A}' | '\u{B}' | '\u{C}' | '\u{D}' | ' ' | '\u{A0}' | '\u{1680}' | '\u{2000}'..='\u{200A}'
+        | '\u{2028}' | '\u{2029}' | '\u{202F}' | '\u{205F}' | '\u{3000}' | '\u{FEFF}')
 }
 
-fn trim_start(s: &str) -> &str {
+pub(crate) fn trim_start(s: &str) -> &str {
     s.trim_start_matches(is_js_space)
 }
 
-fn trim(s: &str) -> &str {
+pub(crate) fn trim(s: &str) -> &str {
     s.trim_matches(is_js_space)
 }
 
@@ -135,6 +139,15 @@ mod tests {
         // UTF-16 length: 19 Hangul syllables are short, 20 are not — like JS
         assert_eq!(reason(&"가".repeat(19)), Some("short"));
         assert_eq!(reason(&"가".repeat(20)), None);
+    }
+
+    #[test]
+    fn whitespace_is_the_js_set_not_rusts() {
+        assert!(is_js_space('\u{FEFF}') && is_js_space('\u{3000}') && is_js_space('\u{2028}') && is_js_space('\u{A0}'));
+        assert!(!is_js_space('\u{85}') && !is_js_space('\u{1C}') && !is_js_space('\u{200B}'));
+        // U+0085 before a machine tag is not stripped by JS trimStart → the prompt is text, not a tag → searched
+        assert_eq!(reason("\u{85}<task-notification>x</task-notification> 뒤에 충분히 긴 본문이 이어진다"), None);
+        assert_eq!(reason("\u{FEFF}<task-notification>x</task-notification>"), Some("task-notification"));
     }
 
     #[test]

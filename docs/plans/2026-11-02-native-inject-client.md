@@ -153,6 +153,8 @@ test/native-inject-client.test.ts · test/inject-hook-wrapper.test.ts · test/bu
 
 ## Deviations (구현 중 계획에서 벗어난 것 — 2026-11-02)
 
+- D0 목표 미달: "훅 웜 경로의 프로세스 몫 ≤ 10ms" 는 약 15ms(래퍼 11.9 + 바이너리 3.5, 실데몬 끝-끝 32.1ms − 데몬 16~17ms)로 미달이다. 남은 몫의 대부분은 bash 래퍼의 기동(6.7ms)이다 — 래퍼를 없애고 hooks.json 이 바이너리를 직접 부르는 안은 바이너리 부재 때의 폴백을 바이너리 밖에서 해야 해 이번 범위 밖.
+
 - D1 폴백 신호 env 이름: 계획(AC-003·Step 1)은 `MEMORY_BANK_INJECT_FALLBACK_REASON` 으로 적었지만 그 변수는 JS 클라이언트가 **node ABI 재실행**에 쓰는 신호라
   의미가 다르다(재실행은 `{ failed: reason }` 로 끝내는 분기가 따로 있다). 네이티브 → node 인계는 새 변수 `MEMORY_BANK_INJECT_DAEMON_FAILED` 로 하고
   JS 는 `^[a-z-]{1,40}$` 로 검증한다(`scripts/inject-context.js`). AC-003 의 검증(테스트 이름)은 그대로, 시나리오 TC-NAT-003 은 새 이름으로 적었다.
@@ -172,6 +174,13 @@ test/native-inject-client.test.ts · test/inject-hook-wrapper.test.ts · test/bu
 - D8 warming 상한(A-001(e)): JS `askDaemon` 은 warming 줄마다 20초 타이머를 다시 걸어 warming 만 반복하는 데몬에 끝없이 매였고, 네이티브 포팅도 같은 뜻(읽기마다 20초)이라 둘 다
   적대 시나리오에서 322초 뒤 강제 종료로 끝났다 → 두 클라이언트 모두 **첫 warming 부터 절대 20초 기한**(다음 warming 은 연장 없음)으로 고쳤다 — JS 쪽 동작 변경은 계획 밖이지만 패리티(AC-001)와
   "훅은 프롬프트를 깨지 않는다" 계약을 지키려면 함께 바꿔야 했다. 패리티 테스트 'A-001 (e)' 가 두 클라이언트를 같은 데몬에 동시에 넣어 20초 안팎·요청 1회씩을 고정.
+- D9 패리티 테스트의 빌드 위치: Step 5 는 "저장소 밖 target" 이라 했지만 테스트는 크레이트의 `target/`(gitignore) 에 빌드한다 — SessionStart 빌드만 `<indexDir>/native-build` 를 쓴다.
+- D10 독립 반박 1라운드(HIGH 2·MEDIUM 5·LOW 13) 반영: ① E2E 가 같은 session_id 로 돌려 dedup 된 빈 블록끼리 비교했던 것을 회차마다 다른 id 로 바꿔 실제 블록 바이트를 비교
+  ② README 의 "~3ms end to end" 를 가짜 데몬/실데몬 수치로 분리 ③ 데몬 `truncateFact` 코드포인트 경계 + 네이티브의 짝 없는 서로게이트 허용 ④ 폴백 줄 `client_impl: native`
+  ⑤ AC-005 테스트의 `.qa-artifacts` mkdir ⑥ live-apply 항목에 `native/` ⑦ 패리티 입력 표(비객체 JSON·숫자/불 prompt·BOM·CRLF·U+0085·FEFF) ⑧ stdin `null` ⑨ JS 공백 집합
+  ⑩ 숫자 문자열화 ⑪ 바이트 단위 절대 기한 ⑫ `PERSONAL_SUPERPOWERS_DIR` ⑬ 설치 순서(핀 먼저 삭제) ⑭ 핀에 Cargo.lock ⑮ "읽기 전용 연결" 서술 정정 ⑯ 검증 불가 수치 삭제
+  ⑰ 패닉 가능 `eprintln!` 제거 ⑱ 폴백에 남은 훅 예산 전달 ⑲ 목표 "프로세스 몫 ≤ 10ms" 미달(≈15ms) 명시 ⑳ 문서·시나리오 정합(아래 D9, QA 계획 A-001 기대값). 백오프(F14 후반)·
+  stdin 2초 절단의 멀티바이트 경계(F10)는 잔여 목록.
 - D7 mmap 실측 수치(계획 Step 4 "보고에 숫자"): 구현 뒤 재측정(실DB 읽기 전용, 같은 질의 LIMIT 50, 워밍 뒤 9회 중앙값, `c780271`, `.qa-artifacts/knn-mmap.json`)은
   mmap 끔 → 256MB 가 `vec_facts` 8.1 → 8.0ms, `vec_facts_kr` 7.0 → 6.7ms 로 **잡음 수준**. 설계 단계의 16.8 → 9.6ms 는 캐시가 식은 첫 호출을 기본값 쪽에 둔 순서
   효과였다(권고 ④의 근거 정정). mmap 은 비용이 없어 유지하되 성능 개선으로 세지 않는다. AC-005 인용 수치는 단독 실행 3.5/78.2ms(`ac-005-timing-cited.json`, 04:24Z).

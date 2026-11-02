@@ -27,6 +27,22 @@ afterEach(() => {
 });
 
 describe('liveApply', () => {
+  it('moves native/ (the inject client sources + SRC_HASH pin) together with hooks and scripts, so code and pin never split', () => {
+    const old = mkVersion('1.7.9', '1.7.9', 'OLD', { a: '1' });
+    fs.mkdirSync(path.join(old, 'native', 'inject-client', 'src'), { recursive: true });
+    fs.writeFileSync(path.join(old, 'native', 'inject-client', 'SRC_HASH'), 'oldhash0000000000\n');
+    fs.writeFileSync(path.join(old, 'native', 'inject-client', 'src', 'main.rs'), '// old\n');
+    const self = mkVersion('1.8.0', '1.8.0', 'NEW', { a: '1' });
+    fs.mkdirSync(path.join(self, 'native', 'inject-client', 'src'), { recursive: true });
+    fs.writeFileSync(path.join(self, 'native', 'inject-client', 'SRC_HASH'), 'newhash1111111111\n');
+    fs.writeFileSync(path.join(self, 'native', 'inject-client', 'src', 'main.rs'), '// new\n');
+
+    const r = liveApply(self, () => {});
+    expect(r.applied).toEqual([{ dir: '1.7.9', from: '1.7.9', to: '1.8.0' }]);
+    expect(fs.readFileSync(path.join(old, 'native', 'inject-client', 'SRC_HASH'), 'utf8').trim()).toBe('newhash1111111111');
+    expect(fs.readFileSync(path.join(old, 'native', 'inject-client', 'src', 'main.rs'), 'utf8')).toBe('// new\n');
+  });
+
   it('propagates code into older-content dirs, with backup, never touching node_modules', () => {
     mkVersion('1.0.0', '1.0.0', 'OLD', { a: '1' });
     fs.writeFileSync(path.join(base, '1.0.0', 'node_modules', 'keep.txt'), 'native');

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // native-src-hash.mjs — the one definition of the native client's source hash: sha256 over
-// native/inject-client/Cargo.toml and every file under native/inject-client/src (sorted paths, each as
+// native/inject-client/Cargo.toml, Cargo.lock and every file under native/inject-client/src (sorted paths, each as
 // "<relative path>\0<bytes>\0"), first 16 hex chars. Committed to native/inject-client/SRC_HASH, compiled
 // into the binary, written next to it as `.srchash`; the hook wrapper runs the binary only when the two agree.
 //   node scripts/native-src-hash.mjs            → prints the hash
@@ -15,7 +15,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CRATE = path.join(ROOT, 'native', 'inject-client');
 
 export function nativeSrcHash(crateDir = CRATE) {
-  const files = ['Cargo.toml'];
+  const files = ['Cargo.toml', 'Cargo.lock'].filter((f) => fs.existsSync(path.join(crateDir, f))); // the lock pins dependency versions — a bump must rebuild too
   const walk = (dir, rel) => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       const r = rel ? `${rel}/${e.name}` : e.name;

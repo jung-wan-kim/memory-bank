@@ -22,7 +22,7 @@ fn env(name: &str) -> String {
 /// parseHookEnvelope: Some(Ok(..)) for a usable UserPromptSubmit envelope, Some(Err(())) for another
 /// envelope (wrong event / non-string prompt), None for an ordinary prompt (JSON that is not an envelope too).
 fn parse_hook_envelope(text: &str) -> Option<Result<Value, ()>> {
-    let t = text.trim_start();
+    let t = crate::gate::trim_start(text);
     if !t.starts_with('{') {
         return None;
     }
@@ -62,6 +62,8 @@ pub fn parse(raw: &[u8]) -> Input {
 /// undefined → '' — or plain text, which is the prompt itself.
 fn read_stdin_fields(raw_text: &str, input: &mut Input) {
     match serde_json::from_str::<Value>(raw_text) {
+        // JS: `JSON.parse('null').prompt` throws → the catch path keeps the raw text as the prompt
+        Ok(Value::Null) => input.prompt = raw_text.to_string(),
         Ok(j) => {
             let get = |k: &str| j.as_object().and_then(|o| o.get(k));
             input.prompt = js_string(get("prompt"));

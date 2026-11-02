@@ -53405,7 +53405,10 @@ import { createHash as createHash2 } from "node:crypto";
 var FACT_CHAR_CAP = 160;
 function truncateFact(text) {
   const t = text.replace(/\s+/g, " ").trim();
-  return t.length > FACT_CHAR_CAP ? t.slice(0, FACT_CHAR_CAP - 1) + "\u2026" : t;
+  if (t.length <= FACT_CHAR_CAP) return t;
+  let cut = t.slice(0, FACT_CHAR_CAP - 1);
+  if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+  return cut + "\u2026";
 }
 function factTextKey(fact) {
   const norm = fact.fact.replace(/\s+/g, " ").trim().toLowerCase();

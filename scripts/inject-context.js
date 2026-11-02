@@ -221,7 +221,9 @@ async function main() {
     client: client || 'manual',
     entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT || undefined,
     req_id: inheritedReqId || randomUUID(), // same id on the daemon's log line and on a fallback line
-    client_impl: 'node', // which thin client ran — the native one sends 'native'
+    // Which thin client made the hook request. A prompt the native client handed over keeps 'native', so its
+    // fallback lines can be told apart from node-only runs (the native fallback rate is measurable from the log).
+    client_impl: daemonFailed ? 'native' : 'node',
   };
 
   // Harness-generated prompts (task notifications, slash-command expansions …)

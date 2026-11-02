@@ -247,6 +247,7 @@ describe.skipIf(!cargo)('native inject client ≡ JS client', () => {
     for (let i = 0; i < 7; i += 1) { rsMs.push((await runNative(envelope())).ms); jsMs.push((await runNode(envelope())).ms); }
     const rs = median(rsMs); const js = median(jsMs);
     console.log(`AC-005 end-to-end median (7 runs, fake daemon): native=${rs.toFixed(1)}ms node=${js.toFixed(1)}ms`);
+    fs.mkdirSync(path.join(REPO, '.qa-artifacts'), { recursive: true }); // gitignored — absent on a fresh clone
     fs.writeFileSync(path.join(REPO, '.qa-artifacts', 'ac-005-timing.json'), JSON.stringify({ native_median_ms: rs, node_median_ms: js, native_ms: rsMs, node_ms: jsMs, measured_at: new Date().toISOString() }, null, 2));
     expect(rs).toBeLessThanOrEqual(25);
     expect(rs).toBeLessThan(js / 2);
@@ -288,6 +289,73 @@ describe.skipIf(!cargo)('native inject client ≡ JS client', () => {
     expect(jsLine?.fallback_reason ?? jsLine?.reason).toBe('daemon-timeout');
     expect(received.length).toBe(2);
   }, 90_000);
+
+  it('parity on edge envelopes and prompts: non-object JSON, numeric/boolean prompt, BOM, CRLF, U+0085, FEFF — same searched text or same skipped fields', async () => {
+    const received: Array<Record<string, unknown>> = [];
+    await lineDaemon(sock(), (_req, c) => c.end(JSON.stringify({ ok: true, context: 'X' }) + '\n'), servers, received);
+    const LONG = '충분히 긴 본문이 뒤에 이어져서 게이트의 20자 기준을 넘긴다';
+    const cases: Array<[string, string, Record<string, string | undefined>]> = [
+      ['stdin null', 'null', {}],
+      ['stdin array', '[1,2]', {}],
+      ['stdin number', '123', {}],
+      ['stdin string literal', '"just a string"', {}],
+      ['numeric prompt', '{"prompt":123}', {}],
+      ['float prompt 1.0', '{"prompt":1.0,"session_id":"s"}', {}],
+      ['float prompt 1.5', '{"prompt":1.5}', {}],
+      ['boolean prompt', '{"prompt":true}', {}],
+      ['BOM before JSON', '\uFEFF' + envelope({ prompt: LONG }), {}],
+      ['CRLF inside prompt', envelope({ prompt: 'first line\r\nsecond line ' + LONG }), {}],
+      ['U+0085 before a machine tag', envelope({ prompt: '\u0085<task-notification>x</task-notification> ' + LONG }), {}],
+      ['FEFF before a machine tag', envelope({ prompt: '\uFEFF<task-notification>x</task-notification>' }), {}],
+      ['FEFF before the USER_PROMPT envelope', '', { USER_PROMPT: '\uFEFF' + JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: LONG, cwd: '/tmp/c', session_id: 's-feff', turn_id: 't' }) }],
+      ['non-UserPromptSubmit envelope with BOM', '', { USER_PROMPT: '\uFEFF' + JSON.stringify({ hook_event_name: 'SessionStart', prompt: LONG }) }],
+    ];
+    for (const [name, input, extra] of cases) {
+      const run = async (f: typeof runNative) => {
+        const before = readInjectLog(tmp).length; const n0 = received.length;
+        const r = await f(input, extra);
+        return { r, req: received.length > n0 ? received[received.length - 1] : null, log: readInjectLog(tmp).slice(before) };
+      };
+      const js = await run(runNode); const rs = await run(runNative);
+      expect(rs.r.status, name).toBe(0);
+      expect(rs.r.stdout, name).toBe(js.r.stdout);
+      expect(rs.req?.prompt ?? null, name).toBe(js.req?.prompt ?? null);
+      expect(rs.req?.client ?? null, name).toBe(js.req?.client ?? null);
+      expect(rs.log.length, name).toBe(js.log.length);
+      if (js.log.length) expect(logFields(rs.log[0]), name).toEqual(logFields(js.log[0]));
+    }
+  }, 120_000);
+
+  it('a lone surrogate escape in the daemon block prints the same bytes from both clients (U+FFFD), and the ledger is written', async () => {
+    await lineDaemon(sock(), (_req, c) => c.end('{"ok":true,"context":"a\\ud83d b \\ud83d\\ude00","ledger_keys":["k1"]}\n'), servers);
+    const js = await runNode(envelope({ session_id: 'sess-sur-js' }));
+    const rs = await runNative(envelope({ session_id: 'sess-sur-rs' }));
+    expect(rs.stdout).toBe(js.stdout);
+    expect(rs.stdout).toBe('a\uFFFD b 😀\n');
+    expect(await waitFor(() => readLedger(tmp, 'sess-sur-rs') === '["k1"]')).toBe(true);
+  });
+
+  it('a prompt the native client hands to node keeps client_impl native on the fallback log line (fallback rate stays measurable)', async () => {
+    const rs = await runNative(envelope({ session_id: 'sess-fb-tag' })); // no daemon listening, real node on PATH
+    expect(rs.status).toBe(0);
+    const line = readInjectLog(tmp).find((l) => l.fallback_reason === 'no-daemon');
+    expect(line).toBeDefined();
+    expect(line!.client_impl).toBe('native');
+    expect(String(line!.req_id)).toMatch(/^[0-9a-f-]{36}$/);
+  }, 60_000);
+
+  it('a daemon trickling bytes without a newline hits the same 3s answer deadline in both clients (deadlines are absolute, not per read)', async () => {
+    const received: Array<Record<string, unknown>> = [];
+    await lineDaemon(sock(), (_req, c) => { const iv = setInterval(() => { try { c.write('x'); } catch { clearInterval(iv); } }, 700); c.on('close', () => clearInterval(iv)); }, servers, received);
+    const fake = fakeNode();
+    const [rs, js] = await Promise.all([runNative(envelope({ session_id: 'sess-trickle-rs' }), { PATH: fake.pathEnv }), runNode(envelope({ session_id: 'sess-trickle-js' }))]);
+    expect(rs.status).toBe(0); expect(rs.stdout).toBe('');
+    expect(rs.ms).toBeGreaterThan(2_800); expect(rs.ms).toBeLessThan(7_000);
+    expect(fake.read()!.env.MEMORY_BANK_INJECT_DAEMON_FAILED).toBe('daemon-timeout');
+    expect(js.ms).toBeGreaterThan(2_800); expect(js.ms).toBeLessThan(20_000);
+    expect(readInjectLog(tmp).find((l) => l.client_impl === 'node')?.fallback_reason).toBe('daemon-timeout');
+    expect(received.length).toBe(2);
+  }, 60_000);
 
   it('A-002: a session id with path characters never leaves the ledger directory — same file name rule as JS', async () => {
     await lineDaemon(sock(), (_req, c) => c.end(JSON.stringify({ ok: true, context: 'L', ledger_keys: ['k'] }) + '\n'), servers);

@@ -143,7 +143,7 @@
 **대상**: ① 이 기계의 설치 캐시 1.7.9(`~/.claude/plugins/cache/memory-bank-dev/memory-bank/1.7.9`) ② 배포 URL: 해당 없음(로컬 플러그인 — `post_deploy` 는 `not_applicable` + 사유)
 **여정 단계**:
 1. 릴리스 뒤 설치 캐시 1.7.9 디렉터리 확인 → `bash <cache>/scripts/build-native-client.sh` 를 SessionStart 와 같은 명령으로 실행 → `<indexDir>/bin/memory-bank-inject-client` + `.srchash` 생성, `logs/native-build.log` 1줄
-2. 데몬이 떠 있는 상태(이 세션의 MCP 서버 1.7.9 — 없으면 `node <cache>/dist/mcp-server.js` 를 띄워 소켓 생성 확인)에서 UserPromptSubmit 봉투를 `bash <cache>/hooks/inject-context.sh` 에 5회 넣어 끝에서 끝 시간 측정
+2. 데몬이 떠 있는 상태(이 세션의 MCP 서버 1.7.9 — 없으면 `node <cache>/dist/mcp-server.js` 를 띄워 소켓 생성 확인)에서 UserPromptSubmit 봉투를 `bash <cache>/hooks/inject-context.sh` 에 5회 넣어 끝에서 끝 시간 측정 — **회차·클라이언트마다 다른 `session_id`** 로(같은 id 는 두 번째부터 dedup 되어 빈 블록이 나와 비교가 공허해진다), 블록이 비어 있지 않고 네이티브·node 바이트가 같은지 본다. 릴리즈 전에는 HEAD 체크아웃을 `<cache>` 자리에 두고 같은 단계를 돌린다(릴리즈 전 다리); 설치 캐시 다리는 릴리즈 뒤 AC-011.
 3. 주입 로그 마지막 줄들에 `plugin_version 1.7.9`·`client_impl native`·`via daemon` 이 찍힌다
 4. 5회 중앙값 ≤ 40ms(데몬 웜) — 네이티브 전 같은 봉투의 JS 경로 5회와 비교 수치 기록
 **기대 결과**: 여정 무중단 완주, 블록 출력(또는 `no-match`)이 JS 경로와 같은 내용, 로그에 세션 id 평문 없음(`session_key` 만)
@@ -191,7 +191,7 @@
 
 #### A-001: 적대적 데몬 응답
 - 등급: CRITICAL
-- 확인: 응답 줄이 (a) 1MB 넘는 한 줄 (b) JSON 아님 (c) `context` 가 문자열 아님 (d) `ledger_keys` 에 비문자열 (e) `warming` 만 반복 — 네이티브는 (a)(b)(c) `daemon-error` 폴백, (d) 문자열만 원장에, (e) 20초 상한 뒤 `daemon-timeout`; 어느 경우도 패닉·비정상 종료 없음(exit 0)
+- 확인: 응답 줄이 (a) 1MB 넘는 한 줄 (b) JSON 아님 (c) `context` 가 문자열 아님 (d) `ledger_keys` 에 비문자열 (e) `warming` 만 반복 (f) 줄바꿈 없이 바이트만 조금씩 (g) 짝 없는 서로게이트 이스케이프 — 네이티브는 JS 와 같게 (a) 그대로 전달 (b) `daemon-error` 폴백 (c) JS `String()` 처럼 문자열화해 출력 (d) 문자열 키만 원장에 (e) 첫 warming 부터 20초 뒤 `daemon-timeout` (f) 3초 뒤 `daemon-timeout` (g) `U+FFFD` 로 같은 바이트; 어느 경우도 패닉·비정상 종료 없음(exit 0)
 
 #### A-002: 원장 파일명 주입
 - 등급: HIGH

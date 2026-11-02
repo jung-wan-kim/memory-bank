@@ -67,6 +67,7 @@ fn main() -> ExitCode {
         println!("{SRC_HASH}");
         return ExitCode::SUCCESS;
     }
+    let started = std::time::Instant::now();
     let raw = read_stdin();
     let input = envelope::parse(&raw);
     let meta = log::Meta {
@@ -89,7 +90,7 @@ fn main() -> ExitCode {
             deliver(&answer.context, &input.session_id, &answer.ledger_keys, &index_dir);
             ExitCode::SUCCESS
         }
-        Err(reason) => fallback::exec_node(reason, &meta.req_id, &raw),
+        Err(reason) => fallback::exec_node(reason, &meta.req_id, &raw, started.elapsed()),
     }
 }
 

@@ -3,9 +3,11 @@
 use std::path::PathBuf;
 
 pub fn index_dir() -> PathBuf {
-    let base = match std::env::var("MEMORY_BANK_CONFIG_DIR") {
-        Ok(v) if !v.is_empty() => PathBuf::from(v),
-        _ => {
+    let nonempty = |k: &str| std::env::var(k).ok().filter(|s| !s.is_empty());
+    // paths.ts getSuperpowersDir: MEMORY_BANK_CONFIG_DIR → PERSONAL_SUPERPOWERS_DIR → XDG_CONFIG_HOME/superpowers → ~/.config/superpowers
+    let base = match nonempty("MEMORY_BANK_CONFIG_DIR").or_else(|| nonempty("PERSONAL_SUPERPOWERS_DIR")) {
+        Some(v) => PathBuf::from(v),
+        None => {
             let xdg = std::env::var("XDG_CONFIG_HOME").ok().filter(|s| !s.is_empty()).map(PathBuf::from);
             let config = xdg.unwrap_or_else(|| home_dir().join(".config"));
             config.join("superpowers")
