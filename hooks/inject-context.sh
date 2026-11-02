@@ -19,10 +19,11 @@ INJECT_SCRIPT="${HOOK_DIR}/../scripts/inject-context.js"
 # visible somewhere — discarding stderr let a broken install go unnoticed for months.
 INDEX_DIR="${MEMORY_BANK_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/superpowers}/conversation-index"
 LOG_DIR="$INDEX_DIR/logs"
-mkdir -p "$LOG_DIR" 2>/dev/null || true
+[[ -d "$LOG_DIR" ]] || mkdir -p "$LOG_DIR" 2>/dev/null || true
 ERR_LOG="$LOG_DIR/inject-context.err.log"
-# Keep the error log bounded (~1MB): truncate before append when oversized.
-if [[ -f "$ERR_LOG" ]] && [[ $(wc -c < "$ERR_LOG" 2>/dev/null || echo 0) -gt 1048576 ]]; then
+# Keep the error log bounded (~1MB): truncate before append when oversized (size read only when non-empty —
+# every subprocess here is paid on every prompt).
+if [[ -s "$ERR_LOG" ]] && [[ $(wc -c < "$ERR_LOG" 2>/dev/null || echo 0) -gt 1048576 ]]; then
   : > "$ERR_LOG"
 fi
 
@@ -30,10 +31,13 @@ fi
 # exists) — used only when it is executable AND its recorded source hash equals this plugin's SRC_HASH, so an
 # old binary never talks a new protocol. Anything else runs the node client exactly as before. The binary
 # itself falls back to the node client when the daemon does not answer.
-PLUGIN_ROOT="$(cd "$HOOK_DIR/.." && pwd)"
+PLUGIN_ROOT="${HOOK_DIR%/*}" # HOOK_DIR is canonical and absolute — no second subshell
 NATIVE_BIN="${MEMORY_BANK_NATIVE_CLIENT:-$INDEX_DIR/bin/memory-bank-inject-client}"
-WANT_HASH=""; [[ -f "$PLUGIN_ROOT/native/inject-client/SRC_HASH" ]] && WANT_HASH="$(tr -d '[:space:]' < "$PLUGIN_ROOT/native/inject-client/SRC_HASH" 2>/dev/null || true)"
-HAVE_HASH=""; [[ -f "$NATIVE_BIN.srchash" ]] && HAVE_HASH="$(tr -d '[:space:]' < "$NATIVE_BIN.srchash" 2>/dev/null || true)"
+# Both pins are read with the `read` builtin (first line, whitespace stripped) — a $(tr …) subshell costs ~3ms each,
+# and the whole point of the native path is the ~75ms a node start-up takes.
+PIN="$PLUGIN_ROOT/native/inject-client/SRC_HASH"
+WANT_HASH=""; if [[ -f "$PIN" ]]; then IFS= read -r WANT_HASH < "$PIN" 2>/dev/null || true; WANT_HASH="${WANT_HASH//[[:space:]]/}"; fi
+HAVE_HASH=""; if [[ -f "$NATIVE_BIN.srchash" ]]; then IFS= read -r HAVE_HASH < "$NATIVE_BIN.srchash" 2>/dev/null || true; HAVE_HASH="${HAVE_HASH//[[:space:]]/}"; fi
 
 # Pass raw stdin straight through — both clients parse JSON/plaintext/env themselves.
 # MEMORY_BANK_CLIENT tags the inject log so Claude Code and Codex are measured apart.
