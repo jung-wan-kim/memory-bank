@@ -274,6 +274,21 @@ describe.skipIf(!cargo)('native inject client ≡ JS client', () => {
     expect(rs.stdout.length).toBe(big.length + 1);
   }, 60_000);
 
+  it('A-001 (e): a daemon that only ever says warming holds neither client past 20s — both give up with daemon-timeout, one request each', async () => {
+    const received: Array<Record<string, unknown>> = [];
+    await lineDaemon(sock(), (_req, c) => { const iv = setInterval(() => { try { c.write(JSON.stringify({ warming: true }) + '\n'); } catch { clearInterval(iv); } }, 300); c.on('close', () => clearInterval(iv)); }, servers, received);
+    const fake = fakeNode();
+    const [rs, js] = await Promise.all([runNative(envelope({ session_id: 'sess-warm-rs' }), { PATH: fake.pathEnv }), runNode(envelope({ session_id: 'sess-warm-js' }))]);
+    expect(rs.status).toBe(0); expect(rs.stdout).toBe('');
+    expect(rs.ms).toBeGreaterThan(19_500); expect(rs.ms).toBeLessThan(28_000);
+    expect(fake.read()!.env.MEMORY_BANK_INJECT_DAEMON_FAILED).toBe('daemon-timeout');
+    expect(js.status).toBe(0);
+    expect(js.ms).toBeGreaterThan(19_500); expect(js.ms).toBeLessThan(40_000);
+    const jsLine = readInjectLog(tmp).find((l) => l.client_impl === 'node');
+    expect(jsLine?.fallback_reason ?? jsLine?.reason).toBe('daemon-timeout');
+    expect(received.length).toBe(2);
+  }, 90_000);
+
   it('A-002: a session id with path characters never leaves the ledger directory — same file name rule as JS', async () => {
     await lineDaemon(sock(), (_req, c) => c.end(JSON.stringify({ ok: true, context: 'L', ledger_keys: ['k'] }) + '\n'), servers);
     for (const sid of ['../../etc/x', 'a/b', '   ', 'abc', 'x'.repeat(200), 'good-session_01']) {

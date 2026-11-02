@@ -1,11 +1,12 @@
 //! Ask the warm inject daemon over its versioned unix socket — askDaemon in scripts/inject-context.js.
 //! Resolves with the answer, or the fallback reason the JS client would have used:
-//! 'no-daemon' (nothing listening), 'daemon-timeout' (3s for the answer, 20s after a warming signal),
+//! 'no-daemon' (nothing listening), 'daemon-timeout' (3s for the answer; 20s from the FIRST warming signal —
+//! later warming lines do not extend it, so a daemon that only ever says warming cannot hold the prompt),
 //! 'daemon-closed' (hung up without a full answer), 'daemon-error' (bad line / ok:false).
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
 
@@ -43,7 +44,16 @@ pub fn ask(index_dir: &Path, input: &Input, meta: &Meta) -> Result<Answer, &'sta
 
     let mut reader = BufReader::new(stream.try_clone().map_err(|_| "daemon-error")?);
     let mut buf = String::new();
+    // Absolute deadline once the daemon says warming (armed once — askDaemon in the JS client does the same).
+    let mut warming_deadline: Option<Instant> = None;
     loop {
+        if let Some(d) = warming_deadline {
+            let remaining = d.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err("daemon-timeout");
+            }
+            let _ = stream.set_read_timeout(Some(remaining));
+        }
         buf.clear();
         match reader.read_line(&mut buf) {
             Ok(0) => return Err("daemon-closed"),
@@ -58,7 +68,9 @@ pub fn ask(index_dir: &Path, input: &Input, meta: &Meta) -> Result<Answer, &'sta
         };
         let obj = res.as_object();
         if obj.map(|o| truthy(o.get("warming"))).unwrap_or(false) {
-            let _ = stream.set_read_timeout(Some(WARMING_TIMEOUT));
+            if warming_deadline.is_none() {
+                warming_deadline = Some(Instant::now() + WARMING_TIMEOUT);
+            }
             continue;
         }
         let Some(o) = obj else { return Err("daemon-error") };

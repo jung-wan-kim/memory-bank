@@ -71,6 +71,7 @@ function askDaemon(prompt, cwd, sessionId, meta) {
   return new Promise((resolve) => {
     let settled = false;
     let connected = false;
+    let warmed = false; // the warming deadline is armed once — a daemon that only ever says warming cannot hold the prompt
     let timer = null;
     const done = (v) => { if (!settled) { settled = true; clearTimeout(timer); resolve(v); } };
     let conn;
@@ -105,7 +106,7 @@ function askDaemon(prompt, cwd, sessionId, meta) {
             return done({ failed: 'daemon-error' });
           }
           if (res && res.warming) {
-            arm(SOCKET_WARMING_TIMEOUT_MS, 'daemon-timeout');
+            if (!warmed) { warmed = true; arm(SOCKET_WARMING_TIMEOUT_MS, 'daemon-timeout'); }
             continue;
           }
           conn.destroy();

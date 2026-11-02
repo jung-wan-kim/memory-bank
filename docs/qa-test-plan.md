@@ -209,3 +209,4 @@
 
 - 하네스 결함 2건을 고치고 시나리오는 그대로 유지: ① 클라이언트 실행을 `spawnSync` → 비동기 `spawn`(`runChild`) — 동기 실행은 같은 프로세스의 가짜 데몬이 답할 수 없어 TC-NAT-001~003·TC-PERF-001·TC-NEG-001·A-001·A-002 가 전부 폴백으로 끝났다(거짓 실패). ② `baseEnv` 의 환경 정리를 `extra` 적용 **앞**으로 — 뒤에 지우면 Codex 봉투 경우(TC-NAT-002 의 `USER_PROMPT`)가 두 클라이언트 모두 skipped/empty 로 끝나 비교가 공허했다.
 - TC-NAT-003 의 폴백 env 이름은 `MEMORY_BANK_INJECT_DAEMON_FAILED`(계획 D1). 구조 리팩토링(`jsval.rs`·`parse` 분리·`INDEX_DIR`)으로 `SRC_HASH` 가 `c81fdeeed2288d48` 로 재고정됐고 TC-HASH-001 은 재고정 뒤 통과.
+- 레벨3 A-001(e)(warming 만 반복하는 데몬)에서 네이티브·JS 둘 다 끝없이 기다리는 것을 찾아(322초 뒤 강제 종료) 두 클라이언트에 첫 warming 부터 절대 20초 기한을 넣었다(계획 D8). 패리티 테스트 'A-001 (e)' 추가 — TC 수는 그대로(기존 TC-NAT-001 블록의 경우 추가).
