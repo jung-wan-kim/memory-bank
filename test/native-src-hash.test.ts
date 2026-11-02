@@ -18,6 +18,14 @@ describe('native client source hash pin (TC-HASH-001)', () => {
     expect(out.trim()).toBe(committed);
   });
 
+  it('runs as a script behind a symlinked path too (H-004: /tmp → /private/tmp made the main check a silent no-op)', () => {
+    const link = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-link-'));
+    fs.symlinkSync(REPO, path.join(link, 'repo'));
+    const out = execFileSync(process.execPath, [path.join(link, 'repo', 'scripts', 'native-src-hash.mjs'), '--check'], { encoding: 'utf8' });
+    expect(out.trim()).toBe(fs.readFileSync(path.join(CRATE, 'SRC_HASH'), 'utf8').trim());
+    fs.rmSync(link, { recursive: true, force: true });
+  });
+
   it('a one-byte source change changes the hash (so an old binary is never selected for new sources)', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-crate-'));
     fs.cpSync(CRATE, tmp, { recursive: true, filter: (src) => !src.includes(`${path.sep}target`) });

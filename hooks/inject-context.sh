@@ -41,10 +41,12 @@ HAVE_HASH=""; if [[ -f "$NATIVE_BIN.srchash" ]]; then IFS= read -r HAVE_HASH < "
 
 # Pass raw stdin straight through — both clients parse JSON/plaintext/env themselves.
 # MEMORY_BANK_CLIENT tags the inject log so Claude Code and Codex are measured apart.
+# The brace group's own stderr goes to the error log too: when the client dies of a signal, bash itself prints
+# "Segmentation fault: 11 …" to *its* stderr, which is the hook host's — not the client's redirected one.
 if [[ -n "$WANT_HASH" && -f "$NATIVE_BIN" && -x "$NATIVE_BIN" && ! -d "$NATIVE_BIN" && "$HAVE_HASH" == "$WANT_HASH" ]]; then
-  MEMORY_BANK_CLIENT="${MEMORY_BANK_CLIENT:-claude-code}" MEMORY_BANK_PLUGIN_ROOT="$PLUGIN_ROOT" "$NATIVE_BIN" 2>>"$ERR_LOG" || true
+  { MEMORY_BANK_CLIENT="${MEMORY_BANK_CLIENT:-claude-code}" MEMORY_BANK_PLUGIN_ROOT="$PLUGIN_ROOT" "$NATIVE_BIN" 2>>"$ERR_LOG"; } 2>>"$ERR_LOG" || true
 else
-  MEMORY_BANK_CLIENT="${MEMORY_BANK_CLIENT:-claude-code}" node "$INJECT_SCRIPT" 2>>"$ERR_LOG" || true
+  { MEMORY_BANK_CLIENT="${MEMORY_BANK_CLIENT:-claude-code}" node "$INJECT_SCRIPT" 2>>"$ERR_LOG"; } 2>>"$ERR_LOG" || true
 fi
 
 exit 0

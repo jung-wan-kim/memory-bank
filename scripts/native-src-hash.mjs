@@ -31,7 +31,10 @@ export function nativeSrcHash(crateDir = CRATE) {
   return h.digest('hex').slice(0, 16);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// "Run directly" is judged on real paths: /tmp on macOS is a symlink to /private/tmp, and a plugin cache may sit behind
+// one too — comparing the resolved argv path with import.meta.url (already real) was a silent no-op there (exit 0, no output).
+const realOrNull = (p) => { try { return fs.realpathSync(p); } catch { return null; } };
+if (process.argv[1] && realOrNull(path.resolve(process.argv[1])) === realOrNull(fileURLToPath(import.meta.url))) {
   const hash = nativeSrcHash();
   const pin = path.join(CRATE, 'SRC_HASH');
   if (process.argv.includes('--write')) { fs.writeFileSync(pin, hash + '\n'); process.stdout.write(hash + '\n'); }
