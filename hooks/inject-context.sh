@@ -10,7 +10,12 @@
 
 set -euo pipefail
 
-HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# No subshell for the hook's own directory: hooks.json passes an absolute path (${CLAUDE_PLUGIN_ROOT}/hooks/…); a
+# relative invocation (tests, manual runs) is anchored on $PWD. Two $(…) forks here cost ~5ms on every prompt.
+HOOK_DIR="${BASH_SOURCE[0]%/*}"
+[[ "$HOOK_DIR" == "${BASH_SOURCE[0]}" ]] && HOOK_DIR="."   # bare file name — invoked from its own directory
+[[ "$HOOK_DIR" == /* ]] || HOOK_DIR="$PWD/$HOOK_DIR"
+HOOK_DIR="${HOOK_DIR%/.}"; HOOK_DIR="${HOOK_DIR%/}"
 INJECT_SCRIPT="${HOOK_DIR}/../scripts/inject-context.js"
 
 [[ -f "$INJECT_SCRIPT" ]] || exit 0
