@@ -22,7 +22,8 @@ INJECT_SCRIPT="${HOOK_DIR}/../scripts/inject-context.js"
 
 # Error log: node-level crashes (missing node_modules, import failures) must be
 # visible somewhere — discarding stderr let a broken install go unnoticed for months.
-INDEX_DIR="${MEMORY_BANK_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/superpowers}/conversation-index"
+# Same precedence as paths.ts getSuperpowersDir(): MEMORY_BANK_CONFIG_DIR → PERSONAL_SUPERPOWERS_DIR → XDG → ~/.config
+INDEX_DIR="${MEMORY_BANK_CONFIG_DIR:-${PERSONAL_SUPERPOWERS_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/superpowers}}/conversation-index"
 LOG_DIR="$INDEX_DIR/logs"
 [[ -d "$LOG_DIR" ]] || mkdir -p "$LOG_DIR" 2>/dev/null || true
 ERR_LOG="$LOG_DIR/inject-context.err.log"

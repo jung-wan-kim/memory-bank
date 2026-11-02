@@ -7,7 +7,7 @@
 set -uo pipefail
 PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CRATE="$PLUGIN_ROOT/native/inject-client"
-INDEX_DIR="${MEMORY_BANK_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/superpowers}/conversation-index"
+INDEX_DIR="${MEMORY_BANK_CONFIG_DIR:-${PERSONAL_SUPERPOWERS_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/superpowers}}/conversation-index"
 BIN_DIR="$INDEX_DIR/bin"
 BIN="$BIN_DIR/memory-bank-inject-client"
 LOG_DIR="$INDEX_DIR/logs"

@@ -294,23 +294,26 @@ describe.skipIf(!cargo)('native inject client ≡ JS client', () => {
     const received: Array<Record<string, unknown>> = [];
     await lineDaemon(sock(), (_req, c) => c.end(JSON.stringify({ ok: true, context: 'X' }) + '\n'), servers, received);
     const LONG = '충분히 긴 본문이 뒤에 이어져서 게이트의 20자 기준을 넘긴다';
-    const cases: Array<[string, string, Record<string, string | undefined>]> = [
-      ['stdin null', 'null', {}],
-      ['stdin array', '[1,2]', {}],
-      ['stdin number', '123', {}],
-      ['stdin string literal', '"just a string"', {}],
-      ['numeric prompt', '{"prompt":123}', {}],
-      ['float prompt 1.0', '{"prompt":1.0,"session_id":"s"}', {}],
-      ['float prompt 1.5', '{"prompt":1.5}', {}],
-      ['boolean prompt', '{"prompt":true}', {}],
-      ['BOM before JSON', '\uFEFF' + envelope({ prompt: LONG }), {}],
-      ['CRLF inside prompt', envelope({ prompt: 'first line\r\nsecond line ' + LONG }), {}],
-      ['U+0085 before a machine tag', envelope({ prompt: '\u0085<task-notification>x</task-notification> ' + LONG }), {}],
-      ['FEFF before a machine tag', envelope({ prompt: '\uFEFF<task-notification>x</task-notification>' }), {}],
-      ['FEFF before the USER_PROMPT envelope', '', { USER_PROMPT: '\uFEFF' + JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: LONG, cwd: '/tmp/c', session_id: 's-feff', turn_id: 't' }) }],
-      ['non-UserPromptSubmit envelope with BOM', '', { USER_PROMPT: '\uFEFF' + JSON.stringify({ hook_event_name: 'SessionStart', prompt: LONG }) }],
+    // [name, stdin, extra env, expected outcome, expected skipped reason / prompt_len] — the expectation column keeps
+    // the comparison from passing when both clients are wrong the same way (round-2 critique L3)
+    const cases: Array<[string, string, Record<string, string | undefined>, 'searched' | 'skipped', string | number]> = [
+      ['stdin null', 'null', {}, 'skipped', 'short'],                     // JSON.parse('null').prompt throws → raw text 'null' (4 chars)
+      ['stdin array', '[1,2]', {}, 'skipped', 'empty'],
+      ['stdin number', '123', {}, 'skipped', 'empty'],
+      ['stdin string literal', '"just a string"', {}, 'skipped', 'empty'],
+      ['numeric prompt', '{"prompt":123}', {}, 'skipped', 'short'],
+      ['float prompt 1.0', '{"prompt":1.0,"session_id":"s"}', {}, 'skipped', 1],     // String(1.0) === '1' → prompt_len 1
+      ['float prompt 1.5', '{"prompt":1.5}', {}, 'skipped', 3],
+      ['boolean prompt', '{"prompt":true}', {}, 'skipped', 4],
+      ['BOM before JSON', '\uFEFF' + envelope({ prompt: LONG }), {}, 'searched', 0],   // JSON.parse fails → the raw text is the prompt
+      ['CRLF inside prompt', envelope({ prompt: 'first line\r\nsecond line ' + LONG }), {}, 'searched', 0],
+      ['U+0085 before a machine tag', envelope({ prompt: '\u0085<task-notification>x</task-notification> ' + LONG }), {}, 'searched', 0], // U+0085 is not JS whitespace → not a tag
+      ['FEFF before a machine tag', envelope({ prompt: '\uFEFF<task-notification>x</task-notification>' }), {}, 'skipped', 'task-notification'],
+      ['FEFF before the USER_PROMPT envelope', '', { USER_PROMPT: '\uFEFF' + JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: LONG, cwd: '/tmp/c', session_id: 's-feff', turn_id: 't' }) }, 'searched', 0],
+      ['non-UserPromptSubmit envelope with BOM', '', { USER_PROMPT: '\uFEFF' + JSON.stringify({ hook_event_name: 'SessionStart', prompt: LONG }) }, 'skipped', 'hook-envelope'],
+      ['lone surrogate escape inside the stdin envelope', '{"prompt":"' + LONG + ' \\ud83d","cwd":"/tmp/sur","session_id":"sess-sur-env","hook_event_name":"UserPromptSubmit","transcript_path":"/t"}', {}, 'searched', 0], // JSON.parse accepts it; the native client must still parse the envelope (not treat it as text)
     ];
-    for (const [name, input, extra] of cases) {
+    for (const [name, input, extra, expected, detail] of cases) {
       const run = async (f: typeof runNative) => {
         const before = readInjectLog(tmp).length; const n0 = received.length;
         const r = await f(input, extra);
@@ -319,10 +322,17 @@ describe.skipIf(!cargo)('native inject client ≡ JS client', () => {
       const js = await run(runNode); const rs = await run(runNative);
       expect(rs.r.status, name).toBe(0);
       expect(rs.r.stdout, name).toBe(js.r.stdout);
-      expect(rs.req?.prompt ?? null, name).toBe(js.req?.prompt ?? null);
+      const fold = (p: unknown) => String(p ?? '').replace(/[\uD800-\uDFFF]/g, '\uFFFD'); // a lone surrogate JS keeps is U+FFFD on the wire from the native side
+      expect(fold(rs.req?.prompt), name).toBe(fold(js.req?.prompt));
       expect(rs.req?.client ?? null, name).toBe(js.req?.client ?? null);
+      expect(rs.req?.session_id ?? null, name).toBe(js.req?.session_id ?? null);
       expect(rs.log.length, name).toBe(js.log.length);
       if (js.log.length) expect(logFields(rs.log[0]), name).toEqual(logFields(js.log[0]));
+      // the expectation column
+      expect(js.req !== null ? 'searched' : 'skipped', name).toBe(expected);
+      if (expected === 'skipped') {
+        if (typeof detail === 'string') expect(js.log[0]?.reason, name).toBe(detail); else expect(js.log[0]?.prompt_len, name).toBe(detail);
+      }
     }
   }, 120_000);
 
@@ -334,6 +344,34 @@ describe.skipIf(!cargo)('native inject client ≡ JS client', () => {
     expect(rs.stdout).toBe('a\uFFFD b 😀\n');
     expect(await waitFor(() => readLedger(tmp, 'sess-sur-rs') === '["k1"]')).toBe(true);
   });
+
+  it('warming and the answer arriving in ONE chunk are both handled; a backslash before a non-ASCII byte is daemon-error in both, never a crash', async () => {
+    await lineDaemon(sock(), (_req, c) => c.end(JSON.stringify({ warming: true }) + '\n' + JSON.stringify({ ok: true, context: 'ONE-CHUNK', ledger_keys: ['c1'] }) + '\n'), servers);
+    const js = await runNode(envelope({ session_id: 'sess-chunk-js' })); const rs = await runNative(envelope({ session_id: 'sess-chunk-rs' }));
+    expect(rs.stdout).toBe('ONE-CHUNK\n'); expect(js.stdout).toBe(rs.stdout);
+    expect(await waitFor(() => readLedger(tmp, 'sess-chunk-rs') === '["c1"]')).toBe(true);
+    await closeAll(servers);
+    // `\é` inside the JSON line: invalid JSON for JSON.parse and for serde — round-2 critique N1 (the sanitizer sliced inside the 2-byte char)
+    await lineDaemon(sock(), (_req, c) => c.end(Buffer.concat([Buffer.from('{"ok":true,"context":"'), Buffer.from([0x5c]), Buffer.from('é"}\n')])), servers);
+    const fake = fakeNode();
+    const rs2 = await runNative(envelope({ session_id: 'sess-bs-rs' }), { PATH: fake.pathEnv });
+    expect(rs2.status).toBe(0); expect(rs2.stdout).toBe(''); expect(fake.read()!.env.MEMORY_BANK_INJECT_DAEMON_FAILED).toBe('daemon-error');
+    const js2 = await runNode(envelope({ session_id: 'sess-bs-js' }));
+    expect(js2.status).toBe(0);
+    expect(readInjectLog(tmp).find((l) => l.client_impl === 'node' && l.fallback_reason)?.fallback_reason).toBe('daemon-error');
+  }, 60_000);
+
+  it('the per-session ledger keeps at most 800 keys in both clients — oldest out first, same file bytes', async () => {
+    await lineDaemon(sock(), (_req, c) => c.end(JSON.stringify({ ok: true, context: 'CAP', ledger_keys: ['n1', 'n2', 'k5'] }) + '\n'), servers);
+    const dir = path.join(ci(), 'state', 'inject-ledger'); fs.mkdirSync(dir, { recursive: true });
+    const seed = JSON.stringify(Array.from({ length: 799 }, (_, i) => `k${i + 1}`));
+    fs.writeFileSync(path.join(dir, 'sess-cap-js.json'), seed); fs.writeFileSync(path.join(dir, 'sess-cap-rs.json'), seed);
+    await runNode(envelope({ session_id: 'sess-cap-js' })); await runNative(envelope({ session_id: 'sess-cap-rs' }));
+    expect(await waitFor(() => readLedger(tmp, 'sess-cap-rs') !== seed && readLedger(tmp, 'sess-cap-js') !== seed)).toBe(true);
+    const rsL = JSON.parse(readLedger(tmp, 'sess-cap-rs')!) as string[]; const jsL = JSON.parse(readLedger(tmp, 'sess-cap-js')!) as string[];
+    expect(rsL).toEqual(jsL);
+    expect(rsL.length).toBe(800); expect(rsL[0]).toBe('k2'); expect(rsL.slice(-2)).toEqual(['n1', 'n2']); expect(rsL.filter((k) => k === 'k5').length).toBe(1);
+  }, 60_000);
 
   it('a prompt the native client hands to node keeps client_impl native on the fallback log line (fallback rate stays measurable)', async () => {
     const rs = await runNative(envelope({ session_id: 'sess-fb-tag' })); // no daemon listening, real node on PATH

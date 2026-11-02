@@ -153,7 +153,7 @@ test/native-inject-client.test.ts · test/inject-hook-wrapper.test.ts · test/bu
 
 ## Deviations (구현 중 계획에서 벗어난 것 — 2026-11-02)
 
-- D0 목표 미달: "훅 웜 경로의 프로세스 몫 ≤ 10ms" 는 약 15ms(래퍼 11.9 + 바이너리 3.5, 실데몬 끝-끝 32.1ms − 데몬 16~17ms)로 미달이다. 남은 몫의 대부분은 bash 래퍼의 기동(6.7ms)이다 — 래퍼를 없애고 hooks.json 이 바이너리를 직접 부르는 안은 바이너리 부재 때의 폴백을 바이너리 밖에서 해야 해 이번 범위 밖.
+- D0 목표 미달: "훅 웜 경로의 프로세스 몫 ≤ 10ms" 는 약 15ms(래퍼 12.3 + 바이너리 3.4, 실데몬 끝-끝 32.5ms − 데몬 16~17ms)로 미달이다. 남은 몫의 대부분은 bash 래퍼의 기동(6.7ms)이다 — 래퍼를 없애고 hooks.json 이 바이너리를 직접 부르는 안은 바이너리 부재 때의 폴백을 바이너리 밖에서 해야 해 이번 범위 밖.
 
 - D1 폴백 신호 env 이름: 계획(AC-003·Step 1)은 `MEMORY_BANK_INJECT_FALLBACK_REASON` 으로 적었지만 그 변수는 JS 클라이언트가 **node ABI 재실행**에 쓰는 신호라
   의미가 다르다(재실행은 `{ failed: reason }` 로 끝내는 분기가 따로 있다). 네이티브 → node 인계는 새 변수 `MEMORY_BANK_INJECT_DAEMON_FAILED` 로 하고
@@ -181,8 +181,15 @@ test/native-inject-client.test.ts · test/inject-hook-wrapper.test.ts · test/bu
   ⑩ 숫자 문자열화 ⑪ 바이트 단위 절대 기한 ⑫ `PERSONAL_SUPERPOWERS_DIR` ⑬ 설치 순서(핀 먼저 삭제) ⑭ 핀에 Cargo.lock ⑮ "읽기 전용 연결" 서술 정정 ⑯ 검증 불가 수치 삭제
   ⑰ 패닉 가능 `eprintln!` 제거 ⑱ 폴백에 남은 훅 예산 전달 ⑲ 목표 "프로세스 몫 ≤ 10ms" 미달(≈15ms) 명시 ⑳ 문서·시나리오 정합(아래 D9, QA 계획 A-001 기대값). 백오프(F14 후반)·
   stdin 2초 절단의 멀티바이트 경계(F10)는 잔여 목록.
+- D11 독립 반박 2라운드(CRITICAL 0·HIGH 0·MEDIUM 2·LOW 7, 회귀 2/9 — 종료 규칙 ①로 루프 종료, 9건은 한 번에 고치고 재비평하지 않음) 반영: ① [MEDIUM·회귀] 서로게이트 정리기가 `\` 다음 바이트가
+  비ASCII 일 때 `&text[i..i+2]` 로 패닉(블록 없이 종료 — 래퍼가 err.log 로 묶어 프롬프트는 살지만 주입이 빠짐) → ASCII 일 때만 2바이트 복사 + 단위 테스트 ② [MEDIUM·회귀] 문서 수치가
+  인용 파일과 어긋남(107→112, 32.1→32.5, 11.9→12.3, 3.5/78.2→3.4/75.0 재측정, cargo 5→8, 패리티 15→17) ③ 쓰기 기한(connect 뒤 3초 절대 기한을 `write_all` 앞에 잡고 WouldBlock/TimedOut →
+  `daemon-timeout`) ④ 봉투(stdin·`USER_PROMPT`)도 파싱 전에 같은 정리기 ⑤ 패리티 표에 기대값 열 ⑥ 원장 800 상한·한 청크 warming+ok·`\`+비ASCII 테스트 ⑦ "읽기 전용 연결" → "쓰기 가능한 연결이지만
+  읽기만 한다" ⑧ 인덱스 디렉터리 우선순위(`MEMORY_BANK_CONFIG_DIR` → `PERSONAL_SUPERPOWERS_DIR` → `XDG_CONFIG_HOME/superpowers` → `~/.config/superpowers`)를 JS·래퍼·빌드 스크립트에 같게 ⑨ 보고서
+  수치 일치. 정리기는 `src/jsval.rs` 로 옮겼고 소스 해시는 `14bd07782bcccd12` → `d9428017839de77b`. 잔여(고치지 않음): 빌드 실패 백오프, stdin 2초 절단의 멀티바이트 경계. 끝-끝 32.5/112ms 인용은
+  `012f4a6` 바이너리의 측정이다 — 그 뒤 변경은 시간 경로를 건드리지 않고, 최종 HEAD 의 E2E 재실행은 레벨1 판정(≤40ms·블록 동일)으로만 `.qa-evidence.json` 에 남긴다(수치 재인용 없음).
 - D7 mmap 실측 수치(계획 Step 4 "보고에 숫자"): 구현 뒤 재측정(실DB 읽기 전용, 같은 질의 LIMIT 50, 워밍 뒤 9회 중앙값, `c780271`, `.qa-artifacts/knn-mmap.json`)은
   mmap 끔 → 256MB 가 `vec_facts` 8.1 → 8.0ms, `vec_facts_kr` 7.0 → 6.7ms 로 **잡음 수준**. 설계 단계의 16.8 → 9.6ms 는 캐시가 식은 첫 호출을 기본값 쪽에 둔 순서
-  효과였다(권고 ④의 근거 정정). mmap 은 비용이 없어 유지하되 성능 개선으로 세지 않는다. AC-005 인용 수치는 단독 실행 3.5/78.2ms(`ac-005-timing-cited.json`, 04:24Z).
+  효과였다(권고 ④의 근거 정정). mmap 은 비용이 없어 유지하되 성능 개선으로 세지 않는다. AC-005 인용 수치는 단독 실행 3.4/75.0ms(`ac-005-timing-cited.json`, 06:06Z, 릴리즈 바이너리 소스 해시 `d9428017839de77b`).
 
 P3_SNAPSHOT: .qa-artifacts/p3-snapshot.json

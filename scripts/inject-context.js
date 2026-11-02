@@ -53,8 +53,11 @@ const LOG_MARGIN_MS = 3_000;
 const MIN_RERUN_MS = 3_000; // the cold path measured ~2.3s
 
 function injectSocketPath() {
-  // Mirrors paths.ts getIndexDir() without importing the heavy dist chain.
-  const base = process.env.MEMORY_BANK_CONFIG_DIR
+  // Mirrors paths.ts getSuperpowersDir() without importing the heavy dist chain:
+  // MEMORY_BANK_CONFIG_DIR → PERSONAL_SUPERPOWERS_DIR → XDG_CONFIG_HOME/superpowers → ~/.config/superpowers.
+  // (PERSONAL_SUPERPOWERS_DIR was missing here — with it set, this client looked for the daemon in a directory
+  // the daemon never used, and only the native client reached it.)
+  const base = process.env.MEMORY_BANK_CONFIG_DIR || process.env.PERSONAL_SUPERPOWERS_DIR
     || path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'superpowers');
   // Same version → same socket as this install's daemon (never an older one's).
   return injectSocketPathIn(path.join(base, 'conversation-index'), ownPackageVersion());

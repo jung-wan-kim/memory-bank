@@ -32,7 +32,7 @@ function fileIdent(p: string): string | null {
   }
 }
 
-/** Default mmap window for the read-only search connection: 256MB covers the fact vector tables. */
+/** Default mmap window for the search connection (writable, used only for reads): 256MB covers the fact vector tables. */
 export const DEFAULT_SEARCH_MMAP_BYTES = 268_435_456;
 
 /**

@@ -1,6 +1,6 @@
 import { SearchResult, MultiConceptResult } from './types.js';
 import type DatabaseType from 'better-sqlite3';
-/** Default mmap window for the read-only search connection: 256MB covers the fact vector tables. */
+/** Default mmap window for the search connection (writable, used only for reads): 256MB covers the fact vector tables. */
 export declare const DEFAULT_SEARCH_MMAP_BYTES = 268435456;
 /**
  * Bytes for `PRAGMA mmap_size` on the search connection — MEMORY_BANK_SQLITE_MMAP_BYTES (integer ≥ 0; 0 turns

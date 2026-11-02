@@ -3,7 +3,7 @@
 //! form. Mirrors main() of scripts/inject-context.js field for field.
 use serde_json::Value;
 
-use crate::jsval::{js_string, truthy};
+use crate::jsval::{js_string, sanitize_lone_surrogate_escapes, truthy};
 
 pub struct Input {
     pub prompt: String,
@@ -26,7 +26,7 @@ fn parse_hook_envelope(text: &str) -> Option<Result<Value, ()>> {
     if !t.starts_with('{') {
         return None;
     }
-    let j: Value = serde_json::from_str(t).ok()?;
+    let j: Value = serde_json::from_str(&sanitize_lone_surrogate_escapes(t)).ok()?;
     let obj = j.as_object()?;
     if !obj.contains_key("hook_event_name") {
         return None;
@@ -61,7 +61,7 @@ pub fn parse(raw: &[u8]) -> Input {
 /// stdin: a JSON envelope — JSON.parse accepts any JSON value, and property access on a non-object yields
 /// undefined → '' — or plain text, which is the prompt itself.
 fn read_stdin_fields(raw_text: &str, input: &mut Input) {
-    match serde_json::from_str::<Value>(raw_text) {
+    match serde_json::from_str::<Value>(&sanitize_lone_surrogate_escapes(raw_text)) {
         // JS: `JSON.parse('null').prompt` throws → the catch path keeps the raw text as the prompt
         Ok(Value::Null) => input.prompt = raw_text.to_string(),
         Ok(j) => {
