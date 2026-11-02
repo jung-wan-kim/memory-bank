@@ -41,3 +41,4 @@ galaxy-*.png
 __pycache__/
 .claude/.settings.lock
 .claude/scheduled_tasks.lock
+native/inject-client/target/

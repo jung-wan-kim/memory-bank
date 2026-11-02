@@ -211,10 +211,16 @@ async function main() {
   }
   if (!cwd) cwd = process.env.CWD || process.cwd();
   if (!sessionId) sessionId = process.env.SESSION_ID || '';
+  // The native client (native/inject-client) hands a prompt over here when the daemon did not answer it:
+  // it passes its own request id so the daemon's log line and this fallback line stay one prompt, and the
+  // reason, so the daemon is not asked a second time. Both are validated — env is not a trusted channel.
+  const inheritedReqId = /^[A-Za-z0-9-]{1,40}$/.test(process.env.MEMORY_BANK_INJECT_REQ_ID || '') ? process.env.MEMORY_BANK_INJECT_REQ_ID : null;
+  const daemonFailed = /^[a-z-]{1,40}$/.test(process.env.MEMORY_BANK_INJECT_DAEMON_FAILED || '') ? process.env.MEMORY_BANK_INJECT_DAEMON_FAILED : null;
   const meta = {
     client: client || 'manual',
     entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT || undefined,
-    req_id: randomUUID(), // same id on the daemon's log line and on a fallback line
+    req_id: inheritedReqId || randomUUID(), // same id on the daemon's log line and on a fallback line
+    client_impl: 'node', // which thin client ran — the native one sends 'native'
   };
 
   // Harness-generated prompts (task notifications, slash-command expansions …)
@@ -232,7 +238,7 @@ async function main() {
   // FAST PATH — warm daemon inside a running MCP server. A re-run for the
   // native ABI (below) skips it: the daemon already failed in the parent.
   const reexecReason = process.env.MEMORY_BANK_INJECT_FALLBACK_REASON;
-  const answer = reexecReason ? { failed: reexecReason } : await askDaemon(prompt, cwd, sessionId, meta);
+  const answer = reexecReason ? { failed: reexecReason } : daemonFailed ? { failed: daemonFailed } : await askDaemon(prompt, cwd, sessionId, meta);
   if (!answer.failed) {
     await deliver(answer.context, sessionId, answer.ledgerKeys);
     return;

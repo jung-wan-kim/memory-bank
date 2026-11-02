@@ -27,6 +27,21 @@ function fileIdent(p) {
         return null; // file missing — force reopen (initDatabase recreates it)
     }
 }
+/** Default mmap window for the read-only search connection: 256MB covers the fact vector tables. */
+export const DEFAULT_SEARCH_MMAP_BYTES = 268_435_456;
+/**
+ * Bytes for `PRAGMA mmap_size` on the search connection — MEMORY_BANK_SQLITE_MMAP_BYTES (integer ≥ 0; 0 turns
+ * mmap off) or the default. A value that is not a non-negative integer falls back to the default and says so
+ * once on stderr (a silent fallback would hide a typo in the user's shell profile).
+ */
+export function searchMmapBytes(raw = process.env.MEMORY_BANK_SQLITE_MMAP_BYTES, warn = (m) => process.stderr.write(m + '\n')) {
+    if (raw === undefined || raw === '')
+        return DEFAULT_SEARCH_MMAP_BYTES;
+    if (/^\d{1,15}$/.test(raw.trim()))
+        return Number(raw.trim());
+    warn(`memory-bank: MEMORY_BANK_SQLITE_MMAP_BYTES=${JSON.stringify(raw)} is not a non-negative integer — using ${DEFAULT_SEARCH_MMAP_BYTES}`);
+    return DEFAULT_SEARCH_MMAP_BYTES;
+}
 export function getSearchDb() {
     const p = getDbPath();
     const ident = fileIdent(p);
@@ -40,6 +55,13 @@ export function getSearchDb() {
     }
     catch { /* already closed */ }
     cachedSearchDb = initDatabase();
+    // Read path only: the brute-force KNN over the fact vector tables reads them whole on every prompt; a
+    // memory map lets the page cache serve that scan (measured 2026-11-02: vec_facts_kr KNN 16.8 → 9.6ms).
+    // Writers (indexer, workers) open their own connections and are left alone.
+    try {
+        cachedSearchDb.pragma(`mmap_size = ${searchMmapBytes()}`);
+    }
+    catch { /* an SQLite built without mmap — the scan still works */ }
     cachedSearchDbPath = p;
     cachedSearchDbIdent = fileIdent(p);
     return cachedSearchDb;

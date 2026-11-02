@@ -150,3 +150,26 @@ test/native-inject-client.test.ts · test/inject-hook-wrapper.test.ts · test/bu
       search_ms 분포가 그대로면(≥200ms) 데몬 안 측정 보강(`process.cpuUsage` 전/후·동시 프로세스 수)으로 재진단.
 - [ ] 사실 벡터 표 int8@600 이행(2026-10-16 계획 7단계) — 지금도 float32(37+31MB). 가드가 1.7.6 프로세스(아직 실행 중)를 거부한다. 졸업 트리거: 옛 세션 종료 뒤 `scripts/migrate-vec-facts-int8.mjs` 실행 결정.
 - [ ] 다른 플랫폼(linux-x64 등) 프리빌트 배포 여부. 졸업 트리거: cargo 없는 사용자의 요청 또는 GitHub Release 자산 빌드 파이프라인 결정.
+
+## Deviations (구현 중 계획에서 벗어난 것 — 2026-11-02)
+
+- D1 폴백 신호 env 이름: 계획(AC-003·Step 1)은 `MEMORY_BANK_INJECT_FALLBACK_REASON` 으로 적었지만 그 변수는 JS 클라이언트가 **node ABI 재실행**에 쓰는 신호라
+  의미가 다르다(재실행은 `{ failed: reason }` 로 끝내는 분기가 따로 있다). 네이티브 → node 인계는 새 변수 `MEMORY_BANK_INJECT_DAEMON_FAILED` 로 하고
+  JS 는 `^[a-z-]{1,40}$` 로 검증한다(`scripts/inject-context.js`). AC-003 의 검증(테스트 이름)은 그대로, 시나리오 TC-NAT-003 은 새 이름으로 적었다.
+- D2 빌드 스크립트 시험 훅: `MEMORY_BANK_CARGO`(cargo 경로 또는 `none` = cargo 없는 기계처럼) — 테스트가 PATH 에서 cargo 를 빼는 것만으로는
+  `~/.cargo/bin`·`/opt/homebrew/bin` 탐색을 막을 수 없어서 추가했다(AC-006 의 "cargo 없음" 경우).
+- D3 패리티 테스트 하네스 결함 2건을 구현 중 고쳤다: ① 클라이언트를 `spawnSync` 로 돌리면 vitest 워커의 이벤트 루프가 막혀 같은 프로세스의 가짜 데몬이
+  답하지 못한다 — 두 클라이언트가 모두 3초 뒤 폴백으로 끝나 8/10 실패했고, 비동기 `spawn`(`runChild`) 으로 바꾸자 통과(실측: 네이티브 3.4ms·node 79.8ms).
+  ② `baseEnv` 가 `extra` 를 펼친 **뒤** `USER_PROMPT` 를 지워 Codex 봉투 경우가 두 클라이언트 모두 skipped/empty 로 끝났다(패리티는 성립했지만 Codex 경로가
+  시험되지 않음) — 지우기 → `extra` 적용 순서로 바꿨다.
+- D4 connect 300ms 타이머 없음: unix 소켓 connect 는 ENOENT/ECONNREFUSED 로 즉시 답하므로 네이티브는 타이머 없이 `no-daemon` 으로 간다(JS 의 300ms 타이머는
+  이 경우 어차피 울리지 않는다). 응답 3s·warming 20s 는 계획대로.
+- D5 구조 리뷰 `[새]` 냄새 3건을 기능과 분리한 단계로 수정: `js_string`/`truthy` 를 `src/jsval.rs` 로(Duplicated Code), `envelope::parse` 를
+  `read_stdin_fields`/`read_user_prompt_env` 로 분리(Long Function), 래퍼의 인덱스 경로 유도를 `INDEX_DIR` 하나로(Duplicated Code). 소스 해시는
+  `46ce7203813a5c63` → `c81fdeeed2288d48` 로 재고정(중간 `11634903540f0873` 은 cargo dead_code 경고 처리 전).
+- D6 `gate::Query::Use(String)` payload 는 비테스트 빌드에서 읽히지 않아(클라이언트는 원문 프롬프트를 보내고 데몬이 다시 유도 — JS 와 같은 계약) cargo 경고가
+  났다 → `#[cfg_attr(not(test), allow(dead_code))]` 로 두고 단위 테스트가 추출 문장을 계속 대조한다.
+- D7 mmap 실측 수치(계획 Step 4 "보고에 숫자"): 설계 단계 측정 `vec_facts_kr` KNN 16.8 → 9.6ms(`src/search.ts` 주석) — 릴리즈 뒤 라이브 `search_ms` 분포는
+  open-questions 의 첫 항목 트리거로 본다.
+
+P3_SNAPSHOT: .qa-artifacts/p3-snapshot.json

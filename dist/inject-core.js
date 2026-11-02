@@ -44,6 +44,7 @@ export async function computeInjectResult(userPrompt, project, via, sessionId, m
         has_session: Boolean(sessionId),
         fallback_reason: meta.fallback_reason || undefined,
         req_id: meta.req_id || undefined,
+        client_impl: meta.client_impl === 'native' || meta.client_impl === 'node' ? meta.client_impl : undefined,
         session_key: sessionKey(sessionId),
         plugin_version: pluginVersion(),
     };

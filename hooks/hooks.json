@@ -28,6 +28,11 @@
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/install-commands.sh",
             "async": true
+          },
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/build-native-client.sh",
+            "async": true
           }
         ]
       }

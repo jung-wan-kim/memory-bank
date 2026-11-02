@@ -28,6 +28,8 @@ export interface InjectLogEntry {
     req_id?: string;
     /** Hook host: 'claude-code' | 'codex' | 'manual' — lets the two clients be measured apart. */
     client?: string;
+    /** Which thin client made the request: the native binary (native/inject-client) or scripts/inject-context.js. */
+    client_impl?: 'native' | 'node';
     /** CLAUDE_CODE_ENTRYPOINT (cli, sdk-ts …) — separates interactive sessions from automation. */
     entrypoint?: string;
     /** Whether the hook supplied a session id (no id = no per-session dedup). */

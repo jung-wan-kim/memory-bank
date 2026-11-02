@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.9] - 2026-11-02
+
+Rust 전환 분석(2026-11-02)의 권고 두 가지를 로컬 플러그인에 반영했다: 프롬프트 훅의 얇은 클라이언트를 네이티브로, 검색 연결에 mmap. 데몬·검색·색인은 그대로 TypeScript 다 — 분석 결론은 "전부 Rust 로 바꿀 이득은 없고, 프롬프트마다 뜨는 node 프로세스 하나만 비싸다"였다.
+
+### 바뀐 점
+
+- **네이티브 inject 클라이언트(선택, cargo 필요)** — `native/inject-client/`(Rust, 의존 `serde_json`·`uuid` 둘). UserPromptSubmit 훅의 웜 경로(stdin 봉투 → 프롬프트 게이트 → 데몬 소켓 → 블록 출력 → 세션 원장)를 `scripts/inject-context.js` 와 필드 단위로 같게 포팅했다: 같은 stdout 바이트, 같은 원장 파일, 같은 요청 키 순서, 같은 skipped 로그 필드(UTF-16 길이 규칙 포함), Codex 봉투 풀기까지. 가짜 데몬 기준 끝-끝 중앙값 **3.4ms(node 79.8ms)**. 데몬이 답하지 않으면(없음·3초 초과·끊김·`ok:false`) 그 자리에서 node 클라이언트에 넘긴다 — 사유는 `MEMORY_BANK_INJECT_DAEMON_FAILED`, 요청 id 는 `MEMORY_BANK_INJECT_REQ_ID` 로 이어져 데몬 로그 줄과 폴백 줄이 한 프롬프트로 묶인다(JS 는 두 값을 정규식으로 검증한다). 블록은 응답 전체를 받은 뒤 한 번에 쓰고, 쓰기 시작 뒤에는 폴백하지 않는다(부분 출력 + 재출력 없음).
+- **빌드는 SessionStart 가 비동기로** — `scripts/build-native-client.sh` 가 cargo 가 있고 설치된 바이너리의 `.srchash` 가 플러그인의 `native/inject-client/SRC_HASH`(소스 sha256 앞 16자, `scripts/native-src-hash.mjs` 가 유일한 정의) 와 다를 때만 `<indexDir>/native-build` 에 빌드해 `<indexDir>/bin/memory-bank-inject-client` 로 임시 이름 → rename 설치한다(플러그인 캐시 밖 — live-apply 가 지워도 남는다). cargo 가 없거나 어떤 단계든 실패하면 `logs/native-build.log` 한 줄 + node 경로 유지. 바이너리는 컴파일된 해시를 `--src-hash` 로 보고하고, 설치는 그 값이 핀과 같을 때만.
+- **훅 래퍼 선택 규칙** — `hooks/inject-context.sh` 는 바이너리가 실행 가능하고 `.srchash` == `SRC_HASH` 일 때만 네이티브를 돌리고, 그 밖(없음·해시 불일치·실행 불가·디렉터리)은 예전처럼 node 를 돈다. `MEMORY_BANK_NATIVE_CLIENT` 로 바이너리 경로를 바꿀 수 있다. 옛 바이너리가 새 프로토콜을 말하는 일이 없다.
+- **검색 연결 mmap** — `getSearchDb()` 의 읽기 전용 연결에 `PRAGMA mmap_size`(기본 268,435,456 = 256MB, `MEMORY_BANK_SQLITE_MMAP_BYTES` 로 바꿈, 0 이면 끔; 정수가 아니면 기본값 + stderr 1줄). 사실 벡터 표의 brute-force KNN 이 매 프롬프트 표 전체를 읽는데 페이지 캐시가 그 스캔을 받는다(설계 측정 `vec_facts_kr` KNN 16.8 → 9.6ms). 쓰기 연결(색인·워커)은 건드리지 않는다.
+- **주입 로그 필드 `client_impl`** — 데몬 로그 줄과 skipped 줄에 어느 얇은 클라이언트가 요청했는지(`native` | `node`) 남는다. 두 값 외는 버린다. 라이브 search_ms p50 246ms(격리 17ms) 의 원인 확정은 이 필드로 가른다(open-questions).
+
+### 한계
+
+- 네이티브 클라이언트는 macOS/리눅스의 cargo 가 있는 기계에서만 만들어진다(프리빌트 없음) — 없으면 아무것도 바뀌지 않는다.
+- 패리티 테스트(`test/native-inject-client.test.ts`)는 cargo 가 없으면 건너뛰고 그 사실을 콘솔에 남긴다.
+
 ## [1.7.8] - 2026-10-19
 
 프롬프트별 사실 주입이 실제로 쓸모 있는 줄을 싣는지 잴 수단을 만들고, 그 판정으로 주입 범위 하나를 바꿨다. 출발점은 논문 Memorilla(arXiv 2610.21375)의 교훈이다: 질의를 본 뒤에 고를 것, 관련 없는 문맥은 공짜가 아님, 평가 없이 넣는 기억은 손해일 수 있음, 기억이 쓰이는지는 노이즈 대조군과의 차이로 볼 것. 후보 7개를 설계했고 독립 반박 검증을 거쳐 측정부터 세웠다(계획 `docs/plans/2026-10-19-memorilla-applicability.md`).

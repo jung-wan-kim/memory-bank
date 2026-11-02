@@ -88,6 +88,15 @@ describe('실제 데몬 — 요청 처리', () => {
     expect(lines.at(-1), '유휴 차단에 걸리면 응답 없이 끊긴다').toMatchObject({ ok: true, context: 'SLOW-BLOCK', ledger_keys: ['f-slow'] });
   });
 
+  it('client_impl: 네이티브·node 두 값만 계산 메타로 넘기고 그 밖은 버린다 (AC-008)', async () => {
+    for (const [sent, expected] of [['native', 'native'], ['node', 'node'], ['other', undefined], [undefined, undefined]] as const) {
+      compute.mockResolvedValueOnce({ context: 'B', ledgerKeys: [] });
+      await exchange([request(sent === undefined ? { session_id: 'sess-ci' } : { session_id: 'sess-ci', client_impl: sent })]);
+      const meta = compute.mock.calls.at(-1)![4] as Record<string, unknown>;
+      expect(meta.client_impl, String(sent)).toBe(expected);
+    }
+  });
+
   it('원장은 쓰지 않고 키만 응답에 싣는다 — 기록은 블록을 출력한 쪽이 한다', async () => {
     compute.mockResolvedValueOnce({ context: 'BLOCK', ledgerKeys: ['f-1', 't:abc'] });
     const { lines } = await exchange([request({ session_id: 'sess-dp-ledger', req_id: 'req-<b>abc-123' })]);
