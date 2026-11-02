@@ -169,7 +169,8 @@ test/native-inject-client.test.ts · test/inject-hook-wrapper.test.ts · test/bu
   `46ce7203813a5c63` → `c81fdeeed2288d48` 로 재고정(중간 `11634903540f0873` 은 cargo dead_code 경고 처리 전).
 - D6 `gate::Query::Use(String)` payload 는 비테스트 빌드에서 읽히지 않아(클라이언트는 원문 프롬프트를 보내고 데몬이 다시 유도 — JS 와 같은 계약) cargo 경고가
   났다 → `#[cfg_attr(not(test), allow(dead_code))]` 로 두고 단위 테스트가 추출 문장을 계속 대조한다.
-- D7 mmap 실측 수치(계획 Step 4 "보고에 숫자"): 설계 단계 측정 `vec_facts_kr` KNN 16.8 → 9.6ms(`src/search.ts` 주석) — 릴리즈 뒤 라이브 `search_ms` 분포는
-  open-questions 의 첫 항목 트리거로 본다.
+- D7 mmap 실측 수치(계획 Step 4 "보고에 숫자"): 구현 뒤 재측정(실DB 읽기 전용, 같은 질의 LIMIT 50, 워밍 뒤 9회 중앙값, `c780271`, `.qa-artifacts/knn-mmap.json`)은
+  mmap 끔 → 256MB 가 `vec_facts` 8.1 → 8.0ms, `vec_facts_kr` 7.0 → 6.7ms 로 **잡음 수준**. 설계 단계의 16.8 → 9.6ms 는 캐시가 식은 첫 호출을 기본값 쪽에 둔 순서
+  효과였다(권고 ④의 근거 정정). mmap 은 비용이 없어 유지하되 성능 개선으로 세지 않는다. AC-005 인용 수치는 단독 실행 3.5/78.2ms(`ac-005-timing-cited.json`, 04:24Z).
 
 P3_SNAPSHOT: .qa-artifacts/p3-snapshot.json

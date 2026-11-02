@@ -55,8 +55,10 @@ export function getSearchDb() {
     }
     catch { /* already closed */ }
     cachedSearchDb = initDatabase();
-    // Read path only: the brute-force KNN over the fact vector tables reads them whole on every prompt; a
-    // memory map lets the page cache serve that scan (measured 2026-11-02: vec_facts_kr KNN 16.8 → 9.6ms).
+    // Read path only: the brute-force KNN over the fact vector tables reads them whole on every prompt, so the
+    // scan is served from the page cache through the map. Measured gain is within noise once the cache is warm
+    // (2026-11-02, 9-run medians, LIMIT 50: vec_facts 8.1 → 8.0ms, vec_facts_kr 7.0 → 6.7ms — .qa-artifacts/knn-mmap.json);
+    // the design-phase "16.8 → 9.6ms" was a cold-first-call ordering effect. Kept because it costs nothing.
     // Writers (indexer, workers) open their own connections and are left alone.
     try {
         cachedSearchDb.pragma(`mmap_size = ${searchMmapBytes()}`);
