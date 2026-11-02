@@ -122,9 +122,24 @@ export async function parseConversation(
 
         // Extract tool use blocks
         if (parsed.message.role === 'assistant') {
+          let blockIndex = 0;
           for (const block of parsed.message.content) {
+            blockIndex++;
             if (block.type === 'tool_use') {
-              const toolCallId = crypto.randomUUID();
+              // The transcript's own tool_use id (toolu_…), so tool_calls is a set
+              // keyed by call: a random id per parse added every call again on
+              // every re-index of its exchange — 15.4M rows for 648k calls
+              // (23.7x) after <=1.7.8 re-read growing transcripts each sync.
+              // INSERT OR REPLACE on this id keeps one row per call,
+              // and two real calls with identical input stay two rows. Scoped to
+              // the archive: a resumed or forked session copies earlier messages
+              // into a new transcript, and a bare toolu_ id would move the row
+              // out of the original conversation. Lines without an id get a
+              // stable one from their position.
+              const callKey = typeof block.id === 'string' && block.id
+                ? block.id
+                : `line:${lineNumber}:${blockIndex}`;
+              const toolCallId = crypto.createHash('md5').update(`${archivePath}:${callKey}`).digest('hex');
               toolCalls.push({
                 id: toolCallId,
                 exchangeId: '', // Will be set when we know the exchange ID

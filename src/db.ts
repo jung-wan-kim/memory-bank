@@ -665,6 +665,9 @@ export function insertExchange(
     db.prepare(`INSERT INTO vec_exchanges (id, embedding) VALUES (?, ${vecParamSql(vecQuant)})`)
       .run(exchange.id, embeddingToVecBlob(embedding, vecQuant));
 
+    // Tool call ids are minted per parse, so re-indexing an exchange under the
+    // same id used to ADD its tool calls again instead of replacing them.
+    db.prepare('DELETE FROM tool_calls WHERE exchange_id = ?').run(exchange.id);
     if (exchange.toolCalls && exchange.toolCalls.length > 0) {
       const toolStmt = db.prepare(`
         INSERT OR REPLACE INTO tool_calls
@@ -704,6 +707,48 @@ export function getFileLastIndexed(db: Database.Database, archivePath: string): 
   `);
   const row = stmt.get(archivePath) as { lastIndexed: number | null };
   return row.lastIndexed;
+}
+
+/**
+ * Resume point for incremental sync: the line_start of the last exchange
+ * indexed for this archive, or 0 when none is. Transcripts are append-only, so
+ * everything before it is final; the exchange AT it may have been indexed
+ * while its reply was still streaming and is re-read on the next sync.
+ */
+export function getResumeLine(db: Database.Database, archivePath: string): number {
+  const row = db.prepare(
+    'SELECT COALESCE(MAX(line_start), 0) AS line FROM exchanges WHERE archive_path = ?'
+  ).get(archivePath) as { line: number };
+  return row.line;
+}
+
+/**
+ * Drop rows at or past `fromLine` for this archive that the re-read did not
+ * produce again. An exchange's id hashes its last assistant line, so a reply
+ * that kept streaming after the previous sync comes back under a new id and
+ * leaves the cut-off row behind. Removes its tool calls and vector too.
+ */
+export function deleteSupersededExchanges(
+  db: Database.Database,
+  archivePath: string,
+  fromLine: number,
+  keepIds: string[]
+): number {
+  const stale = (db.prepare(
+    'SELECT id FROM exchanges WHERE archive_path = ? AND line_start >= ?'
+  ).all(archivePath, fromLine) as Array<{ id: string }>)
+    .map(r => r.id)
+    .filter(id => !keepIds.includes(id));
+  if (stale.length === 0) return 0;
+  const removeAll = db.transaction(() => {
+    for (const id of stale) {
+      db.prepare('DELETE FROM tool_calls WHERE exchange_id = ?').run(id);
+      db.prepare('DELETE FROM vec_exchanges WHERE id = ?').run(id);
+      db.prepare('DELETE FROM exchanges WHERE id = ?').run(id);
+    }
+  });
+  removeAll.immediate();
+  return stale.length;
 }
 
 export function deleteExchange(db: Database.Database, id: string): void {

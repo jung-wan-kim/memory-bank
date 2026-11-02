@@ -7,6 +7,7 @@ import { summarizeConversation } from './summarizer.js';
 import { ConversationExchange } from './types.js';
 import { getArchiveDir, getExcludedProjects, isExcludedProject, isWorkerPromptMessage, getProjectsDir } from './paths.js';
 import { archiveFileExists, statArchiveFile } from './archive-io.js';
+import { getMaxMessageBytes, isOversizeExchange } from './message-size.js';
 
 /**
  * Copy source → archive unless a current copy (plain or .zst) already exists.
@@ -166,6 +167,7 @@ export async function indexConversations(
         // knowledge — never index them (legacy transcripts sit under REAL
         // project slugs, so the slug exclusion can't catch them).
         if (isWorkerPromptMessage(exchange.userMessage)) continue;
+        if (isOversizeExchange(exchange, getMaxMessageBytes())) continue; // pasted transcript/tool dump, not a memory (obra #139)
         const toolNames = exchange.toolCalls?.map(tc => tc.toolName);
         const embedding = await generateExchangeEmbedding(
           exchange.userMessage,
@@ -248,6 +250,7 @@ export async function indexSession(sessionId: string, concurrency: number = 1, n
         // Index
         for (const exchange of exchanges) {
           if (isWorkerPromptMessage(exchange.userMessage)) continue; // worker prompt = ephemeral state, not knowledge
+          if (isOversizeExchange(exchange, getMaxMessageBytes())) continue; // pasted transcript/tool dump, not a memory (obra #139)
           const toolNames = exchange.toolCalls?.map(tc => tc.toolName);
           const embedding = await generateExchangeEmbedding(
             exchange.userMessage,
@@ -364,6 +367,7 @@ export async function indexUnprocessed(concurrency: number = 1, noSummaries: boo
   for (const conv of unprocessed) {
     for (const exchange of conv.exchanges) {
       if (isWorkerPromptMessage(exchange.userMessage)) continue; // worker prompt = ephemeral state, not knowledge
+      if (isOversizeExchange(exchange, getMaxMessageBytes())) continue; // pasted transcript/tool dump, not a memory (obra #139)
       const toolNames = exchange.toolCalls?.map(tc => tc.toolName);
       const embedding = await generateExchangeEmbedding(
         exchange.userMessage,

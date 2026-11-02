@@ -41,6 +41,11 @@
     "test:watch": "vitest",
     "pretest": "npm run build"
   },
+  "allowScripts": {
+    "better-sqlite3": true,
+    "onnxruntime-node": true,
+    "sharp": true
+  },
   "keywords": [
     "claude-code",
     "conversations",

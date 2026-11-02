@@ -41,6 +41,7 @@ EXAMPLES:
 
 // Check if running in background mode
 const isBackground = args.includes('--background');
+const BACKGROUND_CHILD_ENV = 'MEMORY_BANK_SYNC_BACKGROUND_CHILD';
 
 // ---- background cooldown (2026-09-27): the singleton lock below stops *concurrent*
 // syncs but not *frequent* ones. SessionStart fires on every session start, and
@@ -86,12 +87,23 @@ if (isBackground) {
   ], {
     detached: true,
     stdio: 'ignore',
-    windowsHide: true
+    windowsHide: true,
+    env: { ...process.env, [BACKGROUND_CHILD_ENV]: '1' },
   });
 
   child.unref(); // Allow parent to exit
   console.log('Sync started in background...');
   process.exit(0);
+}
+
+// ---- background priority (2026-10-31): embedding a grown transcript ran at
+// 6-7 cores (measured 610% CPU). Capping onnxruntime's intra-op threads (obra
+// #124) has no effect on @xenova/transformers 2.17 + onnxruntime-node 1.14
+// (measured ~8 cores with intraOpNumThreads 1, 2 or unset), so the hook-spawned
+// child yields instead: lowest scheduling priority, the user's work goes first.
+// MEMORY_BANK_SYNC_NICE=0 disables; a foreground `memory-bank sync` is untouched.
+if (process.env[BACKGROUND_CHILD_ENV] === '1' && process.env.MEMORY_BANK_SYNC_NICE !== '0') {
+  try { os.setPriority(19); } catch { /* not permitted — run at normal priority */ }
 }
 
 // ---- singleton lock (2026-07-02): SessionStart hook fires sync --background on EVERY
