@@ -84,8 +84,18 @@ describe('search-agent template', () => {
 
     // Example should show specific details
     expect(exampleSection).toContain('react-router-7-starter');
-    expect(exampleSection).toContain('92% match');
+    expect(exampleSection).toContain('91% match');
     expect(exampleSection).toContain('.jsonl');
+
+    // The example's percentages are ones the tool really prints: a cosine similarity of this embedding
+    // model, where unrelated text already scores 85-89% (measured range of real hits: 83-92%). The example
+    // used to show 92 / 78 / 73, which taught the agent to expect a spread the tool never produces.
+    const shown = [...exampleSection.matchAll(/(\d+)% match/g)].map((m) => Number(m[1]));
+    expect(shown.length).toBeGreaterThanOrEqual(3);
+    for (const pct of shown) {
+      expect(pct).toBeGreaterThanOrEqual(83);
+      expect(pct).toBeLessThanOrEqual(92);
+    }
   });
 
   it('emphasizes synthesis over raw excerpts', () => {

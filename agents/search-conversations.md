@@ -31,6 +31,10 @@ This returns:
 - Matched exchange with its match label (`N% match` for a semantic hit, `keyword match` for a keyword-only hit)
 - File path and line numbers (`Lines A-B in <path>`)
 
+The percentage is the cosine similarity of the embeddings, not a confidence: with this model even unrelated
+text scores about 85-89% and a strong hit about 90%. Use it to compare the hits of one answer with each
+other, and judge relevance from the text you read, not from the number.
+
 Read the top 2-5 results using `read` to get complete context — pass the result's path and its line range:
 ```
 mcp__plugin_memory-bank_memory-bank__read
@@ -39,8 +43,12 @@ mcp__plugin_memory-bank_memory-bank__read
   endLine: B
 ```
 
-`read` returns at most 40,000 characters per call. A longer range ends with
-`Output truncated … Continue with startLine=N` — call `read` again with that `startLine`.
+`read` returns at most 40,000 characters per call. A longer range ends with a line like
+`Output truncated … Continue with startLine=3, startChar=39907, endLine=11` — call `read` again with
+**every** value that line names (`startLine`, and `startChar` / `endLine` / `full` when present). `startChar`
+appears when the answer stopped inside one long message; with `startLine` alone you get the same piece again.
+A tool input or result over 2,000 characters is clipped (`…[+N chars not shown — read again with full: true]`):
+pass `full: true` when you need the whole command or output.
 Archived conversations are often stored compressed (`.jsonl.zst`), so the built-in Read tool
 cannot open them; always use `read`.
 
@@ -143,17 +151,17 @@ if (error.status === 401) navigate('/login?return=' + location.pathname);
 
 ### Sources
 
-**1. [react-router-7-starter, 2024-09-17]** - 92% match
+**1. [react-router-7-starter, 2024-09-17]** - 91% match
 Conversation summary: Built authentication system with JWT, implemented protected routes
 File: ~/.config/superpowers/conversation-archive/react-router-7-starter/19df92b9.jsonl:145-289
 Status: Read in detail (multiple exchanges on error handling evolution)
 
-**2. [react-router-docs-reading, 2024-09-10]** - 78% match
+**2. [react-router-docs-reading, 2024-09-10]** - 89% match
 Conversation summary: Read RR7 docs, discussed new loader patterns and errorElement
 File: ~/.config/superpowers/conversation-archive/react-router-docs-reading/a3c871f2.jsonl:56-98
 Status: Reviewed summary only (confirmed errorElement usage)
 
-**3. [auth-debugging, 2024-09-18]** - 73% match
+**3. [auth-debugging, 2024-09-18]** - 88% match
 Conversation summary: Fixed token expiration handling and error boundary reset issues
 File: ~/.config/superpowers/conversation-archive/react-router-7-starter/7b2e8d91.jsonl:201-345
 Status: Read in detail (discovered gotchas about keys and expired tokens)
