@@ -149,7 +149,7 @@ export function withStamp(body, inputs) {
 export function bundleStaleReason(file, expectedInputs) {
   if (!fs.existsSync(file)) return 'missing';
   const { body, stamp } = splitStamp(fs.readFileSync(file));
-  if (!stamp) return 'has no build stamp (`tsc` alone writes the unbundled module there; only `npm run build` makes the bundle)';
+  if (!stamp) return 'has no build stamp (it was built before bundles were stamped, or `tsc` alone wrote its unbundled module there; `npm run build` makes the stamped bundle)';
   if (stamp.body !== sha256(body)) return 'was changed after it was built (its bytes no longer match its stamp)';
   if (stamp.inputs !== expectedInputs) return 'was built from other sources, bundle arguments or dependency ranges than the current ones';
   return null;
