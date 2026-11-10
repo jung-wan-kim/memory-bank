@@ -348,7 +348,7 @@ describe('repairIndex: re-indexing goes through the same guards as sync', () => 
 
 describe('repairIndex: the plan comes first, and a large one needs --yes', () => {
   const issuesOf = (o: Partial<import('../src/verify.js').VerificationResult>): import('../src/verify.js').VerificationResult => ({
-    missingSummary: [], notIndexed: [], orphaned: [], outdated: [], corrupted: [], totals: { exchanges: 0, conversations: 0 }, ...o,
+    missingSummary: [], notIndexed: [], orphaned: [], outdated: [], corrupted: [], totals: { exchanges: 0, conversations: 0, indexable: 0 }, ...o,
   });
   const paths = (n: number, prefix: string) => Array.from({ length: n }, (_, i) => ({ path: `/arch/p/${prefix}${i}.jsonl` }));
 
@@ -358,7 +358,7 @@ describe('repairIndex: the plan comes first, and a large one needs --yes', () =>
     const base = issuesOf({
       orphaned, notIndexed: paths(30, 'n'), missingSummary: [...paths(30, 'n'), ...paths(25, 'm')],
       outdated: [{ path: '/arch/p/n0.jsonl', fileTime: 2, dbTime: 1 }, { path: '/arch/p/out.jsonl', fileTime: 2, dbTime: 1 }],
-      totals: { exchanges: 1000, conversations: 400 },
+      totals: { exchanges: 1000, conversations: 4000, indexable: 400 },
     });
 
     const reportOnly = planRepair(base);
@@ -381,9 +381,61 @@ describe('repairIndex: the plan comes first, and a large one needs --yes', () =>
     const plan = planRepair(issuesOf({
       orphaned: Array.from({ length: 20 }, (_, i) => ({ uuid: `o${i}`, path: '/arch/p/gone.jsonl' })),
       notIndexed: paths(20, 'n'), missingSummary: paths(20, 'n'),
-      totals: { exchanges: 20, conversations: 20 },
+      totals: { exchanges: 20, conversations: 20, indexable: 20 },
     }), { pruneMissing: true });
     expect(plan.overThreshold).toEqual([]);
+  });
+
+  // Measured on one live archive: 272,274 conversation files, about 18,000 of them with a real exchange (the
+  // rest are agent warm-ups and observer files). Against all 272,274 the 5% line was 13,613 — no count ever
+  // crossed it, and `--repair` started 6,767 summary (LLM) calls without asking.
+  it('the share is of the conversations that hold something to index, not of every archived file', async () => {
+    const { planRepair } = await import('../src/verify.js');
+    const plan = planRepair(issuesOf({
+      notIndexed: paths(989, 'n'), outdated: paths(10, 'u').map((u) => ({ ...u, fileTime: 2, dbTime: 1 })),
+      missingSummary: paths(6764, 's'),
+      totals: { exchanges: 341_840, conversations: 272_274, indexable: 18_188 },
+    }));
+    expect(plan.reindexFiles).toBe(999);
+    expect(plan.summaryCalls).toBe(6774);
+    expect(plan.overThreshold.join('\n')).toMatch(/conversations to re-index: 999 is over 909 \(5% of 18188 /);
+    expect(plan.overThreshold.join('\n')).toMatch(/summary \(LLM\) calls: 6774 is over 100/);
+    // --no-summaries takes the LLM calls out; the re-index count alone is still over its line
+    expect(planRepair(issuesOf({
+      notIndexed: paths(989, 'n'), missingSummary: paths(6764, 's'),
+      totals: { exchanges: 341_840, conversations: 272_274, indexable: 18_188 },
+    }), { noSummaries: true }).overThreshold).toHaveLength(1);
+  });
+
+  it('LLM calls have a ceiling of their own: more than 100 need --yes however large the archive is', async () => {
+    const { planRepair, REPAIR_LLM_CALLS_MAX } = await import('../src/verify.js');
+    expect(REPAIR_LLM_CALLS_MAX).toBe(100);
+    const totals = { exchanges: 1_000_000, conversations: 500_000, indexable: 200_000 }; // 5% = 10,000
+    const at = planRepair(issuesOf({ missingSummary: paths(100, 's'), totals }));
+    expect(at.overThreshold).toEqual([]);
+    const over = planRepair(issuesOf({ missingSummary: paths(101, 's'), totals }));
+    expect(over.overThreshold).toHaveLength(1);
+    expect(over.overThreshold[0]).toMatch(/summary \(LLM\) calls: 101 is over 100/);
+    // re-indexing makes no LLM call: only its share counts
+    expect(planRepair(issuesOf({ notIndexed: paths(5000, 'n'), totals }), { noSummaries: true }).overThreshold).toEqual([]);
+  });
+
+  it('a result without the indexable count is held to the floor, never to "no limit"', async () => {
+    const { planRepair } = await import('../src/verify.js');
+    const plan = planRepair({
+      missingSummary: [], notIndexed: paths(21, 'n'), orphaned: [], outdated: [], corrupted: [],
+      totals: { exchanges: 0, conversations: 100_000 } as unknown as import('../src/verify.js').VerificationResult['totals'],
+    }, { noSummaries: true });
+    expect(plan.overThreshold[0]).toMatch(/conversations to re-index: 21 is over 20/);
+  });
+
+  it('verifyIndex counts the conversations that hold something to index apart from the files it walked', async () => {
+    const { verifyIndex } = await import('../src/verify.js');
+    for (let i = 0; i < 3; i++) write(`proj/real${i}.jsonl`, conversation(`a real question ${i}`));
+    for (let i = 0; i < 12; i++) write(`proj/empty${i}.jsonl`, line('user', 'a question nobody answered yet'));
+    const result = await verifyIndex();
+    expect(result.totals.conversations).toBe(15);
+    expect(result.totals.indexable).toBe(3);
   });
 
   it('over the threshold without yes: stops before changing anything — no delete, no backup, no embedding, no summary', async () => {

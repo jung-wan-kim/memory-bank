@@ -25,8 +25,18 @@ export interface VerificationResult {
   outdated: Array<{ path: string; fileTime: number; dbTime: number }>;
   /** Files that could not be read to the end — never re-indexed, never judged "clean". */
   corrupted: Array<{ path: string; error: string }>;
-  /** What the repair thresholds are measured against. */
-  totals: { exchanges: number; conversations: number };
+  /**
+   * What the repair thresholds are measured against: indexed exchanges, the
+   * conversation files walked, and — of those files — the ones that hold
+   * something to index (not excluded, at least one indexable exchange).
+   */
+  totals: VerificationTotals;
+}
+
+export interface VerificationTotals {
+  exchanges: number;
+  conversations: number;
+  indexable: number;
 }
 
 /**
@@ -72,7 +82,7 @@ export async function verifyIndex(): Promise<VerificationResult> {
     orphaned: [],
     outdated: [],
     corrupted: [],
-    totals: { exchanges: 0, conversations: 0 }
+    totals: { exchanges: 0, conversations: 0, indexable: 0 }
   };
 
   const archiveDir = getArchiveDir();
@@ -119,6 +129,7 @@ export async function verifyIndex(): Promise<VerificationResult> {
       // worker prompts / machine noise): neither "missing" nor "not indexed".
       // Counting these made repair plan one LLM summary per warm-up file.
       if (indexable.length === 0) continue;
+      result.totals.indexable++;
 
       const summaryPath = conversationPath.replace('.jsonl', '-summary.txt');
       if (!archiveFileExists(summaryPath)) {
@@ -197,6 +208,12 @@ export interface RepairOptions {
 export const REPAIR_THRESHOLD_RATIO = 0.05;
 /** Chosen, not measured: below this many items a share of a small index means nothing. */
 export const REPAIR_THRESHOLD_FLOOR = 20;
+/**
+ * Summary (LLM) calls a repair starts without `yes`, whatever share of the
+ * archive they are. Chosen, not measured: each call is a headless model
+ * session of 10-14s, so 100 is about 20 minutes of account usage.
+ */
+export const REPAIR_LLM_CALLS_MAX = 100;
 
 export interface RepairPlan {
   /** Rows whose file is gone. */
@@ -207,7 +224,7 @@ export interface RepairPlan {
   reindexFiles: number;
   /** Summary (LLM) calls: no summary file + outdated (0 with noSummaries). */
   summaryCalls: number;
-  totals: { exchanges: number; conversations: number };
+  totals: VerificationTotals;
   /** One line per count over its threshold; empty = the plan runs without `yes`. */
   overThreshold: string[];
 }
@@ -229,15 +246,24 @@ export function planRepair(issues: VerificationResult, opts: RepairOptions = {})
     totals: issues.totals,
     overThreshold: [],
   };
-  const check = (count: number, total: number, what: string, of: string) => {
-    const limit = Math.max(REPAIR_THRESHOLD_FLOOR, Math.floor(total * REPAIR_THRESHOLD_RATIO));
+  const check = (count: number, total: number, what: string, of: string, ceiling = Infinity) => {
+    // A total that is not a number (a hand-built result without it) is held to the floor, never to "no limit".
+    const share = Number.isFinite(total) ? Math.floor(total * REPAIR_THRESHOLD_RATIO) : 0;
+    const limit = Math.min(Math.max(REPAIR_THRESHOLD_FLOOR, share), ceiling);
     if (count > limit) {
-      plan.overThreshold.push(`${what}: ${count} is over ${limit} (${REPAIR_THRESHOLD_RATIO * 100}% of ${total} ${of}, at least ${REPAIR_THRESHOLD_FLOOR})`);
+      plan.overThreshold.push(
+        `${what}: ${count} is over ${limit} (${REPAIR_THRESHOLD_RATIO * 100}% of ${total} ${of}, at least ${REPAIR_THRESHOLD_FLOOR}` +
+        (ceiling === Infinity ? ')' : `, at most ${ceiling})`));
     }
   };
   check(plan.deleteRows, plan.totals.exchanges, 'rows to delete', 'indexed exchanges');
-  check(plan.reindexFiles, plan.totals.conversations, 'conversations to re-index', 'archived conversations');
-  check(plan.summaryCalls, plan.totals.conversations, 'summary (LLM) calls', 'archived conversations');
+  // Files and LLM calls are measured against the conversations that hold
+  // something to index — not every file in the archive. On the measured
+  // archive 272,274 files were walked and about 18,000 held a real exchange
+  // (the rest: agent warm-ups, observer files); 5% of all files was 13,613,
+  // a line no real count crossed, and 6,767 summary calls started unasked.
+  check(plan.reindexFiles, plan.totals.indexable, 'conversations to re-index', 'conversations with something to index');
+  check(plan.summaryCalls, plan.totals.indexable, 'summary (LLM) calls', 'conversations with something to index', REPAIR_LLM_CALLS_MAX);
   return plan;
 }
 
@@ -250,7 +276,7 @@ export function formatRepairPlan(plan: RepairPlan, opts: RepairOptions = {}): st
           : ' — kept (reported only; pass --prune-missing to back them up and delete them)'),
     `  conversations to re-index: ${plan.reindexFiles}`,
     `  summary (LLM) calls: ${plan.summaryCalls}` + (opts.noSummaries ? ' (--no-summaries)' : ''),
-    `  index size: ${plan.totals.exchanges} exchanges, ${plan.totals.conversations} archived conversations`,
+    `  index size: ${plan.totals.exchanges} exchanges, ${plan.totals.conversations} archived conversations (${plan.totals.indexable} with something to index)`,
   ];
 }
 
