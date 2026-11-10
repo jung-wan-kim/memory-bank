@@ -13,7 +13,9 @@
  *   worker: processed=<n> haiku=<calls> merged=<n> contradictions=<n> evolutions=<n> rewritten=<n> kr_missing=<n> cursor=<json>
  * (rewritten = facts whose sentence changed; kr_missing = of those, facts left
  * without a Korean sentence because none existed for the new sentence — they
- * answer Korean queries through the main vector only until fact_kr is filled).
+ * answer Korean queries through the main vector only until fact_kr is filled;
+ * changed_pairs, only when not 0 = verdicts not applied because one of the two
+ * facts was switched off or rewritten while the call was in flight).
  * Whenever a run fails on a fact it appends
  *   worker: ERROR fact=<id> kind=<internal|transient|deterministic|unknown> msg=<message>
  * whether or not an LLM call was made, and a run that ends held on a fact is
@@ -211,7 +213,7 @@ async function main() {
     writeCursor(result.cursor);
     progressed = result.processed > 0;
     if (result.haikuCalls > 0) {
-      log(`worker: processed=${result.processed} haiku=${result.haikuCalls} merged=${result.merged} contradictions=${result.contradictions} evolutions=${result.evolutions} rewritten=${result.rewrites} kr_missing=${result.rewritesWithoutKorean} cursor=${JSON.stringify(result.cursor)}`);
+      log(`worker: processed=${result.processed} haiku=${result.haikuCalls} merged=${result.merged} contradictions=${result.contradictions} evolutions=${result.evolutions} rewritten=${result.rewrites} kr_missing=${result.rewritesWithoutKorean}${result.changedPairs > 0 ? ` changed_pairs=${result.changedPairs}` : ''} cursor=${JSON.stringify(result.cursor)}`);
     }
     // Only with the cursor message above: these facts wait on every run until
     // their time comes, and a line per run would bury the log.

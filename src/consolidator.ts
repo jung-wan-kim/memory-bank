@@ -80,6 +80,8 @@ interface ComparisonTally {
   rewrote?: boolean;
   /** …and no Korean sentence of the new one existed (the fact now has none). */
   rewroteWithoutKorean?: boolean;
+  /** The verdict was not applied: one of the two facts changed (switched off, rewritten) while it was being judged. */
+  pairChanged?: boolean;
 }
 
 /**
@@ -176,6 +178,14 @@ async function consolidateOne(
   let korean = plan.rewrite ? rewriteKorean(db, plan.rewrite) : null;
   if (korean && !korean.vector) korean = { text: korean.text, vector: await embedSentence(korean.text) };
   const applied = applyConsolidationPlan(db, existingFact, newFact, plan, result.reason, embedding, korean);
+  if (!applied.applied) {
+    // Not an error and not a merge: the driver is examined, both facts are as
+    // the other writer left them, and whichever is still active is compared
+    // again on its own turn or as a later fact's neighbour.
+    console.error(`Consolidation: ${result.relation} for ${existingFact.id} / ${newFact.id} not applied — one of them changed while it was being judged`);
+    tally.pairChanged = true;
+    return 'none';
+  }
   tally.rewrote = applied.rewritten;
   tally.rewroteWithoutKorean = applied.withoutKorean;
   return result.relation;
@@ -286,6 +296,11 @@ export interface ConsolidationRunResult {
    * wait until their time comes. 0 on a store whose times are sane.
    */
   aheadOfClock: number;
+  /**
+   * Verdicts that were not applied because one of the two facts changed while
+   * the call was in flight (switched off or rewritten by another writer).
+   */
+  changedPairs: number;
 }
 
 export async function consolidateAllPending(
@@ -310,6 +325,7 @@ export async function consolidateAllPending(
   let cappedSearches = 0;
   let rewrites = 0;
   let rewritesWithoutKorean = 0;
+  let changedPairs = 0;
   let lastError: ConsolidationError | null = null;
   // KEYSET progress cursor `(created_at, id)`: the last fact FULLY examined this
   // run. Persisted by the caller so the next run resumes strictly after it.
@@ -334,6 +350,7 @@ export async function consolidateAllPending(
         if (tally.searchCapped) cappedSearches++;
         if (tally.rewrote) rewrites++;
         if (tally.rewroteWithoutKorean) rewritesWithoutKorean++;
+        if (tally.pairChanged) changedPairs++;
         if (verdict === 'DUPLICATE') merged++;
         else if (verdict === 'CONTRADICTION') contradictions++;
         else if (verdict === 'EVOLUTION') evolutions++;
@@ -402,7 +419,7 @@ export async function consolidateAllPending(
     cursor = { createdAt: newFact.created_at, id: newFact.id };
   }
 
-  return { processed, merged, contradictions, evolutions, haikuCalls, cursor, lastError, cappedSearches, rewrites, rewritesWithoutKorean, aheadOfClock };
+  return { processed, merged, contradictions, evolutions, haikuCalls, cursor, lastError, cappedSearches, rewrites, rewritesWithoutKorean, aheadOfClock, changedPairs };
 }
 
 /** A verdict resolved against its pair: which stored sentence (if any) it rewrites. */
@@ -494,6 +511,12 @@ function planConsolidation(existingFact: Fact, newFact: Fact, result: Consolidat
 
 /** What applying a verdict did to the stored sentences. */
 interface AppliedPlan {
+  /**
+   * false = nothing was written: when the write transaction looked, the pair
+   * was no longer the one that was judged (a fact switched off, deleted or
+   * rewritten meanwhile).
+   */
+  applied: boolean;
   /** A stored sentence changed. */
   rewritten: boolean;
   /** …and the fact was left without a Korean sentence (none exists for the new one, and the sentence itself is not Korean). */
@@ -518,6 +541,13 @@ const HANGUL = /[\uAC00-\uD7A3]/;
  * `result.merged_fact_kr`, with `opts.embeddingKr` as its vector (without one
  * the sentence is stored and the re-embed worker builds the vector); otherwise
  * the fact is left with none.
+ *
+ * Returns false, having written nothing, when the two facts are no longer what
+ * was passed in — one of them inactive, gone, or holding another sentence. The
+ * verdict was about those sentences; the LLM call that produced it takes
+ * seconds, and a cleanup script or another writer can change a fact meanwhile.
+ * (Applied blindly, a merge into a fact switched off in that window switched
+ * the other one off as well — both gone.)
  */
 export function applyConsolidationResult(
   db: Database.Database,
@@ -525,10 +555,10 @@ export function applyConsolidationResult(
   newFact: Fact,
   result: ConsolidationVerdict,
   opts: { embedding?: number[]; embeddingKr?: number[] } = {},
-): void {
+): boolean {
   const plan = planConsolidation(existingFact, newFact, result);
   const korean = plan.rewrite?.verdictKr && opts.embeddingKr ? { text: plan.rewrite.verdictKr, vector: opts.embeddingKr } : null;
-  applyConsolidationPlan(db, existingFact, newFact, plan, result.reason, opts.embedding, korean);
+  return applyConsolidationPlan(db, existingFact, newFact, plan, result.reason, opts.embedding, korean).applied;
 }
 
 function applyConsolidationPlan(
@@ -549,7 +579,7 @@ function applyConsolidationPlan(
     }
   }
   // Nothing to write — and no reason to wait for the write lock.
-  if (plan.relation === 'INDEPENDENT') return { rewritten: false, withoutKorean: false };
+  if (plan.relation === 'INDEPENDENT') return { applied: true, rewritten: false, withoutKorean: false };
   // Filled inside the transaction (a holder, so the value set there is the one read after it).
   const korean: { sentence: KoreanSentence | null } = { sentence: null };
   const rewriteOf = (factId: string) => (rewrite?.factId === factId
@@ -565,7 +595,14 @@ function applyConsolidationPlan(
   // One write transaction per verdict: a failure between the steps used to
   // leave a count raised or a revision written for a merge that did not
   // happen, and the retry on the next run raised the count again.
-  db.transaction(() => {
+  const applied = db.transaction(() => {
+    // The pair must still be the one that was judged: both facts active and
+    // holding the sentences the verdict is about.
+    const stored = db.prepare('SELECT id, fact FROM facts WHERE id IN (?, ?) AND is_active = 1')
+      .all(existingFact.id, newFact.id) as Array<{ id: string; fact: string }>;
+    const unchanged = (f: Fact) => stored.some((r) => r.id === f.id && r.fact === f.fact);
+    if (!unchanged(existingFact) || !unchanged(newFact)) return false;
+
     // The Korean sentence is read here, inside the transaction and before any
     // write: deactivating the other fact removes its Korean vector row. A
     // vector prepared before the transaction is used when the sentence it
@@ -631,6 +668,8 @@ function applyConsolidationPlan(
         break;
 
     }
+    return true;
   }).immediate();
-  return { rewritten: rewrite !== null, withoutKorean: rewrite !== null && korean.sentence === null && !HANGUL.test(rewrite.text) };
+  if (!applied) return { applied: false, rewritten: false, withoutKorean: false };
+  return { applied: true, rewritten: rewrite !== null, withoutKorean: rewrite !== null && korean.sentence === null && !HANGUL.test(rewrite.text) };
 }
