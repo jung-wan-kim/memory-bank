@@ -43,6 +43,17 @@ describe('MCP server over stdio', () => {
     fs.mkdirSync(archiveProject, { recursive: true });
     fs.writeFileSync(path.join(archiveProject, 'short.jsonl'), conversation(5));
     fs.writeFileSync(path.join(archiveProject, 'long.jsonl'), conversation(60, 1500));
+    // one message of 90,000 characters (longer than one answer; a letter nothing else in an answer uses), then a short one
+    fs.writeFileSync(path.join(archiveProject, 'huge.jsonl'), [
+      JSON.stringify({ uuid: 'u1', timestamp: ts(1), type: 'user', isSidechain: false, sessionId: 's1', message: { role: 'user', content: `HUGE-START ${'ж'.repeat(90_000)} HUGE-END` } }),
+      JSON.stringify({ uuid: 'a1', timestamp: ts(2), type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [{ type: 'text', text: 'after-the-huge-one' }] } }),
+    ].join('\n') + '\n');
+    // a tool call whose result is 6,000 characters (longer than the per-block limit)
+    fs.writeFileSync(path.join(archiveProject, 'tool.jsonl'), [
+      JSON.stringify({ uuid: 'u1', timestamp: ts(1), type: 'user', isSidechain: false, sessionId: 's1', message: { role: 'user', content: 'run it' } }),
+      JSON.stringify({ uuid: 'a1', timestamp: ts(2), type: 'assistant', isSidechain: false, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'cat big.log' } }] } }),
+      JSON.stringify({ uuid: 'u2', timestamp: ts(3), type: 'user', isSidechain: false, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: `TOOL-START ${'r'.repeat(6_000)} TOOL-END` }] } }),
+    ].join('\n') + '\n');
     if (zstdCompressSync) {
       fs.writeFileSync(path.join(archiveProject, 'packed.jsonl.zst'), zstdCompressSync(Buffer.from(conversation(4), 'utf-8')));
     }
@@ -119,6 +130,58 @@ describe('MCP server over stdio', () => {
       const lastOfFirst = Math.max(...[...first.text.matchAll(/question-(\d+) /g)].map((m) => Number(m[1])));
       const firstOfSecond = Math.min(...[...second.text.matchAll(/question-(\d+) /g)].map((m) => Number(m[1])));
       expect([lastOfFirst + 1, lastOfFirst]).toContain(firstOfSecond);
+    });
+
+    // F5 — the hint used to point at the next line: the rest of a message longer than one answer was unreachable.
+    it('reads a message longer than one answer to its end by calling again with the values the answer names', async () => {
+      const file = path.join(archiveProject, 'huge.jsonl');
+      let args: Record<string, unknown> = { path: file };
+      let bodyChars = 0;
+      let sawStart = false;
+      let last = '';
+      for (let page = 0; page < 10; page++) {
+        const { text, isError } = await call('read', args);
+        expect(isError).toBe(false);
+        expect(text.length).toBeLessThanOrEqual(40_500);
+        bodyChars += (text.match(/ж/g) ?? []).length;
+        sawStart ||= text.includes('HUGE-START');
+        last = text;
+        const more = text.match(/Continue with startLine=(\d+)(?:, startChar=(\d+))?\._/);
+        if (!more) break;
+        expect(page === 0 ? more[2] : true).toBeTruthy(); // the first answer stops inside the message
+        args = { path: file, startLine: Number(more[1]), ...(more[2] ? { startChar: Number(more[2]) } : {}) };
+      }
+      expect(sawStart).toBe(true);
+      expect(bodyChars).toBe(90_000); // every character of the long message, once
+      expect(last).toContain('HUGE-END');
+      expect(last).toContain('after-the-huge-one');
+      expect(last).not.toMatch(/Output truncated/);
+    });
+
+    it('clips a long tool result with the way to read it, and full: true shows it whole', async () => {
+      const file = path.join(archiveProject, 'tool.jsonl');
+      const clipped = await call('read', { path: file });
+      expect(clipped.isError).toBe(false);
+      expect(clipped.text).toContain('TOOL-START');
+      expect(clipped.text).not.toContain('TOOL-END');
+      expect(clipped.text).toMatch(/…\[\+\d+ chars not shown — read again with full: true\]/);
+
+      const whole = await call('read', { path: file, full: true });
+      expect(whole.isError).toBe(false);
+      expect(whole.text).toContain(`TOOL-START ${'r'.repeat(6_000)} TOOL-END`);
+      expect(whole.text).not.toMatch(/chars not shown/);
+    });
+
+    it('declares the continuation arguments, and refuses a startChar past the message', async () => {
+      const { tools } = await client.listTools();
+      const read = tools.find((t) => t.name === 'read')!;
+      expect(Object.keys(read.inputSchema.properties ?? {}).sort()).toEqual(['endLine', 'full', 'path', 'startChar', 'startLine']);
+      expect(read.description).toMatch(/startChar/);
+      expect(read.description).toMatch(/full is true/);
+
+      const { text, isError } = await call('read', { path: path.join(archiveProject, 'short.jsonl'), startLine: 1, startChar: 100_000 });
+      expect(isError).toBe(true);
+      expect(text).toMatch(/startChar 100000 is past the end of the message at line 1/);
     });
 
     it('a range outside the file is an error with the line count, not an empty answer', async () => {

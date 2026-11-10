@@ -26,7 +26,7 @@ import {
   formatKnowledgeContext,
   SearchOptions,
 } from './search.js';
-import { readConversationRange, READ_MAX_OUTPUT_CHARS } from './show.js';
+import { readConversationRange, READ_MAX_OUTPUT_CHARS, READ_MAX_BLOCK_CHARS } from './show.js';
 import { initDatabase } from './db.js';
 import {
   addFactTags,
@@ -115,6 +115,16 @@ const ShowConversationInputSchema = z
       .min(1)
       .optional()
       .describe('Ending line number (1-indexed, inclusive). Omit to read to the end (or to the output limit).'),
+    startChar: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('Characters to skip of the first message shown — the value a truncated answer names when it stopped inside one long message.'),
+    full: z
+      .boolean()
+      .default(false)
+      .describe('Show tool inputs and results whole instead of clipping each. Default false.'),
   })
   .strict();
 
@@ -259,13 +269,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'read',
-        description: `Read a conversation (or a line range of it) after finding relevant results with search. Essential for understanding the complete rationale, evolution, and gotchas behind past decisions. Pass the "Lines A-B" range a search result reports as startLine/endLine (1-indexed, inclusive). One call returns at most ${READ_MAX_OUTPUT_CHARS} characters: a longer range ends with "Output truncated … Continue with startLine=N" — call again with that startLine. Long tool inputs/results are clipped. A range outside the file is an error that names the file's line count.`,
+        description: `Read a conversation (or a line range of it) after finding relevant results with search. Essential for understanding the complete rationale, evolution, and gotchas behind past decisions. Pass the "Lines A-B" range a search result reports as startLine/endLine (1-indexed, inclusive). One call returns at most ${READ_MAX_OUTPUT_CHARS} characters: a longer range ends with "Output truncated … Continue with startLine=N" — call again with the values that line names. When the answer stopped inside one message longer than the limit, the line also names startChar=M, so a message of any length can be read to its end. Tool inputs/results longer than ${READ_MAX_BLOCK_CHARS} characters are clipped ("…[+N chars not shown …]") unless full is true. A range outside the file is an error that names the file's line count.`,
         inputSchema: {
           type: 'object',
           properties: {
             path: { type: 'string', minLength: 1 },
             startLine: { type: 'number', minimum: 1 },
             endLine: { type: 'number', minimum: 1 },
+            startChar: { type: 'number', minimum: 0, description: 'Characters to skip of the first message shown — the value a truncated answer names when it stopped inside one long message' },
+            full: { type: 'boolean', default: false, description: 'Show tool inputs and results whole instead of clipping each' },
           },
           required: ['path'],
           additionalProperties: false,
@@ -569,11 +581,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       // Read and format the requested line range as a stream: the cost follows
       // the range, not the file (whole-file reads failed on files over 512MB),
-      // the output is capped with a continuation hint, and a range outside the
-      // file is an error naming the file's line count.
+      // the output is capped with a continuation hint (a line, and a character
+      // offset when the stop is inside one long message), and a range outside
+      // the file is an error naming the file's line count.
       const markdownContent = await readConversationRange(realFile, {
         startLine: params.startLine,
         endLine: params.endLine,
+        startChar: params.startChar,
+        full: params.full,
       });
 
       return {
