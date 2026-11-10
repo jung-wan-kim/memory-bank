@@ -4,7 +4,7 @@ import type { Fact, FactRevision } from './types.js';
 import { canonicalizeProject } from './project-canon.js';
 import { EMBEDDING_VERSION } from './embedding-version.js';
 import { getVecQuant, embeddingToVecBlob, vecParamSql, normalizeVecDistance, l2DistanceToSimilarity } from './db.js';
-import { factRejectReason, factTextRejectReason } from './fact-validity.js';
+import { factRejectReason, factTextRejectReason, factKrRejectReason } from './fact-validity.js';
 import { scopeMatcher } from './project-family.js';
 import { VEC0_KNN_K_MAX } from './vec-limits.js';
 
@@ -68,13 +68,23 @@ interface InsertFactParams {
 interface UpdateFactParams {
   /**
    * New sentence. When it differs from the stored one, the row's fact_kr — a
-   * translation of the OLD sentence — is cleared together with its
-   * vec_facts_kr row (scripts/translate-facts.mjs fills empty fact_kr rows and
-   * the re-embed worker then builds the Korean vector). Pass `embedding` with
-   * it: this function does not embed, and a row keeps whatever vector it has.
+   * translation of the OLD sentence — does not stay: it becomes `fact_kr` when
+   * that is given, and is cleared otherwise, together with its vec_facts_kr
+   * row. Pass `embedding` with it: this function does not embed, and a row
+   * keeps whatever vector it has.
    */
   fact?: string;
   embedding?: number[] | null;
+  /**
+   * Korean sentence of the sentence the row holds after this update (null =
+   * none). A caller that rewrites `fact` and has the new sentence's Korean one
+   * passes it here — a rewritten fact left without one is out of reach of
+   * Korean queries (measured: top-10 for 92 of 92 queries before a rewrite, 26
+   * after). `embedding_kr` is its vector; given without one, the row's old
+   * Korean vector is removed and the re-embed worker builds the new one.
+   */
+  fact_kr?: string | null;
+  embedding_kr?: number[] | null;
   consolidated_count_increment?: boolean;
   /** Confirmations to add — the consolidated_count of a fact merged into this one. */
   consolidated_count_add?: number;
@@ -140,6 +150,12 @@ export function getActiveFacts(db: Database.Database): Fact[] {
     .map(rowToFact);
 }
 
+/** The fact as it is stored now, or null when it is gone or inactive. */
+export function getActiveFact(db: Database.Database, id: string): Fact | null {
+  const row = db.prepare('SELECT * FROM facts WHERE id = ? AND is_active = 1').get(id) as Record<string, unknown> | undefined;
+  return row ? rowToFact(row) : null;
+}
+
 export function getFactsByProject(db: Database.Database, project: string): Fact[] {
   const canon = canonicalizeProject(db, project);
   return (db.prepare(`
@@ -154,6 +170,10 @@ export function updateFact(db: Database.Database, id: string, params: UpdateFact
   if (params.fact !== undefined) {
     const reason = factTextRejectReason(params.fact);
     if (reason) throw new Error(`updateFact refused (${reason}): ${JSON.stringify(String(params.fact)).slice(0, 80)}`);
+  }
+  if (params.fact_kr !== undefined && params.fact_kr !== null) {
+    const reason = factKrRejectReason(params.fact_kr);
+    if (reason) throw new Error(`updateFact refused (fact_kr: ${reason}): ${JSON.stringify(String(params.fact_kr)).slice(0, 80)}`);
   }
   const now = new Date().toISOString();
   const updates: string[] = ['updated_at = ?'];
@@ -183,14 +203,20 @@ export function updateFact(db: Database.Database, id: string, params: UpdateFact
   db.transaction(() => {
     // Read inside the write transaction: the comparison and the union below
     // must see the row this UPDATE is about to change.
-    const current = db.prepare('SELECT fact, source_exchange_ids FROM facts WHERE id = ?')
-      .get(id) as { fact: string; source_exchange_ids: string | null } | undefined;
+    const current = db.prepare('SELECT fact, fact_kr, source_exchange_ids FROM facts WHERE id = ?')
+      .get(id) as { fact: string; fact_kr: string | null; source_exchange_ids: string | null } | undefined;
     const rowUpdates = [...updates];
     const rowValues = [...values];
     const sentenceChanges = current !== undefined && params.fact !== undefined && params.fact !== current.fact;
-    // The Korean sentence translates the stored one; after a rewrite it would
-    // describe a sentence the row no longer holds.
-    if (sentenceChanges) rowUpdates.push('fact_kr = NULL');
+    // The Korean sentence translates the stored one; after a rewrite the old
+    // one would describe a sentence the row no longer holds — it is replaced
+    // by the one given, or cleared.
+    const nextKr = params.fact_kr !== undefined ? params.fact_kr : sentenceChanges ? null : undefined;
+    const krChanges = current !== undefined && nextKr !== undefined && nextKr !== (current.fact_kr ?? null);
+    if (krChanges) {
+      rowUpdates.push('fact_kr = ?');
+      rowValues.push(nextKr);
+    }
     if (current && params.add_source_exchange_ids?.length) {
       const merged = [...new Set([...(JSON.parse(current.source_exchange_ids || '[]') as string[]), ...params.add_source_exchange_ids])];
       rowUpdates.push('source_exchange_ids = ?');
@@ -198,8 +224,99 @@ export function updateFact(db: Database.Database, id: string, params: UpdateFact
     }
     db.prepare(`UPDATE facts SET ${rowUpdates.join(', ')} WHERE id = ?`).run(...rowValues, id);
     if (params.embedding) upsertFactVector(db, 'vec_facts', id, params.embedding);
-    if (sentenceChanges) db.prepare('DELETE FROM vec_facts_kr WHERE id = ?').run(id);
+    // The Korean vector follows the Korean sentence: gone with the old one
+    // (and never left behind a sentence that has none), written when the new
+    // one came with its vector.
+    if (krChanges || (sentenceChanges && !nextKr)) db.prepare('DELETE FROM vec_facts_kr WHERE id = ?').run(id);
+    if (current && nextKr && params.embedding_kr) upsertFactVector(db, 'vec_facts_kr', id, params.embedding_kr);
   }).immediate();
+}
+
+/**
+ * A fact's Korean sentence with its stored Korean vector (decoded, see
+ * storedFactVector), or null when the fact has no Korean sentence. `vector` is
+ * null when the sentence has no vec_facts_kr row — always the case for an
+ * inactive fact (deactivateFact removes it).
+ */
+export function getFactKorean(db: Database.Database, id: string): { text: string; vector: number[] | null } | null {
+  const row = db.prepare('SELECT fact_kr FROM facts WHERE id = ?').get(id) as { fact_kr: string | null } | undefined;
+  const text = row?.fact_kr;
+  if (!text || text.trim() === '') return null;
+  return { text, vector: storedFactVector(db, 'vec_facts_kr', id) };
+}
+
+/**
+ * Write a fact's Korean sentence and its vector, leaving the fact itself as it
+ * is — `updated_at` included (a translation filled in later is not a change of
+ * the fact; getTopFacts ranks by how recently a fact changed).
+ */
+export function setFactKorean(db: Database.Database, id: string, text: string, vector: number[]): void {
+  const reason = factKrRejectReason(text);
+  if (reason) throw new Error(`setFactKorean refused (${reason}): ${JSON.stringify(String(text)).slice(0, 80)}`);
+  db.transaction(() => {
+    const changed = db.prepare('UPDATE facts SET fact_kr = ? WHERE id = ?').run(text, id).changes;
+    if (changed === 0) throw new Error(`setFactKorean: fact not found: ${id}`);
+    upsertFactVector(db, 'vec_facts_kr', id, vector);
+  }).immediate();
+}
+
+// ── Content time ────────────────────────────────────────────────────────────
+//
+// facts.content_at — when the fact's CURRENT content was last stated: the
+// latest creation time among the facts merged into it. NULL means the row was
+// never merged into, and its content is as old as the row (created_at).
+//
+// A merge keeps the older row. After EVOLUTION that row holds the later fact's
+// sentence, after DUPLICATE a statement the later fact confirmed — but its
+// created_at stays the old one, so ordering a pair by created_at alone
+// presented the latest content as the "existing" fact (consolidator.ts).
+//
+// The column is ensured here, on first use by the consolidator (idempotent),
+// not in db.ts's schema block — like extraction_log.seen_exchanges. It is
+// local bookkeeping: sync does not carry it, and a store without it (or a
+// handle that cannot add it) reads every content time as created_at.
+
+const contentAtColumn = new WeakMap<Database.Database, boolean>();
+
+/** Make sure facts.content_at exists. false when it does not and cannot be added (read-only handle, old DB). */
+export function ensureFactContentAtColumn(db: Database.Database): boolean {
+  const known = contentAtColumn.get(db);
+  if (known !== undefined) return known;
+  let present: boolean;
+  let addedInTransaction = false;
+  try {
+    const cols = db.prepare(`SELECT name FROM pragma_table_info('facts')`).all() as Array<{ name: string }>;
+    present = cols.some((c) => c.name === 'content_at');
+    if (!present && cols.length > 0) {
+      db.prepare('ALTER TABLE facts ADD COLUMN content_at TEXT').run();
+      present = true;
+      addedInTransaction = db.inTransaction;
+    }
+  } catch (e) {
+    // Another process added it between the check and the ALTER — the goal is met.
+    present = /duplicate column name/i.test(e instanceof Error ? e.message : String(e));
+  }
+  // An ALTER inside a caller's transaction is undone by its rollback: such an
+  // answer is not remembered (the next call looks again).
+  if (!addedInTransaction) contentAtColumn.set(db, present);
+  return present;
+}
+
+/** Content time of each given fact that exists: content_at, else created_at. */
+export function factContentTimes(db: Database.Database, ids: string[]): Map<string, string> {
+  const times = new Map<string, string>();
+  if (ids.length === 0) return times;
+  const expr = ensureFactContentAtColumn(db) ? 'COALESCE(content_at, created_at)' : 'created_at';
+  const rows = db.prepare(`SELECT id, ${expr} AS t FROM facts WHERE id IN (${ids.map(() => '?').join(', ')})`)
+    .all(...ids) as Array<{ id: string; t: string }>;
+  for (const r of rows) times.set(r.id, r.t);
+  return times;
+}
+
+/** Move a fact's content time forward to `time` (never back). A no-op on a store without the column. */
+export function raiseFactContentTime(db: Database.Database, id: string, time: string): void {
+  if (!ensureFactContentAtColumn(db)) return;
+  db.prepare('UPDATE facts SET content_at = ? WHERE id = ? AND COALESCE(content_at, created_at) < ?').run(time, id, time);
 }
 
 export function deactivateFact(db: Database.Database, id: string): void {
@@ -620,6 +737,12 @@ export function getNewFactsSince(db: Database.Database, project: string, since: 
  *
  * cursor null → from the beginning (all active facts).
  *
+ * `notAfter` (an ISO time, the drain passes "now") leaves out facts dated
+ * later than it. A fact stamped while the clock was ahead sorts after every
+ * fact created since: driving it moved the cursor ahead of the clock, and from
+ * then on nothing created at the real time was pending. Such a fact waits
+ * until its time comes; it stays a similarity candidate meanwhile.
+ *
  * KNOWN LIMITATION (best-effort dedup): a fact IMPORTED mid-drain with an old
  * `created_at` that sorts before the current cursor is not re-driven by this
  * pass (it's still a similarity CANDIDATE for future facts, so a duplicate is
@@ -631,6 +754,7 @@ export function getAllNewFactsSince(
   db: Database.Database,
   cursor: { createdAt: string; id: string } | null,
   limit: number = 2000,
+  notAfter?: string,
 ): Fact[] {
   // Bounded page (keyset) — NEVER materialize the whole table: seeding from the
   // beginning could otherwise pull tens of thousands of rows into memory in one
@@ -638,17 +762,25 @@ export function getAllNewFactsSince(
   // so the backlog drains page-by-page. The idx_facts_active_created_id index
   // (is_active, created_at, id) serves both the filter and the ORDER BY without
   // a temp sort.
+  const bound = notAfter === undefined ? '' : 'AND created_at <= ?';
+  const boundParams = notAfter === undefined ? [] : [notAfter];
   if (!cursor) {
     return (db.prepare(`
-      SELECT * FROM facts WHERE is_active = 1 ORDER BY created_at ASC, id ASC LIMIT ?
-    `).all(limit) as Record<string, unknown>[]).map(rowToFact);
+      SELECT * FROM facts WHERE is_active = 1 ${bound} ORDER BY created_at ASC, id ASC LIMIT ?
+    `).all(...boundParams, limit) as Record<string, unknown>[]).map(rowToFact);
   }
   return (db.prepare(`
     SELECT * FROM facts
     WHERE is_active = 1
       AND (created_at > ? OR (created_at = ? AND id > ?))
+      ${bound}
     ORDER BY created_at ASC, id ASC LIMIT ?
-  `).all(cursor.createdAt, cursor.createdAt, cursor.id, limit) as Record<string, unknown>[]).map(rowToFact);
+  `).all(cursor.createdAt, cursor.createdAt, cursor.id, ...boundParams, limit) as Record<string, unknown>[]).map(rowToFact);
+}
+
+/** Active facts dated later than `after` (an ISO time) — the ones a drain bounded at that time leaves alone. */
+export function countFactsDatedAfter(db: Database.Database, after: string): number {
+  return (db.prepare('SELECT COUNT(*) AS n FROM facts WHERE is_active = 1 AND created_at > ?').get(after) as { n: number }).n;
 }
 
 /**

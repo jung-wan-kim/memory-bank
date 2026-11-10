@@ -16,6 +16,15 @@
  * (on its read-only handle) to decide whether starting the worker is worth a
  * process at all — hook and worker must agree on where the cursor is, so both
  * read it here.
+ *
+ * Neither file's times are believed when they lie ahead of the clock. A
+ * next-attempt time written while the clock was ahead kept every start from
+ * running, and a cursor written then made every fact created since read as
+ * already examined — both without a line anywhere (a skipped start logs
+ * nothing). A next-attempt time further out than the longest wait this code
+ * records is not waited for, a cursor ahead of the clock is pulled back to
+ * now, and a fact dated ahead of the clock is left alone until its time comes
+ * (so the cursor is never moved ahead of the clock again). The worker logs each.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -31,39 +40,87 @@ export function consolidateCursorPath(): string {
   return path.join(getIndexDir(), 'fact-consolidate-cursor.txt');
 }
 
+/**
+ * The cursor file as it stands. `problem` is set when a file exists but cannot
+ * be used (unreadable, not JSON — a legacy bare timestamp included — or the
+ * wrong shape): the run then starts from the beginning, which costs the whole
+ * walk again, and the caller must say so. No file is not a problem.
+ */
+export function loadConsolidateCursor(): { cursor: ConsolidateCursor | null; problem: string | null } {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(consolidateCursorPath(), 'utf8');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { cursor: null, problem: null };
+    return { cursor: null, problem: e instanceof Error ? e.message : String(e) };
+  }
+  let c: { createdAt?: unknown; id?: unknown } | null;
+  try {
+    c = JSON.parse(raw);
+  } catch {
+    return { cursor: null, problem: 'not JSON' };
+  }
+  if (c !== null && typeof c === 'object' && typeof c.createdAt === 'string' && typeof c.id === 'string' && !Number.isNaN(Date.parse(c.createdAt))) {
+    return { cursor: { createdAt: c.createdAt, id: c.id }, problem: null };
+  }
+  return { cursor: null, problem: 'unexpected shape' };
+}
+
 /** The persisted cursor; null when absent, legacy or corrupt (= start from the beginning). */
 export function readConsolidateCursor(): ConsolidateCursor | null {
-  try {
-    const c = JSON.parse(fs.readFileSync(consolidateCursorPath(), 'utf8'));
-    if (c && typeof c.createdAt === 'string' && typeof c.id === 'string' && !Number.isNaN(Date.parse(c.createdAt))) {
-      return { createdAt: c.createdAt, id: c.id };
-    }
-  } catch { /* absent/legacy/corrupt → start from the beginning */ }
-  return null;
+  return loadConsolidateCursor().cursor;
+}
+
+/** Where a run starts, and what had to be said about the stored position. */
+export interface ConsolidateStart {
+  /** The start position (null = the beginning). Never ahead of `now`. */
+  cursor: ConsolidateCursor | null;
+  /** Why the cursor file could not be used (the run starts from the beginning), else null. */
+  problem: string | null;
+  /** The stored time, when it lay ahead of the clock and `cursor` was pulled back to `now`; else null. */
+  clampedFrom: string | null;
 }
 
 /**
  * Where the next run starts: the persisted cursor, else an explicit
  * LAST_CONSOLIDATED_AT (manual/scoped runs), else null — the beginning, so no
  * active fact is ever skipped.
+ *
+ * A stored time ahead of the clock (written while the clock was ahead) is
+ * pulled back to `now`: left as it was, every fact created at the real time
+ * sorts before it and is never pending. The worker writes the pulled-back
+ * cursor to the file at the end of its run, so this happens once. Facts
+ * created between the clock's return and that run are not driven by this pass
+ * (they stay candidates of later facts) — the same accepted limit as a fact
+ * imported with an old created_at (getAllNewFactsSince).
  */
+export function consolidateStart(now: Date, env: NodeJS.ProcessEnv = process.env): ConsolidateStart {
+  const { cursor, problem } = loadConsolidateCursor();
+  const stored = cursor ?? (env.LAST_CONSOLIDATED_AT ? { createdAt: env.LAST_CONSOLIDATED_AT, id: '' } : null);
+  if (stored && Date.parse(stored.createdAt) > now.getTime()) {
+    return { cursor: { createdAt: now.toISOString(), id: '' }, problem, clampedFrom: stored.createdAt };
+  }
+  return { cursor: stored, problem, clampedFrom: null };
+}
+
+/** consolidateStart's position alone (see there). */
 export function consolidateStartCursor(env: NodeJS.ProcessEnv = process.env): ConsolidateCursor | null {
-  const cursor = readConsolidateCursor();
-  if (cursor) return cursor;
-  return env.LAST_CONSOLIDATED_AT ? { createdAt: env.LAST_CONSOLIDATED_AT, id: '' } : null;
+  return consolidateStart(new Date(), env).cursor;
 }
 
 /**
- * Whether any active fact lies after the cursor — the same keyset predicate as
- * getAllNewFactsSince, served by idx_facts_active_created_id. Plain SQL only:
- * it runs on the hook's read-only handle, which has no sqlite-vec loaded.
+ * Whether any active fact lies after the cursor and not after `now` — the same
+ * keyset predicate and time bound as the drain's getAllNewFactsSince, served by
+ * idx_facts_active_created_id. Plain SQL only: it runs on the hook's read-only
+ * handle, which has no sqlite-vec loaded.
  */
-export function hasPendingConsolidation(db: Database.Database, cursor: ConsolidateCursor | null): boolean {
+export function hasPendingConsolidation(db: Database.Database, cursor: ConsolidateCursor | null, now: Date = new Date()): boolean {
+  const notAfter = now.toISOString();
   const row = cursor
     ? db.prepare(
-        'SELECT 1 FROM facts WHERE is_active = 1 AND (created_at > ? OR (created_at = ? AND id > ?)) LIMIT 1'
-      ).get(cursor.createdAt, cursor.createdAt, cursor.id)
-    : db.prepare('SELECT 1 FROM facts WHERE is_active = 1 LIMIT 1').get();
+        'SELECT 1 FROM facts WHERE is_active = 1 AND (created_at > ? OR (created_at = ? AND id > ?)) AND created_at <= ? LIMIT 1'
+      ).get(cursor.createdAt, cursor.createdAt, cursor.id, notAfter)
+    : db.prepare('SELECT 1 FROM facts WHERE is_active = 1 AND created_at <= ? LIMIT 1').get(notAfter);
   return row !== undefined;
 }
 
@@ -166,7 +223,8 @@ export function nextConsolidateHealth(
   const consecutiveFailures = continues ? prev.consecutiveFailures + 1 : 1;
   const wait = consolidateBackoffMs(consecutiveFailures);
   return {
-    firstFailureAt: continues ? prev.firstFailureAt : now.toISOString(),
+    // A streak cannot have begun after now: a start time written under a clock that was ahead is pulled back.
+    firstFailureAt: continues && Date.parse(prev.firstFailureAt) <= now.getTime() ? prev.firstFailureAt : now.toISOString(),
     lastFailureAt: now.toISOString(),
     consecutiveFailures,
     factId: run.failure.factId,
@@ -198,7 +256,21 @@ export function saveConsolidateHealth(health: ConsolidateHealth | null): void {
 export function consolidateBackoffUntil(health: ConsolidateHealth | null, now: Date, pluginVersion: string | null): string | null {
   if (!health?.nextAttemptAt) return null;
   if (health.pluginVersion !== pluginVersion) return null;
-  return Date.parse(health.nextAttemptAt) > now.getTime() ? health.nextAttemptAt : null;
+  const waitMs = Date.parse(health.nextAttemptAt) - now.getTime();
+  // No wait recorded here is longer than BACKOFF_MAX_MS. A time further out was
+  // written under a clock that has since moved back: waiting for it would stop
+  // consolidation for as long as the clock was off, with nothing in the log.
+  return waitMs > 0 && waitMs <= BACKOFF_MAX_MS ? health.nextAttemptAt : null;
+}
+
+/**
+ * The recorded next-attempt time when consolidateBackoffUntil does not wait
+ * for it because it lies further ahead of the clock than the longest wait
+ * (same version only) — for the worker to log before it runs. null otherwise.
+ */
+export function consolidateBackoffAheadOfClock(health: ConsolidateHealth | null, now: Date, pluginVersion: string | null): string | null {
+  if (!health?.nextAttemptAt || health.pluginVersion !== pluginVersion) return null;
+  return Date.parse(health.nextAttemptAt) - now.getTime() > BACKOFF_MAX_MS ? health.nextAttemptAt : null;
 }
 
 /**
@@ -214,7 +286,11 @@ export function consolidateWorkerGate(
 ): { start: boolean; reason: string } {
   const until = consolidateBackoffUntil(loadConsolidateHealth().health, now, pluginVersion);
   if (until) return { start: false, reason: `backoff until ${until}` };
-  return hasPendingConsolidation(db, consolidateStartCursor(env))
+  const start = consolidateStart(now, env);
+  // Only the worker can write the pulled-back cursor; until it has, every
+  // check here would pull it back to its own "now" and find nothing pending.
+  if (start.clampedFrom) return { start: true, reason: `cursor ${start.clampedFrom} is ahead of the clock` };
+  return hasPendingConsolidation(db, start.cursor, now)
     ? { start: true, reason: 'pending facts' }
     : { start: false, reason: 'no pending facts' };
 }

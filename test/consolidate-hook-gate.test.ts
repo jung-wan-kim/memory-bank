@@ -118,6 +118,24 @@ describe('fact-consolidate-hook.js: whether the consolidate worker is started', 
     expect(runHook().decision).toBe('fact-consolidate: would start fact-consolidate-worker.js (pending facts)');
   }, 60_000);
 
+  it('a backoff time further out than the longest wait (the clock was ahead when it was written) does not keep the worker from starting', () => {
+    seedFacts(2);
+    fs.mkdirSync(path.join(indexDir(), 'state'), { recursive: true });
+    fs.writeFileSync(path.join(indexDir(), 'state', 'fact-consolidate-health.json'), JSON.stringify({
+      firstFailureAt: at(0), lastFailureAt: at(1), consecutiveFailures: 9, factId: 'fact-x', kind: 'internal',
+      message: 'boom', nextAttemptAt: new Date(Date.now() + 400 * 86_400_000).toISOString(), pluginVersion: VERSION,
+    }));
+    expect(runHook().decision).toBe('fact-consolidate: would start fact-consolidate-worker.js (pending facts)');
+  }, 40_000);
+
+  it('a cursor ahead of the clock starts the worker (which pulls it back) instead of reading as "nothing pending"', () => {
+    seedFacts(2);
+    const skewed = new Date(Date.now() + 400 * 86_400_000).toISOString();
+    fs.mkdirSync(indexDir(), { recursive: true });
+    fs.writeFileSync(path.join(indexDir(), 'fact-consolidate-cursor.txt'), JSON.stringify({ createdAt: skewed, id: 'ffffffff-ffff-ffff-ffff-ffffffffffff' }));
+    expect(runHook().decision).toBe(`fact-consolidate: would start fact-consolidate-worker.js (cursor ${skewed} is ahead of the clock)`);
+  }, 40_000);
+
   it('no database yet: no worker', () => {
     expect(runHook().decision).toBe('fact-consolidate: would skip fact-consolidate-worker.js (no database)');
   }, 40_000);

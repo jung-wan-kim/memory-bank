@@ -12,6 +12,14 @@
  * otherwise indexed only by the SessionStart sync, so at SessionEnd the index
  * usually does not hold this session yet.
  *
+ * When that indexing fails, the index may hold only the first part of the
+ * session (a sync that ran while it was in progress). Extracting that part
+ * writes a completion marker, and a session with a marker is never picked by
+ * backfill — the rest was not extracted until the session ended again. So a
+ * session backfill will pick is left alone (no extraction, no marker: backfill
+ * takes the whole session once it is indexed), and only a session nothing else
+ * would pick is extracted from what is indexed, with a warning.
+ *
  * One worker per session at a time: SessionEnd often arrives twice for the same
  * session within a minute, and the second worker would redo the indexing only
  * to find the session claimed.
@@ -121,21 +129,57 @@ async function openDatabase() {
 }
 
 /**
- * 공급자 일시 실패 뒤 이 세션이 다시 시도될 경로가 있는가. 훅 경로에는 자체 재시도
- * 예약이 없고, 마커가 없는 세션만 backfill 이 집는다(주 교환 수 조건 포함). 그 조건을
- * backfill 과 같은 술어로 묻는다 — 조용함 조건만 뺀다(지금 막 끝난 세션이므로).
+ * 이 세션을 backfill 이 집는가. 훅 경로에는 자체 재시도 예약이 없고, 마커가 없는 세션만
+ * backfill 이 집는다(주 교환 수 조건 포함). 그 조건을 backfill 과 같은 술어로 묻는다 —
+ * 조용함 조건만 뺀다(지금 막 끝난 세션이므로). 확인하지 못하면 예외를 던진다.
  */
+function backfillWillPick(db, sessionId) {
+  const { sql, params } = pendingExtractionCoreQuery({ ...getExtractionConfig(), quietMinutes: 0 });
+  return Boolean(db.prepare(`SELECT 1 FROM (${sql}) WHERE sid = ? LIMIT 1`).get(...params, sessionId));
+}
+
+/** 공급자 일시 실패 뒤 이 세션이 다시 시도될 경로가 있는가(backfillWillPick). */
 function retryPathNote(db, sessionId) {
   try {
-    const { sql, params } = pendingExtractionCoreQuery({ ...getExtractionConfig(), quietMinutes: 0 });
-    const eligible = db.prepare(`SELECT 1 FROM (${sql}) WHERE sid = ? LIMIT 1`).get(...params, sessionId);
-    return eligible
+    return backfillWillPick(db, sessionId)
       ? '공급자 일시 실패 — 예산 미소모, 마커 없음: 세션이 조용해지면 backfill 이 다시 처리'
       : '공급자 일시 실패 — 예산 미소모. backfill 대상이 아님(주 교환 수 미달이거나 이전 마커가 복원됨): '
         + '이 세션의 다음 SessionEnd 전에는 다시 시도되지 않음';
   } catch (e) {
     return `공급자 일시 실패 — 예산 미소모. backfill 대상 여부는 확인하지 못함(${e instanceof Error ? e.message : e})`;
   }
+}
+
+/**
+ * 선색인이 실패한 세션을 지금 추출할지. 색인에 이 세션의 앞부분만 있을 수 있다 —
+ * 그것만 추출하면 완료 마커가 남아 뒷부분은 세션이 다시 끝나기 전에는 추출되지 않는다.
+ *  - backfill 이 집을 세션: 추출하지 않는다(마커도 쓰지 않는다). 색인된 뒤 backfill 이 전체를 처리한다.
+ *  - 그 밖(이전 마커가 있거나 주 교환 수 미달, 또는 확인 실패): 다른 경로가 없으므로 색인된 만큼 추출한다.
+ * @returns {{ extract: boolean, line: string }}
+ */
+function afterFailedPreindex(db, sessionId) {
+  let picked;
+  try {
+    picked = backfillWillPick(db, sessionId);
+  } catch (e) {
+    return {
+      extract: true,
+      line: `worker: WARN (preindex_failed) session=${sessionId} — backfill 대상 여부를 확인하지 못해(${e instanceof Error ? e.message : e}) `
+        + '색인된 만큼만 추출: 색인이 이 세션의 일부만 담고 있으면 나머지는 이 세션의 다음 SessionEnd 에서 추출',
+    };
+  }
+  if (picked) {
+    return {
+      extract: false,
+      line: `worker: SKIPPED (preindex_failed) session=${sessionId} — 색인이 이 세션의 일부만 담고 있을 수 있어 추출하지 않음, `
+        + '완료 마커를 쓰지 않음: 색인된 뒤 backfill 이 세션 전체를 처리',
+    };
+  }
+  return {
+    extract: true,
+    line: `worker: WARN (preindex_failed) session=${sessionId} — backfill 대상이 아니라(이전 마커가 있거나 주 교환 수 미달) `
+      + '색인된 만큼만 추출: 색인이 이 세션의 일부만 담고 있으면 나머지는 이 세션의 다음 SessionEnd 에서 추출',
+  };
 }
 
 async function main() {
@@ -165,8 +209,7 @@ async function main() {
 
   // 추출보다 색인이 먼저다. 색인은 SessionStart 의 sync 에서만 일어나므로, 이 단계가
   // 없으면 방금 끝난 세션은 색인 DB 에 교환이 0개이거나 일부만 있는 채로 추출된다.
-  // 색인이 실패해도 추출 단계로 간다 — 색인된 교환이 없으면 추출이 스스로
-  // not_indexed 로 건너뛰고 마커를 남기지 않는다.
+  // 색인이 실패했을 때 추출할지는 DB 를 연 뒤 정한다(afterFailedPreindex).
   let pre;
   try {
     pre = await preindexSession(sessionId);
@@ -188,6 +231,11 @@ async function main() {
   const db = opened.db;
 
   try {
+    if (pre?.status === 'failed') {
+      const decision = afterFailedPreindex(db, sessionId);
+      log(decision.line);
+      if (!decision.extract) return;
+    }
     const result = await runFactExtraction(db, sessionId, project);
     // skipped 를 무시하면 claim 미획득·보류가 'extracted=0 saved=0' 정상 처리와
     // 구분되지 않아 DB 장애가 무경보로 남는다(R19 — backfill 에서 닫은 결함이

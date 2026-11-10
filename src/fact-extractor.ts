@@ -74,6 +74,7 @@ const BATCH_SIZE = 5; // configurable-ok
 const MAX_FACTS_PER_SESSION = 20; // configurable-ok
 const FACTS_PER_SELECTED_BATCH = 5; // configurable-ok — 단일 배치 세션의 배치당 사실 중앙값(실측 5)
 // MEMORY_BANK_MAX_EXTRACT_CALLS 로 배치 수를 올려도 넘지 않는 상한(저장 뒤 사실마다 분류 LLM 1회).
+// 배치 수 자체의 상한도 이 값이다(MAX_EXTRACT_CALLS_CEILING).
 const ABSOLUTE_MAX_FACTS_PER_SESSION = 60; // configurable-ok
 const CONFIDENCE_THRESHOLD = 0.7; // configurable-ok
 const DEFAULT_MAX_LLM_CALLS = 12; // configurable-ok — per-session LLM call budget
@@ -183,9 +184,33 @@ export function selectFactsAcrossBatches<T extends { confidence: number }>(perBa
   return perBatch.flatMap((batch, b) => batch.filter((_, i) => keep[b].has(i)));
 }
 
-function maxLlmCallsPerSession(): number {
-  const parsed = parseInt(process.env.MEMORY_BANK_MAX_EXTRACT_CALLS || '', 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_LLM_CALLS;
+/**
+ * The most extraction batches MEMORY_BANK_MAX_EXTRACT_CALLS can ask for. A
+ * session stores at most ABSOLUTE_MAX_FACTS_PER_SESSION facts, picked one per
+ * batch in turn (selectFactsAcrossBatches): with this many batches every slot is
+ * already taken by a batch's best fact, so a further batch is a call whose
+ * result cannot be stored. Without a ceiling the value was used as given —
+ * 1000 sent all 80 batches of a 400-exchange session (measured).
+ */
+export const MAX_EXTRACT_CALLS_CEILING = ABSOLUTE_MAX_FACTS_PER_SESSION; // configurable-ok
+
+/**
+ * How many extraction batches one session may send (MEMORY_BANK_MAX_EXTRACT_CALLS,
+ * default 12, at most MAX_EXTRACT_CALLS_CEILING). `clampedFrom` is the value
+ * asked for when it was above the ceiling. Anything that is not a positive
+ * integer is the default — it is not read by its leading digits ('1e3' is not 1).
+ *
+ * This bounds the BATCHES, not every LLM call of a session: a batch whose call
+ * fails for a transient reason is tried again inside callHaiku (3 attempts by
+ * default), and every stored fact gets its ontology classification and
+ * relation calls on top.
+ */
+export function extractCallBudget(): { calls: number; clampedFrom?: number } {
+  const raw = (process.env.MEMORY_BANK_MAX_EXTRACT_CALLS ?? '').trim();
+  if (!/^\d+$/.test(raw)) return { calls: DEFAULT_MAX_LLM_CALLS };
+  const asked = Number(raw);
+  if (asked < 1) return { calls: DEFAULT_MAX_LLM_CALLS };
+  return asked > MAX_EXTRACT_CALLS_CEILING ? { calls: MAX_EXTRACT_CALLS_CEILING, clampedFrom: asked } : { calls: asked };
 }
 
 // Self-referential repos whose conversations must NOT be extracted (e.g.
@@ -287,7 +312,14 @@ export async function extractFactsFromExchanges(
   for (let i = 0; i < substantive.length; i += BATCH_SIZE) {
     batches.push(substantive.slice(i, i + BATCH_SIZE));
   }
-  const selectedBatches = selectSpreadBatches(batches, maxLlmCallsPerSession());
+  const budget = extractCallBudget();
+  if (budget.clampedFrom !== undefined && batches.length > budget.calls) {
+    console.error(
+      `fact-extractor: MEMORY_BANK_MAX_EXTRACT_CALLS=${budget.clampedFrom} is above the ceiling — `
+      + `${budget.calls} of ${batches.length} batches are sent`,
+    );
+  }
+  const selectedBatches = selectSpreadBatches(batches, budget.calls);
 
   // 🚨 세션 상한은 배치 루프를 **다 돈 뒤에** 적용한다. 예전에는 루프 맨 위에서
   // "20건이 찼으면 중단"이라, 긴 세션은 앞쪽 2~3개 배치에서 상한이 차고 뒤쪽 배치는

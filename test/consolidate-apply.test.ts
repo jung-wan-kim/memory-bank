@@ -11,7 +11,9 @@ import { suppressConsole } from './test-utils.js';
  *    which one happened to be the driver (a backlog is driven oldest first, so
  *    the nearest neighbour is often the LATER fact);
  *  - a rewritten sentence gets its own vector, and its Korean sentence — a
- *    translation of the old one — is cleared;
+ *    translation of the old one — does not stay (here: cleared, because these
+ *    verdicts bring no Korean sentence; consolidate-kr-carry.test.ts covers
+ *    the ones that do);
  *  - a merge moves the vanishing fact's confirmations and sources to the one
  *    that stays, and either everything is written or nothing is.
  */
@@ -212,7 +214,7 @@ describe('applying a consolidation verdict', () => {
     });
   });
 
-  describe('a rewritten sentence gets its own vector; its Korean sentence is cleared', () => {
+  describe('a rewritten sentence gets its own vector; its old Korean sentence does not stay', () => {
     it('no rewrite (DUPLICATE, INDEPENDENT): nothing is embedded, vectors and fact_kr stay', async () => {
       const older = seed({ fact: 'Tests run with vitest', at: day(1), factKr: '테스트는 vitest 로 돈다' });
       seed({ fact: 'Vitest runs the tests', at: day(2), factKr: '테스트는 vitest 로 실행한다' });
