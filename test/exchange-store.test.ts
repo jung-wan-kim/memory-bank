@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import Database from 'better-sqlite3';
-import { initDatabase, insertExchange, deleteExchange, deleteExchanges, isExchangeCurrent, EXCHANGE_TURN_INDEX, TOOL_INPUT_MAX_CHARS } from '../src/db.js';
+import { initDatabase, insertExchange, deleteExchange, deleteExchanges, isExchangeCurrent, repointQueuedExchangeSources, EXCHANGE_TURN_INDEX, TOOL_INPUT_MAX_CHARS } from '../src/db.js';
 import { parseConversation } from '../src/parser.js';
 import { EMBEDDING_VERSION } from '../src/embedding-version.js';
 import { suppressConsole } from './test-utils.js';
@@ -214,7 +214,9 @@ describe('exchange storage invariants (fresh DB, no CASCADE)', () => {
     const db = initDatabase();
     try {
       const [shortId] = await indexFile(db);
-      // a fact extracted while only the shorter snapshot existed (facts carry every exchange id of their session)
+      // a fact extracted while only the shorter snapshot existed (facts carry every exchange id of their session);
+      // every extraction leaves a row for its session in extraction_log before it saves a fact
+      db.prepare(`INSERT INTO extraction_log (session_id, processed_at, extracted, saved) VALUES ('s1', '2026-11-01T00:10:00.000Z', 1, 1)`).run();
       const addFact = (id: string, sources: string | null) => db.prepare(
         `INSERT INTO facts (id, fact, category, scope_type, source_exchange_ids, created_at, updated_at) VALUES (?, ?, 'decision', 'global', ?, 't', 'u')`
       ).run(id, `fact ${id}`, sources);
@@ -228,6 +230,8 @@ describe('exchange storage invariants (fresh DB, no CASCADE)', () => {
       fs.writeFileSync(file, lines.join('\n'));
       const [longId] = await indexFile(db);
       expect(longId).not.toBe(shortId);
+      // the sources move after the insert, outside its transaction (indexExchanges does this after each file)
+      expect(repointQueuedExchangeSources(db)).toEqual({ pairs: 1, scanned: true, facts: 1, revisions: 1 });
 
       const sources = Object.fromEntries((db.prepare('SELECT id, source_exchange_ids AS s, updated_at AS u FROM facts ORDER BY id').all() as Array<{ id: string; s: string | null; u: string }>).map((r) => [r.id, r]));
       expect(sources['f-from-short'].s).toBe(JSON.stringify(['other-exchange', longId]));

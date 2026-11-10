@@ -230,6 +230,22 @@ export function createExchangeTurnIndex(db: Database.Database): void {
 }
 
 /**
+ * Snapshots of a turn that insertExchange replaced, waiting for what names
+ * them as a source to be pointed at the row that replaced them
+ * (repointQueuedExchangeSources). A row is written in the transaction that
+ * deletes the snapshot, so a process that ends before the sources are moved
+ * leaves the pair for the next indexing run.
+ */
+export const EXCHANGE_REPOINT_TABLE = 'exchange_repoints';
+const EXCHANGE_REPOINT_DDL = `
+  CREATE TABLE IF NOT EXISTS ${EXCHANGE_REPOINT_TABLE} (
+    from_id TEXT PRIMARY KEY,
+    to_id TEXT NOT NULL,
+    session_id TEXT,
+    queued_at INTEGER NOT NULL
+  )`;
+
+/**
  * Read-only handle for a hot read path that must neither write nor wait on
  * writers — the synchronous SessionStart hook. initDatabase() runs migrations
  * and a dedup DELETE on every open, so a reader using it queues behind the
@@ -362,6 +378,7 @@ export function initDatabase(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_coding_agent ON exchanges(coding_agent)
   `);
   ensureExchangeTurnIndex(db);
+  db.exec(EXCHANGE_REPOINT_DDL);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_tool_name ON tool_calls(tool_name)
   `);
@@ -708,12 +725,17 @@ function capToolInput(json: string): string {
   return `${json.slice(0, end)}…[truncated: ${json.length - end} more chars]`;
 }
 
+/**
+ * Write one exchange with its vector and tool calls. Returns false, with
+ * nothing written, when a fuller snapshot of the same turn is already indexed
+ * (see below) — true otherwise.
+ */
 export function insertExchange(
   db: Database.Database,
   exchange: ConversationExchange,
   embedding: number[],
   _toolNames?: string[]
-): void {
+): boolean {
   const now = Date.now();
 
   // ONE transaction for exchanges + vec + tool_calls, with the dtype read
@@ -726,18 +748,38 @@ export function insertExchange(
   //     BEGIN IMMEDIATE; reading dtype inside our own write transaction
   //     serializes against the swap, so we can never quantize for a schema
   //     that changed between the read and the write.
-  const insertAll = db.transaction(() => {
-    // Older snapshots of this turn. The id is md5(path:userLine-lastAssistantLine),
+  const insertAll = db.transaction((): boolean => {
+    // Other snapshots of this turn. The id is md5(path:userLine-lastAssistantLine),
     // so a turn indexed while its answer was still being written gets a NEW id
     // on the next sync, and the shorter snapshot used to stay behind under the
     // old one (measured live: 11,981 extra rows, up to 102 for one turn). One
     // turn of one file = one (archive_path, line_start) = one row.
-    const staleSnapshots = db.prepare(
-      'SELECT id FROM exchanges WHERE archive_path = ? AND line_start = ? AND id <> ?'
-    ).all(exchange.archivePath, exchange.lineStart, exchange.id) as Array<{ id: string }>;
-    for (const stale of staleSnapshots) {
-      repointExchangeSources(db, stale.id, exchange.id);
-      deleteExchangeRows(db, stale.id);
+    const otherSnapshots = db.prepare(
+      'SELECT id, line_end FROM exchanges WHERE archive_path = ? AND line_start = ? AND id <> ?'
+    ).all(exchange.archivePath, exchange.lineStart, exchange.id) as Array<{ id: string; line_end: number }>;
+    // The row that stays is the one that ends latest (transcripts are
+    // append-only: it holds everything the shorter ones hold). A shorter copy
+    // arriving late must not replace it — a sync that read the file, then
+    // wrote after the session's final turn had been indexed by another
+    // process, used to delete the full row and leave its own shorter one,
+    // which nothing but a rebuild brought back.
+    if (otherSnapshots.some((other) => other.line_end > exchange.lineEnd)) return false;
+    if (otherSnapshots.length > 0) {
+      // What names a replaced snapshot as its source is moved to this row
+      // later, outside this transaction (repointQueuedExchangeSources): finding
+      // it means reading every fact's source list — 61MB on the measured DB,
+      // 1.6-2.4s under the write lock for every turn that had grown since the
+      // last sync. Here the pair is only written down.
+      db.exec(EXCHANGE_REPOINT_DDL);
+      const forward = db.prepare(`UPDATE ${EXCHANGE_REPOINT_TABLE} SET to_id = ? WHERE to_id = ?`);
+      const enqueue = db.prepare(
+        `INSERT OR REPLACE INTO ${EXCHANGE_REPOINT_TABLE} (from_id, to_id, session_id, queued_at) VALUES (?, ?, ?, ?)`
+      );
+      for (const stale of otherSnapshots) {
+        forward.run(exchange.id, stale.id); // a→stale still waiting becomes a→this row
+        enqueue.run(stale.id, exchange.id, exchange.sessionId || null, now);
+        deleteExchangeRows(db, stale.id);
+      }
     }
 
     // This exchange's own tool calls from an earlier indexing. The schema this
@@ -803,11 +845,26 @@ export function insertExchange(
         );
       }
     }
+    return true;
   });
   // .immediate(): acquire the write lock at BEGIN, before any read — a
   // deferred BEGIN would let the int8 migration swap commit between our reads
   // and the lock upgrade (stale-dtype write / SQLITE_BUSY_SNAPSHOT).
-  insertAll.immediate();
+  return insertAll.immediate();
+}
+
+/**
+ * True when a fuller snapshot of this exchange's turn is already indexed — the
+ * same file and start line, ending later. insertExchange refuses such a write;
+ * a caller asks first so it does not embed text that will not be stored.
+ */
+export function hasFullerSnapshot(
+  db: Database.Database,
+  exchange: Pick<ConversationExchange, 'archivePath' | 'lineStart' | 'lineEnd'>,
+): boolean {
+  return db.prepare(
+    'SELECT 1 FROM exchanges WHERE archive_path = ? AND line_start = ? AND line_end > ? LIMIT 1'
+  ).get(exchange.archivePath, exchange.lineStart, exchange.lineEnd) !== undefined;
 }
 
 export function getAllExchanges(db: Database.Database): Array<{ id: string; archivePath: string }> {
@@ -838,23 +895,118 @@ function deleteExchangeRows(db: Database.Database, id: string): void {
   db.prepare('DELETE FROM exchanges WHERE id = ?').run(id);
 }
 
+export interface RepointResult {
+  /** Replaced snapshots that were waiting. */
+  pairs: number;
+  /** Whether the fact table had to be read (false: no waiting snapshot could be named by a fact). */
+  scanned: boolean;
+  /** Facts whose source list was changed. */
+  facts: number;
+  /** Fact revisions whose source was changed. */
+  revisions: number;
+}
+
+/** A fact's source list as stored (JSON array of exchange ids); null when it is not one. */
+function parseSourceList(raw: string | null): unknown[] | null {
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null; // a malformed list names no exchange (every reader of this column treats it so)
+  }
+}
+
 /**
- * Point what names exchange `fromId` as its source at `toId`: the entries of
- * facts.source_exchange_ids and fact_revisions.source_exchange_id. Called when
- * a snapshot of a turn is replaced by a fuller one — a fact extracted while
- * only the shorter snapshot existed would otherwise name a row that is gone,
- * and `trace_fact` skips sources it cannot find. (Facts carry every exchange
- * id of their session: on one measured DB 13,573 facts named such a snapshot.)
- * Reads every fact's source list, so it runs only when a snapshot really is
- * being replaced. The fact itself is unchanged — updated_at is left alone.
+ * Point what names a replaced snapshot as its source at the row that replaced
+ * it: the entries of facts.source_exchange_ids and
+ * fact_revisions.source_exchange_id. A fact extracted while only the shorter
+ * snapshot existed would otherwise name a row that is gone, and `trace_fact`
+ * skips sources it cannot find. (Facts carry every exchange id of their
+ * session: on one measured DB 13,573 facts named such a snapshot.) The fact
+ * itself is unchanged — updated_at is left alone.
+ *
+ * Works through the pairs insertExchange wrote down:
+ *  1. A pair whose session has no extraction_log row is dropped unread: every
+ *     extraction claims its session there before it saves a fact, so no fact
+ *     names an exchange of a session that was never extracted (measured on a
+ *     live DB: the 59,585 exchanges facts name belong to 1,810 sessions, all
+ *     1,810 with a row). This is the usual case — the last turn of a session
+ *     still in use — and costs two index lookups.
+ *  2. For the rest, ONE read of every fact's source list, without the write
+ *     lock, finds the facts and revisions that name a replaced snapshot.
+ *  3. A short write transaction changes those rows (each read again inside
+ *     it) and removes the pairs it worked through.
+ * Safe to run from several processes: a pair handled twice changes nothing the
+ * second time.
  */
-function repointExchangeSources(db: Database.Database, fromId: string, toId: string): void {
-  // Sources are a JSON array of id strings; the quotes make this an exact-entry match.
-  const from = JSON.stringify(fromId);
-  db.prepare(
-    'UPDATE facts SET source_exchange_ids = replace(source_exchange_ids, ?, ?) WHERE instr(source_exchange_ids, ?) > 0'
-  ).run(from, JSON.stringify(toId), from);
-  db.prepare('UPDATE fact_revisions SET source_exchange_id = ? WHERE source_exchange_id = ?').run(toId, fromId);
+export function repointQueuedExchangeSources(db: Database.Database): RepointResult {
+  const result: RepointResult = { pairs: 0, scanned: false, facts: 0, revisions: 0 };
+  const queued = db.prepare(
+    `SELECT from_id AS fromId, to_id AS toId, session_id AS sessionId FROM ${EXCHANGE_REPOINT_TABLE}`
+  ).all() as Array<{ fromId: string; toId: string; sessionId: string | null }>;
+  if (queued.length === 0) return result;
+  result.pairs = queued.length;
+
+  const byFrom = new Map(queued.map((q) => [q.fromId, q.toId]));
+  const isIndexed = db.prepare('SELECT 1 FROM exchanges WHERE id = ?');
+  const wasExtracted = db.prepare('SELECT 1 FROM extraction_log WHERE session_id = ?');
+  const target = new Map<string, string>();
+  for (const q of queued) {
+    if (isIndexed.get(q.fromId)) continue; // indexed again under that id: what names it is right as it is
+    if (q.sessionId !== null && !wasExtracted.get(q.sessionId)) continue; // never extracted: nothing names it
+    // insertExchange keeps the queue flat (a→b becomes a→c when b is replaced); follow a chain anyway.
+    let to = q.toId;
+    for (let hop = 0; hop < 16 && to !== q.fromId && byFrom.has(to); hop++) to = byFrom.get(to)!;
+    target.set(q.fromId, to);
+  }
+
+  const factIds: string[] = [];
+  const revisionIds: string[] = [];
+  if (target.size > 0) {
+    result.scanned = true;
+    const facts = db.prepare(
+      `SELECT id, source_exchange_ids AS sources FROM facts WHERE source_exchange_ids IS NOT NULL AND source_exchange_ids != '[]'`
+    ).iterate() as IterableIterator<{ id: string; sources: string }>;
+    for (const row of facts) {
+      if (parseSourceList(row.sources)?.some((id) => typeof id === 'string' && target.has(id))) factIds.push(row.id);
+    }
+    const revisions = db.prepare(
+      'SELECT id, source_exchange_id AS source FROM fact_revisions WHERE source_exchange_id IS NOT NULL'
+    ).iterate() as IterableIterator<{ id: string; source: string }>;
+    for (const row of revisions) {
+      if (target.has(row.source)) revisionIds.push(row.id);
+    }
+  }
+
+  db.transaction(() => {
+    if (factIds.length > 0) {
+      const readFact = db.prepare('SELECT source_exchange_ids AS sources FROM facts WHERE id = ?');
+      const writeFact = db.prepare('UPDATE facts SET source_exchange_ids = ? WHERE id = ?');
+      for (const id of factIds) {
+        const list = parseSourceList((readFact.get(id) as { sources: string | null } | undefined)?.sources ?? null);
+        if (!list || !list.some((entry) => typeof entry === 'string' && target.has(entry))) continue;
+        // The row a snapshot was replaced by may already be in the list: one entry per exchange.
+        const moved = [...new Set(list.map((entry) => (typeof entry === 'string' ? target.get(entry) ?? entry : entry)))];
+        writeFact.run(JSON.stringify(moved), id);
+        result.facts++;
+      }
+    }
+    if (revisionIds.length > 0) {
+      const readRevision = db.prepare('SELECT source_exchange_id AS source FROM fact_revisions WHERE id = ?');
+      const writeRevision = db.prepare('UPDATE fact_revisions SET source_exchange_id = ? WHERE id = ?');
+      for (const id of revisionIds) {
+        const to = target.get((readRevision.get(id) as { source: string | null } | undefined)?.source ?? '');
+        if (to === undefined) continue;
+        writeRevision.run(to, id);
+        result.revisions++;
+      }
+    }
+    // Only the pairs read above, as they were read: one queued since then waits for the next run.
+    const done = db.prepare(`DELETE FROM ${EXCHANGE_REPOINT_TABLE} WHERE from_id = ? AND to_id = ?`);
+    for (const q of queued) done.run(q.fromId, q.toId);
+  }).immediate();
+  return result;
 }
 
 /** Delete one exchange with its tool calls and vector — all or nothing. */

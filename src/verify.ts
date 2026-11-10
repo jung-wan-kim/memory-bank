@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { initDatabase, getFileLastIndexed, isExchangeCurrent, deleteExchanges } from './db.js';
+import { initDatabase, isExchangeCurrent, deleteExchanges } from './db.js';
 import { getArchiveDir, getExcludedProjects, isExcludedProject } from './paths.js';
 import { archiveFileExists, canonicalArchiveName, removeArchiveFile, statArchiveFile } from './archive-io.js';
 import { parseGuarded } from './conversation-guard.js';
@@ -17,7 +17,11 @@ export interface VerificationResult {
    * `.jsonl.zst`). Reported only — repair deletes them just with pruneMissing.
    */
   orphaned: Array<{ uuid: string; path: string }>;
-  /** Conversations changed after they were indexed, holding an exchange the index does not have. */
+  /**
+   * Conversations holding an exchange the index does not have as it stands:
+   * changed after they were indexed, or indexed with a shorter snapshot of a
+   * turn than the file holds.
+   */
   outdated: Array<{ path: string; fileTime: number; dbTime: number }>;
   /** Files that could not be read to the end — never re-indexed, never judged "clean". */
   corrupted: Array<{ path: string; error: string }>;
@@ -82,6 +86,9 @@ export async function verifyIndex(): Promise<VerificationResult> {
   const db = initDatabase();
 
   try {
+    // One read of a file's rows gives both when it was last indexed and how far each indexed turn goes.
+    const rowsOfFile = db.prepare('SELECT line_start AS lineStart, line_end AS lineEnd, last_indexed AS lastIndexed FROM exchanges WHERE archive_path = ?');
+
     const conversations = listArchiveConversations({
       onExcludedProject: (project) => console.log("\nSkipping excluded project: " + project),
     });
@@ -118,21 +125,36 @@ export async function verifyIndex(): Promise<VerificationResult> {
         result.missingSummary.push({ path: conversationPath });
       }
 
-      const lastIndexed = getFileLastIndexed(db, conversationPath);
+      let lastIndexed: number | null = null;
+      const indexedEndOfTurn = new Map<number, number>();
+      for (const row of rowsOfFile.all(conversationPath) as Array<{ lineStart: number; lineEnd: number; lastIndexed: number | null }>) {
+        if (row.lastIndexed !== null && (lastIndexed === null || row.lastIndexed > lastIndexed)) lastIndexed = row.lastIndexed;
+        if (row.lineEnd > (indexedEndOfTurn.get(row.lineStart) ?? -1)) indexedEndOfTurn.set(row.lineStart, row.lineEnd);
+      }
       if (lastIndexed === null) {
         result.notIndexed.push({ path: conversationPath });
         continue;
       }
 
-      // Outdated = modified after last_indexed AND holding an exchange the
-      // index lacks. The mtime alone is not enough: indexing skips exchanges
-      // that are already current, so a file that grew by a line that forms
-      // no new exchange keeps its old last_indexed.
+      // Outdated, either way:
+      //  - modified after last_indexed AND holding an exchange the index
+      //    lacks. The mtime alone is not enough: indexing skips exchanges that
+      //    are already current, so a file that grew by a line that forms no
+      //    new exchange keeps its old last_indexed.
+      //  - the index holds a turn of this file only up to an earlier line than
+      //    the file does. The mtime says nothing here: a shorter copy of the
+      //    turn written AFTER the file last changed (a sync that had read the
+      //    file earlier) is newer than the file and still incomplete.
       const fileStat = statArchiveFile(conversationPath);
-      if (fileStat && fileStat.mtimeMs > lastIndexed && indexable.some(e => !isExchangeCurrent(db, e.id))) {
+      const changedSince = fileStat !== null && fileStat.mtimeMs > lastIndexed && indexable.some(e => !isExchangeCurrent(db, e.id));
+      const shorterTurnIndexed = indexable.some(e => {
+        const indexedEnd = indexedEndOfTurn.get(e.lineStart);
+        return indexedEnd !== undefined && indexedEnd < e.lineEnd;
+      });
+      if (changedSince || shorterTurnIndexed) {
         result.outdated.push({
           path: conversationPath,
-          fileTime: fileStat.mtimeMs,
+          fileTime: fileStat?.mtimeMs ?? 0,
           dbTime: lastIndexed
         });
       }
