@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import type Database from 'better-sqlite3';
+import Database from 'better-sqlite3';
+import * as sqliteVec from 'sqlite-vec';
 import { suppressConsole } from './test-utils.js';
 
 /**
@@ -301,6 +302,19 @@ describe('category reuse by normalized name', () => {
       expect('project' in sentFacts()[1]).toBe(false);
       expect(BATCH_CLASSIFY_SYSTEM_PROMPT).toMatch(/"project"/);
     });
+  });
+
+  it('a database that cannot take the name_key migration fails the batch before any LLM call — no attempt is burned', async () => {
+    const f = fact('Routes are declared in one file');
+    const readOnly = new Database(process.env.TEST_DB_PATH as string, { readonly: true });
+    sqliteVec.load(readOnly);
+    try {
+      await expect(classifyFactsBatch(readOnly, [f])).rejects.toThrow(/readonly/);
+    } finally {
+      readOnly.close();
+    }
+    expect(llm).not.toHaveBeenCalled();
+    expect(db.prepare('SELECT ontology_attempts AS n FROM facts WHERE id = ?').get(f.id)).toEqual({ n: 0 });
   });
 
   it('a domain is matched by normalized name too', async () => {

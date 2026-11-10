@@ -21,6 +21,7 @@ import {
   looseOntologyNameKey,
   findCategoriesByNameKey,
   activeFactCounts,
+  ensureCategoryNameKeys,
 } from './ontology-db.js';
 
 // Nearest existing categories presented per fact as reuse candidates —
@@ -705,6 +706,12 @@ export async function classifyFactsBatch(
   /** The subset of `failed` the model refused (vs an unusable reply), for the log. */
   refused?: string[];
 }> {
+  // The name-key column is migrated here, before any LLM call: if the schema
+  // change cannot be made (locked or read-only database) the batch fails as
+  // infrastructure — thrown, no attempt burned — instead of failing fact by
+  // fact inside applyClassification, where a failure counts against the fact.
+  ensureCategoryNameKeys(db);
+
   const deterministic: string[] = [];
   const remaining: Fact[] = [];
   const candidatesByFact = new Map<string, CategoryCandidate[]>();
