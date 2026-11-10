@@ -67,12 +67,29 @@ const CODE_ITEMS = [
   'cli',
   'hooks',
   'native', // the inject client's sources + SRC_HASH pin — must move with the hooks/scripts that read the pin
+  'ui', // the dashboard: server.cjs needs its server-guards.cjs and reads ../dist — left behind, an older-named dir serves old code
+  'prompts',
   'commands',
   'agents',
   'skills',
   '.claude-plugin',
   'package.json',
 ];
+
+/**
+ * Files a user generates inside a code item — made on this machine from their
+ * own data, not part of a release. They stay where they are: not taken from the
+ * newer dir, not dropped from the older one, not copied into the backup.
+ */
+const LOCAL_FILES = {
+  ui: ['relations/data.json'], // written by ui/relations/generate-data.mjs (gitignored: it holds the user's facts)
+};
+
+/** Copies a code item (a dir or a file) without its LOCAL_FILES. */
+function copyCode(item, src, dst) {
+  const local = new Set((LOCAL_FILES[item] || []).map((rel) => path.join(src, rel)));
+  fs.cpSync(src, dst, { recursive: true, filter: (from) => !local.has(from) });
+}
 
 function readPkg(dir) {
   try {
@@ -163,7 +180,7 @@ function applyUnlocked(selfRoot, base, selfName, selfPkg, myVersion, log) {
       fs.mkdirSync(backupTmp, { recursive: true });
       for (const item of CODE_ITEMS) {
         const src = path.join(dir, item);
-        if (fs.existsSync(src)) fs.cpSync(src, path.join(backupTmp, item), { recursive: true });
+        if (fs.existsSync(src)) copyCode(item, src, path.join(backupTmp, item));
       }
       try { fs.renameSync(backupTmp, backupRoot); }
       catch { fs.rmSync(backupTmp, { recursive: true, force: true }); }
@@ -185,7 +202,14 @@ function applyUnlocked(selfRoot, base, selfName, selfPkg, myVersion, log) {
       const old = `${dst}${sfx}.old`;
       fs.rmSync(tmp, { recursive: true, force: true });
       fs.rmSync(old, { recursive: true, force: true });
-      fs.cpSync(src, tmp, { recursive: true });
+      copyCode(item, src, tmp);
+      // A locally generated file of the dir being patched goes into the new copy before the swap.
+      for (const rel of LOCAL_FILES[item] || []) {
+        const mine = path.join(dst, rel);
+        if (!fs.existsSync(mine)) continue;
+        fs.mkdirSync(path.dirname(path.join(tmp, rel)), { recursive: true });
+        fs.cpSync(mine, path.join(tmp, rel));
+      }
       if (fs.existsSync(dst)) fs.renameSync(dst, old);
       fs.renameSync(tmp, dst);
       fs.rmSync(old, { recursive: true, force: true });

@@ -322,22 +322,74 @@ const asyncHandlers = {
 };
 
 // Graph 3D data API
-apiHandlers['/api/graph-data'] = () => {
+//
+// The first page (`/`) runs this before it answers, and better-sqlite3 is synchronous: while a
+// statement runs, the whole server stands still. So nothing here costs more than one pass over an
+// index. (The connections used to self-join exchanges on session_id — rows-per-session squared,
+// 4.5 billion row pairs on a real archive — and did not come back.)
+//
+// The tables themselves are not read: their rows are wide (messages, tool inputs and results), and
+// each column needed here has an index of its own. A temp table maps an exchange's rowid to its
+// project (from idx_project); the other indexes (session_id, timestamp, git_branch, tool_calls by
+// exchange and by name) are walked once and matched to it by rowid. CROSS JOIN keeps that order —
+// left to choose, the planner looks each row up in the wide table instead.
+//
+// The rows returned are the ones the earlier statements returned; test/ui-graph-data.test.ts keeps
+// the earlier SQL as the definition.
+function graphData() {
+  db.exec('DROP TABLE IF EXISTS temp.graph_session_projects');
+  db.exec('DROP TABLE IF EXISTS temp.graph_exchange_project');
+  db.exec('CREATE TEMP TABLE graph_exchange_project (exchange_rowid INTEGER PRIMARY KEY, project TEXT NOT NULL)');
+  db.exec('INSERT INTO temp.graph_exchange_project SELECT rowid, project FROM exchanges');
+  // One row per (session, project): the session counts and the connections are both made of these.
+  db.exec(`
+    CREATE TEMP TABLE graph_session_projects AS
+    SELECT e.session_id AS session_id, p.project AS project, COUNT(*) AS n
+    FROM exchanges e CROSS JOIN temp.graph_exchange_project p ON p.exchange_rowid = e.rowid
+    WHERE e.session_id IS NOT NULL
+    GROUP BY e.session_id, p.project
+  `);
   const projects = query(`
-    SELECT project, COUNT(*) as exchanges, COUNT(DISTINCT session_id) as sessions,
-           MIN(timestamp) as first_seen, MAX(timestamp) as last_seen,
-           COUNT(DISTINCT git_branch) as branches
-    FROM exchanges GROUP BY project ORDER BY exchanges DESC
+    SELECT t.project, t.exchanges, COALESCE(s.sessions, 0) AS sessions, t.first_seen, t.last_seen,
+           COALESCE(b.branches, 0) AS branches
+    FROM (
+      SELECT p.project AS project, COUNT(*) AS exchanges, MIN(e.timestamp) AS first_seen, MAX(e.timestamp) AS last_seen
+      FROM exchanges e CROSS JOIN temp.graph_exchange_project p ON p.exchange_rowid = e.rowid
+      GROUP BY p.project
+    ) t
+    LEFT JOIN (
+      SELECT project, COUNT(*) AS sessions FROM temp.graph_session_projects GROUP BY project
+    ) s ON s.project = t.project
+    LEFT JOIN (
+      SELECT project, COUNT(*) AS branches
+      FROM (SELECT DISTINCT p.project AS project, e.git_branch AS git_branch
+            FROM exchanges e CROSS JOIN temp.graph_exchange_project p ON p.exchange_rowid = e.rowid
+            WHERE e.git_branch IS NOT NULL)
+      GROUP BY project
+    ) b ON b.project = t.project
+    ORDER BY t.exchanges DESC
   `);
   const toolUsage = query(`
-    SELECT e.project, tc.tool_name, COUNT(*) as cnt
-    FROM tool_calls tc JOIN exchanges e ON tc.exchange_id = e.id
-    GROUP BY e.project, tc.tool_name ORDER BY cnt DESC
+    WITH call_exchange AS MATERIALIZED (
+      SELECT t.rowid AS call_rowid, e.rowid AS exchange_rowid
+      FROM tool_calls t JOIN exchanges e ON e.id = t.exchange_id
+    ),
+    per_exchange AS MATERIALIZED (
+      SELECT ce.exchange_rowid AS exchange_rowid, tn.tool_name AS tool_name, COUNT(*) AS n
+      FROM tool_calls tn CROSS JOIN call_exchange ce ON ce.call_rowid = tn.rowid
+      GROUP BY ce.exchange_rowid, tn.tool_name
+    )
+    SELECT p.project, pe.tool_name, SUM(pe.n) AS cnt
+    FROM per_exchange pe CROSS JOIN temp.graph_exchange_project p ON p.exchange_rowid = pe.exchange_rowid
+    GROUP BY p.project, pe.tool_name ORDER BY cnt DESC
   `);
+  // strength = the number of exchange pairs two projects have in the sessions they share:
+  // per session (exchanges of one) x (exchanges of the other), summed — without visiting the pairs.
   const connections = query(`
-    SELECT DISTINCT e1.project as source, e2.project as target, COUNT(*) as strength
-    FROM exchanges e1 JOIN exchanges e2 ON e1.session_id = e2.session_id AND e1.project < e2.project
-    GROUP BY e1.project, e2.project HAVING strength > 2
+    SELECT a.project AS source, b.project AS target, SUM(a.n * b.n) AS strength
+    FROM temp.graph_session_projects a
+    JOIN temp.graph_session_projects b ON a.session_id = b.session_id AND a.project < b.project
+    GROUP BY a.project, b.project HAVING strength > 2
   `);
   const allTools = query(`
     SELECT tool_name, COUNT(*) as cnt FROM tool_calls GROUP BY tool_name ORDER BY cnt DESC LIMIT 50
@@ -348,7 +400,15 @@ apiHandlers['/api/graph-data'] = () => {
   try { domains = query(`SELECT id, name, description FROM ontology_domains`); } catch(e) {}
   let relations = [];
   try { relations = query(`SELECT source_fact_id, relation_type, target_fact_id FROM ontology_relations LIMIT 500`); } catch(e) {}
+  db.exec('DROP TABLE temp.graph_session_projects');
+  db.exec('DROP TABLE temp.graph_exchange_project');
   return { projects, toolUsage, connections, timeline: [], allTools, facts, domains, relations };
+}
+apiHandlers['/api/graph-data'] = () => {
+  ensureDb();
+  // One read transaction: every statement sees the same snapshot of the database (an exchange indexed
+  // meanwhile is in all of the numbers or in none), and a failure leaves no temp table behind.
+  return db.transaction(graphData)();
 };
 
 // Serve graph-3d.html with live data injected server-side
