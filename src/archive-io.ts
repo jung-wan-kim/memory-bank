@@ -188,3 +188,18 @@ export function statArchiveFile(filePath: string): fs.Stats | null {
     return null;
   }
 }
+
+/**
+ * Read exactly this file as UTF-8 (decompressing a `.zst`), without choosing
+ * between the plain and compressed variants again. For a caller that has
+ * already resolved and checked the path (read-guard.ts): readArchiveFile()
+ * would pick the newer variant by itself, which may be a file the caller never
+ * checked.
+ */
+export function readResolvedArchiveFile(exactPath: string): string {
+  const buf = fs.readFileSync(exactPath);
+  if (exactPath.endsWith(ZST_SUFFIX)) {
+    return requireZstdSync()(buf).toString('utf-8');
+  }
+  return buf.toString('utf-8');
+}
