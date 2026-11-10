@@ -126,8 +126,9 @@ function storedVec(db: Database.Database, table: 'vec_facts' | 'vec_facts_kr', i
  * `factKr: 'keep'` leaves fact_kr and its vec_facts_kr row as they are — the
  * choice to make unless a translation run follows. `'clear'` removes both (the
  * Korean sentence was written with the old sentence), and that is not undone
- * by waiting: the consolidation worker's restore (fact-kr-restore.ts) brings
- * back a Korean sentence only where a merged, deactivated fact still holds one
+ * by waiting: the restore the script runs next (fact-kr-restore.ts — also run
+ * by the consolidation worker, once per plugin version) brings back a Korean
+ * sentence only where a merged, deactivated fact still holds one
  * for the same sentence — on a copy of a live DB 71 of the 624 rewritten
  * active facts left without one after `clear`; the 436 whose sentence is
  * English only stay without a Korean vector until scripts/translate-facts.mjs

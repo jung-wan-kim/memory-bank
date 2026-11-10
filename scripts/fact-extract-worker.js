@@ -132,9 +132,14 @@ async function openDatabase() {
  * 이 세션을 backfill 이 집는가. 훅 경로에는 자체 재시도 예약이 없고, 마커가 없는 세션만
  * backfill 이 집는다(주 교환 수 조건 포함). 그 조건을 backfill 과 같은 술어로 묻는다 —
  * 조용함 조건만 뺀다(지금 막 끝난 세션이므로). 확인하지 못하면 예외를 던진다.
+ *
+ * 세션을 술어에 넘겨 그 세션의 교환만 읽게 한다. 전체 목록을 만들고 바깥에서만 거르면
+ * 모든 세션을 집계한다(실DB 복제본 73,498세션에서 한 번에 14~22초 — 그동안 이 워커가
+ * 세션 잠금을 쥔다). 바깥의 `sid = ?` 는 그대로 둔다: 답은 이 조건이 정하고, 안쪽 조건은
+ * 빠르게만 한다(세션 인자를 모르는 옛 dist 와 짝이 되어도 답은 같다).
  */
 function backfillWillPick(db, sessionId) {
-  const { sql, params } = pendingExtractionCoreQuery({ ...getExtractionConfig(), quietMinutes: 0 });
+  const { sql, params } = pendingExtractionCoreQuery({ ...getExtractionConfig(), quietMinutes: 0 }, { sessionId });
   return Boolean(db.prepare(`SELECT 1 FROM (${sql}) WHERE sid = ? LIMIT 1`).get(...params, sessionId));
 }
 
@@ -230,13 +235,27 @@ async function main() {
   }
   const db = opened.db;
 
+  // 선색인이 실패했는데도 추출하기로 한 세션의 경고 줄("색인된 만큼만 추출 …"). 추출 단계가
+  // 색인된 교환 0개(not_indexed)로 끝나면 추출한 것이 없으므로 적지 않는다 — 그 세션은 교환이
+  // 없어서 지금 backfill 대상이 아닐 뿐이고 색인되면 backfill 이 집는다(not_indexed 줄이 그렇게
+  // 말한다). 두 줄을 다 적으면 서로 반대로 말했다. 그래서 추출 결과를 본 뒤에 적는다.
+  let partialIndexWarning = null;
+  const sayPartialIndexWarning = () => {
+    if (partialIndexWarning) log(partialIndexWarning);
+    partialIndexWarning = null;
+  };
+
   try {
     if (pre?.status === 'failed') {
       const decision = afterFailedPreindex(db, sessionId);
-      log(decision.line);
-      if (!decision.extract) return;
+      if (!decision.extract) {
+        log(decision.line);
+        return;
+      }
+      partialIndexWarning = decision.line;
     }
     const result = await runFactExtraction(db, sessionId, project);
+    if (result.skipped !== 'not_indexed') sayPartialIndexWarning();
     // skipped 를 무시하면 claim 미획득·보류가 'extracted=0 saved=0' 정상 처리와
     // 구분되지 않아 DB 장애가 무경보로 남는다(R19 — backfill 에서 닫은 결함이
     // 이쪽에 그대로 있었다).
@@ -271,6 +290,7 @@ async function main() {
     // (구 삼항 분기에는 없던 신규 취약면 — Codex R13 LOW).
     process.exitCode = 0; // extraction failure must never surface as hook failure
     try {
+      sayPartialIndexWarning(); // 추출이 던졌다 — 색인이 일부였을 수 있다는 사정은 실패 줄 앞에 남긴다
       const cls = classifyExtractionFailure(error);
       // 필드 단위 방어 — 구버전 표는 키가 있어도 필드가 빠질 수 있다(R14).
       const raw = FAILURE_REPORT?.[cls];

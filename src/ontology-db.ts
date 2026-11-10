@@ -162,7 +162,7 @@ export function findCategoriesByNameKey(
   return db
     .prepare(
       `SELECT c.id, c.domain_id, c.name, c.description, c.created_at,
-              (SELECT COUNT(*) FROM facts f WHERE f.ontology_category_id = c.id AND f.is_active = 1) AS active_facts
+              (SELECT COUNT(*) FROM facts f WHERE f.ontology_category_id = c.id AND +f.is_active = 1) AS active_facts
        FROM ontology_categories c
        WHERE c.name_key = ?${domainId ? ' AND c.domain_id = ?' : ''}
        ORDER BY active_facts DESC, c.created_at, c.id`,
@@ -170,10 +170,23 @@ export function findCategoriesByNameKey(
     .all(...(domainId ? [key, domainId] : [key])) as CategoryUsage[];
 }
 
-/** Active fact count per category id (ids with no facts are absent). */
+/**
+ * Active fact count per category id (ids with no facts are absent).
+ *
+ * `+is_active`, here and in the other statements of this file that name a
+ * category next to it: an older process sharing the database re-creates
+ * idx_facts_active(is_active) and this version leaves it for hours (db.ts,
+ * FACTS_ACTIVE_INDEX_REDROP_MS). With no table statistics the planner then
+ * answers `ontology_category_id = ? AND is_active = 1` from that two-valued
+ * index — every active fact read per call, and classification calls this for
+ * each candidate category of each saved fact (measured at 30,584 active
+ * facts: 29-51ms a call against under 0.1ms through idx_facts_ontology; one
+ * extraction run that saved 6 facts took 9.3s instead of 2.1s). The unary
+ * plus keeps the term out of index selection; the rows counted are the same.
+ */
 export function activeFactCounts(db: Database.Database, categoryIds: string[]): Map<string, number> {
   const counts = new Map<string, number>();
-  const stmt = db.prepare(`SELECT COUNT(*) AS n FROM facts WHERE ontology_category_id = ? AND is_active = 1`);
+  const stmt = db.prepare(`SELECT COUNT(*) AS n FROM facts WHERE ontology_category_id = ? AND +is_active = 1`);
   for (const id of new Set(categoryIds)) {
     const n = (stmt.get(id) as { n: number }).n;
     if (n > 0) counts.set(id, n);
@@ -332,7 +345,7 @@ export function classifyFact(
 export function getFactsByCategory(db: Database.Database, categoryId: string): Fact[] {
   return (db
     .prepare(
-      `SELECT * FROM facts WHERE ontology_category_id = ? AND is_active = 1 ORDER BY consolidated_count DESC`,
+      `SELECT * FROM facts WHERE ontology_category_id = ? AND +is_active = 1 ORDER BY consolidated_count DESC`,
     )
     .all(categoryId) as Record<string, unknown>[])
     .map(rowToFact);

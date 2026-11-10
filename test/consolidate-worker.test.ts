@@ -226,6 +226,111 @@ describe('fact-consolidate-worker.js', () => {
     expect(logLines()).toHaveLength(1);
   }, 90_000);
 
+  // The lock itself is tested in consolidate-lock.test.ts (2차 검수 R2-CE-05); these pin what the worker does with it.
+  describe('the single-instance lock', () => {
+    const lockFiles = () => fs.readdirSync(indexDir()).filter((f) => f.startsWith('fact-consolidate.lock')).sort();
+    const deadPid = () => spawnSync(process.execPath, ['-e', '']).pid!;
+    const writeLock = (name: string, pid: number) => {
+      fs.mkdirSync(indexDir(), { recursive: true });
+      fs.writeFileSync(path.join(indexDir(), name), String(pid));
+    };
+
+    it('a lock left by a dead worker does not stop the run, and the run leaves no lock behind', () => {
+      writeLock('fact-consolidate.lock', deadPid());
+      runWorker();
+      expect(JSON.parse(fs.readFileSync(cursorFile(), 'utf8')).id, 'the run happened').toBe(ids[2]);
+      expect(lockFiles()).toEqual([]);
+    }, 40_000);
+
+    it('a lock held by a live process: the worker steps aside and leaves everything as it was', () => {
+      writeLock('fact-consolidate.lock', process.pid); // this test process is alive
+      runWorker();
+      expect(fs.existsSync(cursorFile()), 'no run').toBe(false);
+      expect(logLines()).toEqual([]);
+      expect(lockFiles()).toEqual(['fact-consolidate.lock']);
+      expect(fs.readFileSync(path.join(indexDir(), 'fact-consolidate.lock'), 'utf8')).toBe(String(process.pid));
+    }, 40_000);
+
+    it('a lock that cannot be decided (two unfinished takeovers): the worker does not run and the log says which file is in the way', () => {
+      const dead = deadPid();
+      const taker1 = deadPid();
+      writeLock('fact-consolidate.lock', dead);
+      writeLock(`fact-consolidate.lock.takeover-${dead}`, taker1);
+      writeLock(`fact-consolidate.lock.takeover-${dead}.takeover-${taker1}`, deadPid());
+      const before = lockFiles();
+      runWorker();
+      expect(fs.existsSync(cursorFile()), 'no run').toBe(false);
+      expect(logLines()).toEqual([
+        expect.stringMatching(new RegExp(`^worker: lock unavailable \\(a lock takeover was left unfinished twice — remove \\S+fact-consolidate\\.lock\\.takeover-${dead}\\.takeover-${taker1} to let a worker start\\) — not started$`)),
+      ]);
+      expect(lockFiles()).toEqual(before);
+    }, 40_000);
+  });
+
+  // 2차 검수 CE-01b: a restore pass that threw (another process held the write lock for 30s while it ran) was
+  // recorded like one that ran to the end — on a copy of the live store the 19 restorable facts stayed without
+  // their Korean sentence for the rest of the version. What such a run leaves is the state file below.
+  it('a Korean-sentence restore that failed on a held write lock is run again by the next run', () => {
+    const stateFile = path.join(indexDir(), 'state', 'fact-kr-restore.json');
+    /** A fact that took over a merged-away fact's sentence and lost its Korean one (as in the test above). */
+    const clearedPair = (n: number): string => {
+      const prev = process.env.TEST_DB_PATH;
+      process.env.TEST_DB_PATH = dbPath;
+      try {
+        const db = initDatabase();
+        try {
+          const seed = (fact: string, factKr: string, seedNo: number, at: string) => {
+            const id = insertFact(db, {
+              fact, category: 'decision', scope_type: 'project', scope_project: '/restore-retry-fixture',
+              source_exchange_ids: [], embedding: vec(seedNo), fact_kr: factKr, embedding_kr: vec(seedNo + 100),
+            });
+            db.prepare('UPDATE facts SET created_at = ? WHERE id = ?').run(at, id);
+            return id;
+          };
+          const survivor = seed(`Fixture queue ${n} retries 3 times`, `픽스처 큐 ${n} 은 3번 재시도한다`, 21 + n * 8, `2026-05-0${1 + n * 2}T00:00:00.000Z`);
+          const gone = seed(`Fixture queue ${n} retries 5 times`, `픽스처 큐 ${n} 은 5번 재시도한다`, 25 + n * 8, `2026-05-0${2 + n * 2}T00:00:00.000Z`);
+          insertRevision(db, {
+            fact_id: survivor, previous_fact: `Fixture queue ${n} retries 3 times`,
+            new_fact: `Fixture queue ${n} retries 5 times`, reason: 'evolved', source_exchange_id: null,
+          });
+          db.prepare('UPDATE facts SET fact = ?, fact_kr = NULL WHERE id = ?').run(`Fixture queue ${n} retries 5 times`, survivor);
+          db.prepare('DELETE FROM vec_facts_kr WHERE id = ?').run(survivor);
+          deactivateFact(db, gone);
+          return survivor;
+        } finally {
+          db.close();
+        }
+      } finally {
+        if (prev === undefined) delete process.env.TEST_DB_PATH; else process.env.TEST_DB_PATH = prev;
+      }
+    };
+    const factKr = (id: string) => {
+      let value: string | null = null;
+      withDb((db) => { value = (db.prepare('SELECT fact_kr FROM facts WHERE id = ?').get(id) as { fact_kr: string | null }).fact_kr; });
+      return value;
+    };
+
+    // The first run restores and records the plugin version it ran as.
+    const first = clearedPair(0);
+    runWorker();
+    expect(factKr(first)).toBe('픽스처 큐 0 은 5번 재시도한다');
+    const version = JSON.parse(fs.readFileSync(stateFile, 'utf8')).pluginVersion;
+
+    // A run of that version whose restore met the lock: the pass threw, nothing was restored.
+    const second = clearedPair(1);
+    fs.writeFileSync(stateFile, JSON.stringify({ pluginVersion: version, at: new Date().toISOString(), error: 'database is locked', failedPasses: 0 }));
+
+    runWorker();
+
+    expect(factKr(second)).toBe('픽스처 큐 1 은 5번 재시도한다');
+    expect(logLines()).toEqual([
+      'worker: fact_kr restored=1 of 1 rewritten facts without a Korean sentence',
+      'worker: fact_kr restored=1 of 1 rewritten facts without a Korean sentence',
+    ]);
+    expect(JSON.parse(fs.readFileSync(stateFile, 'utf8'))).toMatchObject({ pluginVersion: version, restored: 1, remaining: 0 });
+    expect(JSON.parse(fs.readFileSync(stateFile, 'utf8')).error).toBeUndefined();
+  }, 90_000);
+
   it('a next-attempt time 400 days out (written while the clock was ahead) is not waited for: the run goes ahead and says so once', () => {
     breakIndex();
     for (let i = 0; i < 6; i++) runWorker();

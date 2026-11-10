@@ -26,7 +26,12 @@
  *
  * The consolidate worker runs it once per plugin version
  * (restoreKoreanOncePerVersion): the first pass reads every revision, and
- * rewrites made by this version need no repair.
+ * rewrites made by this version need no repair. "Once" is a pass that ran to
+ * the end — one that threw is run again by the next worker run. The repair
+ * script that removes Korean sentences (reembed-rewritten-facts.mjs --apply
+ * --fact-kr clear) runs it itself when it is done (restoreKoreanToEnd): the
+ * facts it just cleared are new candidates, and the worker's pass for this
+ * version is usually over by then.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -99,17 +104,75 @@ export async function restoreKoreanFromMergedFacts(
   return { candidates: candidates.length, restored, remaining: Math.max(0, restorable.length - limit) };
 }
 
+/**
+ * Every pass until nothing restorable is left, for a caller that has just
+ * removed Korean sentences and wants back the ones that exist for the new
+ * sentences. `candidates` is the count before the first pass. Stops when a
+ * pass restores nothing (rows that changed under it are not waited for).
+ */
+export async function restoreKoreanToEnd(
+  db: Database.Database,
+  embed: (text: string) => Promise<number[]>,
+  opts: { limit?: number } = {},
+): Promise<{ candidates: number; restored: number }> {
+  let candidates: number | null = null;
+  let restored = 0;
+  for (;;) {
+    const pass = await restoreKoreanFromMergedFacts(db, embed, opts);
+    candidates ??= pass.candidates;
+    restored += pass.restored;
+    if (pass.remaining === 0 || pass.restored === 0) return { candidates, restored };
+  }
+}
+
 // ── Once per plugin version ─────────────────────────────────────────────────
 
 export function koreanRestoreStatePath(): string {
   return path.join(getIndexDir(), 'state', 'fact-kr-restore.json');
 }
 
+/**
+ * Passes in a row that may throw before the restore is left alone for a plugin
+ * version. A pass that threw has not run to the end, so the next call runs it
+ * again — recording it like a finished one left the facts without their Korean
+ * sentence for the whole version after one bad moment (measured: another
+ * connection held the write lock for 30s while the pass ran). The limit is for
+ * a failure that comes back every time (each try reads every revision and
+ * writes a log line). 3: chosen, not measured.
+ *
+ * A held write lock does not count toward it: it says nothing about the pass,
+ * and it ends when the other writer does.
+ */
+export const KOREAN_RESTORE_MAX_FAILED_PASSES = 3;
+
+/** A restore pass that threw. The message is the failure's own. */
+export class KoreanRestoreError extends Error {
+  constructor(
+    message: string,
+    /** true: the next call runs the pass again. false: this was the last try for this plugin version. */
+    public readonly retry: boolean,
+  ) {
+    super(message);
+    this.name = 'KoreanRestoreError';
+  }
+}
+
+const isLockContention = (message: string) => /database is locked|database table is locked|SQLITE_BUSY/i.test(message);
+
 interface KoreanRestoreState extends Partial<KoreanRestoreResult> {
   pluginVersion: string | null;
   at: string;
-  /** Set when the pass threw: it is not repeated for this version (the caller logged the error). */
+  /** Set when the last pass threw (the caller logged it): that pass did not run to the end. */
   error?: string;
+  /** With `error`: passes in a row that threw for a reason other than a held write lock. */
+  failedPasses?: number;
+}
+
+/** Failed passes a state stands for. A record with an error and no count is one (written before they were counted). */
+function failedPassesOf(state: KoreanRestoreState): number {
+  if (state.error === undefined) return 0;
+  const n = state.failedPasses;
+  return typeof n === 'number' && Number.isInteger(n) && n >= 0 ? n : 1;
 }
 
 function readState(): KoreanRestoreState | null {
@@ -132,8 +195,10 @@ function writeState(state: KoreanRestoreState): void {
 /**
  * Run restoreKoreanFromMergedFacts unless it already ran to the end for this
  * plugin version. Returns null when it did not run. A pass that stopped at its
- * limit runs again on the next call; a pass that threw is recorded and not
- * repeated for this version — the error is thrown to the caller (once).
+ * limit runs again on the next call. So does a pass that threw — the failure
+ * is thrown to the caller as a KoreanRestoreError that says whether there is a
+ * next try: after KOREAN_RESTORE_MAX_FAILED_PASSES failed passes in a row the
+ * restore is left alone for this version (a held write lock is not counted).
  */
 export async function restoreKoreanOncePerVersion(
   db: Database.Database,
@@ -142,15 +207,21 @@ export async function restoreKoreanOncePerVersion(
   opts: { limit?: number } = {},
 ): Promise<KoreanRestoreResult | null> {
   const state = readState();
-  if (state && state.pluginVersion === pluginVersion && (state.error !== undefined || state.remaining === 0)) return null;
+  const previous = state && state.pluginVersion === pluginVersion ? state : null;
+  if (previous) {
+    if (previous.error === undefined && previous.remaining === 0) return null; // ran to the end
+    if (failedPassesOf(previous) >= KOREAN_RESTORE_MAX_FAILED_PASSES) return null; // given up for this version
+  }
   const at = new Date().toISOString();
+  let result: KoreanRestoreResult;
   try {
-    const result = await restoreKoreanFromMergedFacts(db, embed, opts);
-    writeState({ pluginVersion, at, ...result });
-    return result;
+    result = await restoreKoreanFromMergedFacts(db, embed, opts);
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
-    try { writeState({ pluginVersion, at, error }); } catch { /* the caller logs the pass's own error */ }
-    throw e;
+    const failedPasses = (previous ? failedPassesOf(previous) : 0) + (isLockContention(error) ? 0 : 1);
+    try { writeState({ pluginVersion, at, error, failedPasses }); } catch { /* the caller logs the pass's own error */ }
+    throw new KoreanRestoreError(error, failedPasses < KOREAN_RESTORE_MAX_FAILED_PASSES);
   }
+  writeState({ pluginVersion, at, ...result });
+  return result;
 }

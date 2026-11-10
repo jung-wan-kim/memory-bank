@@ -7,7 +7,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { initDatabase, getVecQuant, embeddingToVecBlob } from '../src/db.js';
-import { insertFact, insertRevision } from '../src/fact-db.js';
+import { insertFact, insertRevision, deactivateFact } from '../src/fact-db.js';
 import { checkRewrittenFacts, applyRewrittenFacts, restoreRewrittenFacts } from '../src/reembed-rewritten.js';
 
 /**
@@ -218,12 +218,12 @@ describe('repairing facts rewritten without a new vector', () => {
   });
 
   describe('scripts/reembed-rewritten-facts.mjs', () => {
-    function run(args: string[]) {
+    function run(args: string[], timeout = 30_000) {
       const env: Record<string, string | undefined> = { ...process.env, MEMORY_BANK_CONFIG_DIR: dir };
       delete env.TEST_DB_PATH;
       delete env.MEMORY_BANK_DB_PATH;
       return spawnSync(process.execPath, ['scripts/reembed-rewritten-facts.mjs', ...args], {
-        cwd: REPO, env: env as NodeJS.ProcessEnv, encoding: 'utf8', timeout: 30_000,
+        cwd: REPO, env: env as NodeJS.ProcessEnv, encoding: 'utf8', timeout,
       });
     }
 
@@ -261,6 +261,58 @@ describe('repairing facts rewritten without a new vector', () => {
       expect(res.stdout).toMatch(/--fact-kr clear removes them instead; use it only when scripts\/translate-facts\.mjs/);
       expect(fingerprint(dbPath)).toBe(before);
     }, 40_000);
+
+    // 2차 검수 CE-01b: the consolidation worker's restore runs once per plugin version and is usually over
+    // before this script is run, so of the Korean sentences `clear` removed none came back — on a copy of a
+    // live DB 55 facts stayed without the one a merged fact still held for their sentence (now: 55 of 55).
+    // These runs embed with the real local model (the script has no stand-in).
+    it('--apply --fact-kr clear ends by restoring the Korean sentence a merged fact holds for the new sentence; keep restores nothing', () => {
+      const setup = writable();
+      let survivor: string;
+      try {
+        const add = (fact: string, embeddedAs: string, factKr: string) => insertFact(setup, {
+          fact, category: 'decision', scope_type: 'project', scope_project: '/proj', source_exchange_ids: [],
+          embedding: textVector(embeddedAs), fact_kr: factKr, embedding_kr: textVector(factKr),
+        });
+        // EVOLUTION as ≤1.7.9 applied it: the older fact took the later fact's sentence and kept its own vector
+        // and Korean sentence; the later fact was retired with the Korean sentence of exactly that sentence.
+        const merged = add('Deploys run from the main branch', 'Deploys run from the main branch', '배포는 main 브랜치에서 한다');
+        survivor = add('Deploys run from the release branch', 'Deploys run from the release branch', '배포는 release 브랜치에서 한다');
+        insertRevision(setup, { fact_id: survivor, previous_fact: 'Deploys run from the release branch', new_fact: 'Deploys run from the main branch', reason: 'fixture', source_exchange_id: null });
+        setup.prepare('UPDATE facts SET fact = ? WHERE id = ?').run('Deploys run from the main branch', survivor);
+        deactivateFact(setup, merged);
+      } finally {
+        setup.close();
+      }
+      const keepPath = path.join(dir, 'keep.db');
+      fs.copyFileSync(dbPath, keepPath);
+      const korean = (file: string, id: string) => {
+        const db = new Database(file, { readonly: true });
+        sqliteVec.load(db);
+        try {
+          return {
+            factKr: (db.prepare('SELECT fact_kr FROM facts WHERE id = ?').get(id) as { fact_kr: string | null }).fact_kr,
+            hasVector: db.prepare('SELECT 1 FROM vec_facts_kr WHERE id = ?').get(id) !== undefined,
+          };
+        } finally {
+          db.close();
+        }
+      };
+
+      const cleared = run(['--db', dbPath, '--apply', '--fact-kr', 'clear'], 150_000);
+      expect(cleared.status, cleared.stderr).toBe(0);
+      expect(cleared.stdout).toMatch(/fact_kr removed on 3;/); // the fixture's two and this one
+      // two rewritten facts are left without a Korean sentence; one of them has a merged fact to take it from
+      expect(cleared.stdout).toMatch(/fact_kr restored on 1 of 2 rewritten facts without a Korean sentence/);
+      expect(korean(dbPath, survivor)).toEqual({ factKr: '배포는 main 브랜치에서 한다', hasVector: true });
+      expect(korean(dbPath, ids.evolved)).toEqual({ factKr: null, hasVector: false });
+
+      const kept = run(['--db', keepPath, '--apply', '--fact-kr', 'keep'], 150_000);
+      expect(kept.status, kept.stderr).toBe(0);
+      expect(kept.stdout).toMatch(/fact_kr removed on 0;/);
+      expect(kept.stdout).not.toMatch(/fact_kr restored/);
+      expect(korean(keepPath, survivor)).toEqual({ factKr: '배포는 release 브랜치에서 한다', hasVector: true });
+    }, 320_000);
 
     it('--restore of a table that is not there fails with exit 1', () => {
       const res = run(['--db', dbPath, '--restore', 'reembed_rewritten_backup_19990101000000']);

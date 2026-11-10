@@ -209,6 +209,82 @@ describe('the pair is ordered by when its content was stated', () => {
     expect(db.prepare('SELECT COUNT(*) AS n FROM facts WHERE content_at IS NOT NULL').get(), 'nothing of the failed merge stayed').toEqual({ n: 0 });
   });
 
+  // 2차 검수 R2-CE-04: the first use of the column is an ALTER, and another process holding the write lock past
+  // this handle's wait made it fail. The handle then remembered "no column" for its lifetime: every merge of
+  // that run was ordered by creation time and recorded no content time, with nothing in the log.
+  describe('another process holds the write lock when the column is first needed', () => {
+    const columns = () => (db.prepare(`SELECT name FROM pragma_table_info('facts')`).all() as Array<{ name: string }>).map((c) => c.name);
+    /** This test's handle: no column yet, has not looked for it, waits 20ms for a lock. */
+    function reopenWithoutColumn(): void {
+      if (columns().includes('content_at')) db.prepare('ALTER TABLE facts DROP COLUMN content_at').run();
+      db.close();
+      db = new Database(process.env.TEST_DB_PATH!);
+      (require('sqlite-vec') as { load: (d: Database.Database) => void }).load(db);
+      db.pragma('busy_timeout = 20');
+    }
+
+    it('the failed attempt is not remembered: the same handle adds the column once the lock is gone', () => {
+      const a = seed('Imports are sorted alphabetically', day(1));
+      reopenWithoutColumn();
+      const other = new Database(process.env.TEST_DB_PATH!);
+      try {
+        other.exec('BEGIN IMMEDIATE');
+        expect(ensureFactContentAtColumn(db), 'while the lock is held').toBe(false);
+        expect(factContentTimes(db, [a]).get(a), 'content times read as creation times meanwhile').toBe(day(1));
+        other.exec('COMMIT');
+      } finally {
+        other.close();
+      }
+      expect(ensureFactContentAtColumn(db), 'the same handle, the lock gone').toBe(true);
+      expect(columns()).toContain('content_at');
+    });
+
+    it('a run counts the pairs it ordered without the column, and a merge made after the lock is gone still records its content time', async () => {
+      const a = seed('Sessions are stored in memory', day(1));
+      const b = seed('Sessions are stored in Postgres', day(3));
+      reopenWithoutColumn();
+      const other = new Database(process.env.TEST_DB_PATH!);
+      other.exec('BEGIN IMMEDIATE');
+      // The other writer finishes while the comparison call is in flight.
+      (callHaiku as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => { other.exec('COMMIT'); other.close(); return '{}'; });
+      verdict({ relation: 'EVOLUTION', merged_fact: '', reason: 'moved' });
+
+      const result = await consolidateAllPending(db, null);
+
+      expect(result.withoutContentTime, 'the pair was ordered by creation time').toBe(1);
+      expect(result.evolutions).toBe(1);
+      expect(row(a).fact).toBe('Sessions are stored in Postgres');
+      expect(row(b).is_active).toBe(0);
+      expect(columns()).toContain('content_at');
+      expect(contentAt(a), 'the merge recorded the later content time').toBe(day(3));
+    });
+
+    it('a run on a store that has the column counts nothing', async () => {
+      seed('Logs go to stderr', day(1));
+      seed('Logs go to stderr as JSON', day(2));
+      verdict({ relation: 'INDEPENDENT', merged_fact: '', reason: 'separate' });
+      expect((await consolidateAllPending(db, null)).withoutContentTime).toBe(0);
+    });
+
+    it('a merge that adds the column inside its own transaction and then rolls back leaves the handle usable', () => {
+      const older = seed('Feature flags live in the config file', day(1));
+      const later = seed('Feature flags moved to the database', day(2));
+      reopenWithoutColumn();
+      db.exec(`CREATE TRIGGER fail_last BEFORE UPDATE OF is_active ON facts WHEN NEW.is_active = 0 BEGIN SELECT RAISE(ABORT, 'injected failure'); END`);
+      // What a merge does when its own attempt before the transaction met the lock: the column is first looked for inside.
+      expect(() => db.transaction(() => {
+        expect(factContentTimes(db, [older]).get(older)).toBe(day(1)); // adds the column inside this transaction
+        expect(ensureFactContentAtColumn(db)).toBe(true);
+        db.prepare('UPDATE facts SET is_active = 0 WHERE id = ?').run(later); // fails: the transaction rolls back, the column with it
+      }).immediate()).toThrow(/injected failure/);
+
+      expect(columns(), 'the rollback took the column').not.toContain('content_at');
+      // The handle did not keep "the column is there" from inside that transaction: it looks again and adds it.
+      expect(contentAt(older)).toBe(day(1));
+      expect(columns()).toContain('content_at');
+    });
+  });
+
   it('the column is added on first use to a store that lacks it; a handle that cannot add it reads creation times', () => {
     const a = seed('Imports are sorted', day(1));
     const columns = () => (db.prepare(`SELECT name FROM pragma_table_info('facts')`).all() as Array<{ name: string }>).map((c) => c.name);
