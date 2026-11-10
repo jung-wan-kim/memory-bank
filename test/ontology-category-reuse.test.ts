@@ -255,6 +255,54 @@ describe('category reuse by normalized name', () => {
     expect(row).toEqual({ name: 'Client-Side Routing', name_key: 'clientsiderouting' });
   });
 
+  describe('what the classifier is shown of a fact', () => {
+    type SentFact = { fact: string; project?: string };
+    const sentFacts = () => (JSON.parse(llm.mock.calls[llm.mock.calls.length - 1][1] as string) as { facts: SentFact[] }).facts;
+
+    // 639 live facts open with a machine header (namespace=… context_area=…,
+    // about 200 characters); 554 of them were filed under "Memory-Bank
+    // Architecture" from the wrapper's wording — the model saw 400 characters.
+    it('a long fact is shown up to 1,000 characters — the text after a wrapper header is in view', async () => {
+      const header = `Tool wrapper fact. namespace=some-tool:project-x novel_id=${'n'.repeat(60)} context_area=${'c'.repeat(60)} entity_id=${'e'.repeat(60)}. `;
+      const body = `${'Filler sentence about the setting. '.repeat(8)}THE-ACTUAL-TOPIC is described here. `;
+      const text = header + body + 'z'.repeat(3000);
+      expect(text.indexOf('THE-ACTUAL-TOPIC')).toBeGreaterThan(400);
+      const f = fact(text);
+      answer({ domain: 'Creative Writing', category: 'World Building', is_new_domain: true, is_new_category: true });
+
+      await classifyFactsBatch(db, [f]);
+
+      const sent = sentFacts()[0].fact;
+      expect(sent).toContain('THE-ACTUAL-TOPIC');
+      expect(sent.length).toBe(1001);
+      expect(sent.endsWith('…')).toBe(true);
+    });
+
+    it('a fact within the limit is shown whole', async () => {
+      const f = fact('Routes are declared in one file');
+      answer({ domain: 'Frontend', category: 'Routing', is_new_domain: true, is_new_category: true });
+
+      await classifyFactsBatch(db, [f]);
+
+      expect(sentFacts()[0].fact).toBe('Routes are declared in one file');
+    });
+
+    it('a project fact carries the project folder name; a global fact carries none', async () => {
+      const projectFact = fact('Routes are declared in one file');
+      const globalFact: Fact = { ...fact('Prefers small commits'), scope_type: 'global', scope_project: null };
+      answer(
+        { domain: 'Frontend', category: 'Routing', is_new_domain: true, is_new_category: true },
+        { domain: 'Workflow', category: 'Commit Style', is_new_domain: true, is_new_category: true },
+      );
+
+      await classifyFactsBatch(db, [projectFact, globalFact]);
+
+      expect(sentFacts()[0].project).toBe('reuse-project');
+      expect('project' in sentFacts()[1]).toBe(false);
+      expect(BATCH_CLASSIFY_SYSTEM_PROMPT).toMatch(/"project"/);
+    });
+  });
+
   it('a domain is matched by normalized name too', async () => {
     createDomain(db, 'DevOps');
     const f = fact('Deploys go through a staging slot');
