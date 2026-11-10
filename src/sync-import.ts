@@ -74,13 +74,15 @@ const describeCounts = (counts: Record<string, number>): string =>
  * Only inserts records that don't already exist (by ID).
  * Generates embeddings for new facts.
  *
- * Nothing in the files is passed over silently: a row that is not imported is
- * counted in the result by cause, and the counts are written to
- * logs/sync-import.jsonl (action 'skipped' — counts and ids only, no text).
+ * Nothing in the files is passed over silently: a row that is not imported —
+ * other than one already here under its own id — is counted in the result by
+ * cause, and the counts are written to logs/sync-import.jsonl (action
+ * 'skipped' — counts and ids only, no text).
  */
 export async function importFromSync(): Promise<{
   newFacts: number; newDomains: number; newCategories: number; newRelations: number;
-  rejectedJunk: number; detachedCategoryRefs: number; failedFacts: number; failedFactErrors: string[];
+  rejectedJunk: number; duplicateFacts: number;
+  detachedCategoryRefs: number; failedFacts: number; failedFactErrors: string[];
   rejectedSecrets: number; rejectedSecretReasons: Record<string, number>;
   rejectedInstructionLike: number; rejectedInstructionLikeSamples: string[];
   foldedCategories: number; clampedCounts: number;
@@ -93,6 +95,10 @@ export async function importFromSync(): Promise<{
   //   a copy of the extraction prompt's example, session-environment boilerplate),
   //   plus categories under a rejected domain. They stay in the files until the
   //   exporting device stops exporting them, so the count repeats per run.
+  // duplicateFacts: facts not imported because the same sentence in the same scope is already here under
+  //   another id, or came earlier in the same file (another device assigns its own ids to identical
+  //   facts). The lines stay in the file, so the count repeats per run. A relation that names one of
+  //   them is counted under skippedRelations as endpoint-duplicate.
   // detachedCategoryRefs: imported facts whose ontology category does not exist
   //   here (rejected above, or never exported) — stored unclassified so the
   //   ontology backfill classifies them, instead of pointing at a missing row.
@@ -117,8 +123,8 @@ export async function importFromSync(): Promise<{
   // filesNotMatchingMeta: data files whose size is not the one meta.json declares — the folder was read
   //   while it was still being delivered. The import goes on with what is there; the torn lines are counted above.
   const result = {
-    newFacts: 0, newDomains: 0, newCategories: 0, newRelations: 0, rejectedJunk: 0, detachedCategoryRefs: 0,
-    failedFacts: 0, failedFactErrors: [] as string[],
+    newFacts: 0, newDomains: 0, newCategories: 0, newRelations: 0, rejectedJunk: 0, duplicateFacts: 0,
+    detachedCategoryRefs: 0, failedFacts: 0, failedFactErrors: [] as string[],
     rejectedSecrets: 0, rejectedSecretReasons: {} as Record<string, number>,
     rejectedInstructionLike: 0, rejectedInstructionLikeSamples: [] as string[],
     foldedCategories: 0, clampedCounts: 0,
@@ -235,6 +241,7 @@ export async function importFromSync(): Promise<{
         const contentKey = `${f.fact}\u0000${f.scope_type}\u0000${f.scope_project ?? ''}`;
         if (seenInBatch.has(contentKey) || activeFactWithText.get(f.fact, f.scope_type, f.scope_project ?? '')) {
           duplicateFactIds.add(String(f.id));
+          result.duplicateFacts++;
           continue;
         }
 
@@ -356,6 +363,7 @@ export async function importFromSync(): Promise<{
     if (result.malformedLines > 0) skipped.malformed_lines = result.malformedLinesByFile;
     if (result.skippedRelations > 0) skipped.skipped_relations = result.skippedRelationReasons;
     if (result.rejectedJunk > 0) skipped.rejected_validity = result.rejectedJunk;
+    if (result.duplicateFacts > 0) skipped.duplicate_facts = result.duplicateFacts;
     if (result.foldedCategories > 0) skipped.folded_categories = result.foldedCategories;
     if (result.clampedCounts > 0) skipped.clamped_counts = result.clampedCounts;
     if (result.detachedCategoryRefs > 0) skipped.detached_category_refs = result.detachedCategoryRefs;
@@ -364,6 +372,7 @@ export async function importFromSync(): Promise<{
       appendImportLog({ action: 'skipped', ...skipped });
       const parts: string[] = [];
       if (result.malformedLines > 0) parts.push(`${result.malformedLines} unreadable line(s) (${describeCounts(result.malformedLinesByFile)})`);
+      if (result.duplicateFacts > 0) parts.push(`${result.duplicateFacts} fact(s) whose sentence is already here under another id`);
       if (result.skippedRelations > 0) parts.push(`${result.skippedRelations} relation(s) whose fact is not here (${describeCounts(result.skippedRelationReasons as Record<string, number>)})`);
       if (result.foldedCategories > 0) parts.push(`${result.foldedCategories} fact(s) stored as 'knowledge' (category outside the five names)`);
       if (result.clampedCounts > 0) parts.push(`${result.clampedCounts} confirmation count(s) out of range`);

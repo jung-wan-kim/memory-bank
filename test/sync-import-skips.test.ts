@@ -153,6 +153,63 @@ describe('sync import: 넘긴 줄을 세고 남긴다', () => {
     expect(again.skippedRelations).toBe(4);
   });
 
+  it('같은 문장이라 들이지 않은 사실도 센다 — 파일의 모든 줄이 어느 칸에든 있다 (R2-SEC-5)', async () => {
+    const dir = await syncDir();
+    const { importFromSync } = await import('../src/sync-import.js');
+    const { initDatabase } = await import('../src/db.js');
+    const db = initDatabase();
+    try {
+      db.prepare(`INSERT INTO facts (id, fact, category, scope_type, source_exchange_ids, created_at, updated_at)
+        VALUES ('local-1', 'Releases are cut on Tuesdays.', 'decision', 'global', '[]', ?, ?)`).run(NOW, NOW);
+    } finally {
+      db.close();
+    }
+    const lines = [
+      fact('ok-1', 'Deploys go through the staging branch first.'),
+      fact('dup-db', 'Releases are cut on Tuesdays.'), // 이 기기에 다른 id 로 이미 있는 문장
+      fact('twin-a', 'Tags are signed by the release owner.'),
+      fact('twin-b', 'Tags are signed by the release owner.'), // 같은 파일의 앞줄과 같은 문장
+      fact('junk-1', '...'),
+    ];
+    fs.writeFileSync(path.join(dir, 'facts.jsonl'), lines.join('\n') + '\n');
+
+    const first = await importFromSync();
+
+    expect(first.newFacts).toBe(2);
+    expect(first.duplicateFacts).toBe(2);
+    // 들어온 것 + 사유별로 넘긴 것 = 파일의 줄 수
+    expect(first.newFacts + first.duplicateFacts + first.rejectedJunk + first.rejectedSecrets
+      + first.rejectedInstructionLike + first.failedFacts + first.malformedLines).toBe(lines.length);
+
+    const entry = logEntries().find((e) => e.action === 'skipped');
+    expect(entry, 'logs/sync-import.jsonl 에 남는다').toMatchObject({ duplicate_facts: 2, rejected_validity: 1 });
+    expect(JSON.stringify(entry), '문장은 싣지 않는다').not.toContain('Tuesdays');
+
+    // 줄이 파일에 남아 있는 동안 같은 건수를 다시 알린다(들어온 두 줄은 id 로 이미 있다)
+    const again = await importFromSync();
+    expect(again.newFacts).toBe(0);
+    expect(again.duplicateFacts).toBe(2);
+  });
+
+  it('같은 문장만 넘긴 가져오기도 로그와 stderr 한 줄을 남긴다 (R2-SEC-5)', async () => {
+    const dir = await syncDir();
+    const { importFromSync } = await import('../src/sync-import.js');
+    fs.writeFileSync(path.join(dir, 'facts.jsonl'), [
+      fact('twin-a', 'Tags are signed by the release owner.'),
+      fact('twin-b', 'Tags are signed by the release owner.'),
+    ].join('\n') + '\n');
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => { errors.push(args.join(' ')); });
+    try {
+      const result = await importFromSync();
+      expect(result.duplicateFacts).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(logEntries().filter((e) => e.action === 'skipped')).toEqual([expect.objectContaining({ duplicate_facts: 1 })]);
+    expect(errors.join('\n')).toMatch(/passed over 1 fact\(s\) whose sentence is already here under another id/);
+  });
+
   it('meta.json 이 말하는 크기와 다른 파일을 알린다 — 가져오기는 멈추지 않는다 (LSO-8)', async () => {
     const dir = await syncDir();
     const { importFromSync } = await import('../src/sync-import.js');
