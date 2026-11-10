@@ -52,15 +52,31 @@ COMMANDS:
   (default)      Index all conversations
   --cleanup      Process only unindexed conversations (fast, cheap)
   --session ID   Index specific session (used by hook)
-  --verify       Check index health
-  --repair       Fix detected issues
-  --rebuild      Delete DB and re-index everything (requires confirmation)
+  --verify       Check index health (read-only)
+  --repair       Re-index and summarize what --verify found (prints its plan first)
+  --rebuild      Empty the conversation index and re-create it from the archive.
+                 Facts, ontology and tags are preserved (requires confirmation)
 
 OPTIONS:
   --concurrency N    Parallel summarization (1-16, default: 1)
   -c N               Short form of --concurrency
   --no-summaries     Skip AI summary generation (free, but no summaries in results)
   --help, -h         Show this help
+
+REPAIR OPTIONS:
+  --prune-missing    Also delete index rows whose archive file is gone
+                     (they are backed up first; without it they are only reported)
+  --yes              Go ahead although the plan is over a threshold
+                     (more than 5% of the index to delete, re-index or summarize)
+
+REBUILD OPTIONS:
+  --allow-index-loss Clear exchanges that cannot be re-created too. A rebuild
+                     re-reads the conversation files directly inside each
+                     archive project folder; exchanges indexed from anywhere
+                     else (sub-folders, files no longer archived) would be gone
+                     for good, so without this flag such a rebuild is refused.
+  --reset-summaries  Also delete every summary file (re-made later, one LLM call each).
+                     A rebuild itself makes no summary call; existing summaries stay.
 
 EXAMPLES:
   # Index all unprocessed (recommended for backfill)
@@ -75,10 +91,10 @@ EXAMPLES:
   # Check index health
   index-conversations --verify
 
-  # Fix any issues found
+  # Fix any issues found (re-index + summaries; nothing is deleted)
   index-conversations --repair
 
-  # Nuclear option (deletes everything, re-indexes)
+  # Re-create the conversation index from the archive (facts are kept)
   index-conversations --rebuild
 
 WORKFLOW:
@@ -125,10 +141,15 @@ async function main() {
         break;
 
       case '--rebuild':
-        console.log('⚠️  This will DELETE the entire database and re-index everything.');
+        console.log('⚠️  This will EMPTY the conversation index (exchanges, tool calls, vectors, text index)');
+        console.log('   and re-create it from the conversation archive.');
+        console.log('   If some indexed exchanges cannot be re-created from the archive, the rebuild');
+        console.log('   stops before changing anything and says how many (--allow-index-loss overrides).');
+        console.log('   Facts are preserved — facts, ontology, relations and tags are not touched,');
+        console.log('   and a backup of them is written first. Only the conversation index is regenerated.');
         const confirmed = await askConfirmation('Are you sure? [yes/NO]: ');
         if (confirmed) {
-          await runScript('rebuild', args);
+          await runScript('rebuild', ['--yes', ...args.filter((a) => a !== '--yes')]);
         } else {
           console.log('Cancelled');
         }

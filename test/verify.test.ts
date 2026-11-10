@@ -57,8 +57,8 @@ describe('verifyIndex', () => {
     delete process.env.CONVERSATION_SEARCH_EXCLUDE_PROJECTS;
 
     // Only project-b should be checked (missing summary)
-    expect(result.missing.length).toBe(1);
-    expect(result.missing[0].path).toContain('project-b');
+    expect(result.missingSummary.length).toBe(1);
+    expect(result.missingSummary[0].path).toContain('project-b');
   });
 
   it('detects missing summaries', async () => {
@@ -77,9 +77,9 @@ describe('verifyIndex', () => {
 
     const result = await verifyIndex();
 
-    expect(result.missing.length).toBe(1);
-    expect(result.missing[0].path).toBe(conversationPath);
-    expect(result.missing[0].reason).toBe('No summary file');
+    expect(result.missingSummary).toEqual([{ path: conversationPath }]);
+    // not indexed either — a separate finding now, not folded into "missing"
+    expect(result.notIndexed).toEqual([{ path: conversationPath }]);
   });
 
   it('detects orphaned database entries', async () => {
@@ -198,7 +198,7 @@ describe('repairIndex', () => {
     delete process.env.TEST_DB_PATH;
   });
 
-  it('deletes orphaned database entries during repair', async () => {
+  it('deletes orphaned database entries during repair when asked to (pruneMissing)', async () => {
     // Initialize database with orphaned entry
     const db = initDatabase();
 
@@ -226,7 +226,7 @@ describe('repairIndex', () => {
     // Run repair
     const issues = await verifyIndex();
     expect(issues.orphaned.length).toBe(1);
-    await repairIndex(issues);
+    await repairIndex(issues, { pruneMissing: true });
 
     // Verify it's gone
     const dbAfter = initDatabase();

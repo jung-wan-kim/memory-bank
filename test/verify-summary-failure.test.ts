@@ -61,7 +61,7 @@ async function repairOutdated(): Promise<{ summaryPath: string; reindexed: boole
   const line = (type: string, content: string, ts: string) =>
     JSON.stringify({ type, message: { role: type, content }, timestamp: ts });
   fs.writeFileSync(conversationPath, [line('user', 'Hello', '2024-01-01T00:00:00Z'), line('assistant', 'Hi there!', '2024-01-01T00:00:01Z')].join('\n'));
-  // verifyIndex counts a file without a summary as "missing", not "outdated"
+  // an outdated conversation with a summary: repair refreshes that summary
   const summaryPath = conversationPath.replace('.jsonl', '-summary.txt');
   fs.writeFileSync(summaryPath, 'Old summary');
 
@@ -124,7 +124,7 @@ describe('repairIndex with a failing summary', () => {
     fs.writeFileSync(conversationPath, [line('user', 'Hello', '2024-01-01T00:00:00Z'), line('assistant', 'Hi there!', '2024-01-01T00:00:01Z')].join('\n'));
 
     const issues = await verifyIndex();
-    expect(issues.missing.map((m) => m.path)).toContain(conversationPath);
+    expect(issues.missingSummary.map((m) => m.path)).toContain(conversationPath);
     await repairIndex(issues);
     const summaryPath = conversationPath.replace('.jsonl', '-summary.txt');
     expect(fs.existsSync(summaryPath)).toBe(true);
