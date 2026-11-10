@@ -15,7 +15,9 @@
  *   node scripts/requeue-zero-markers.mjs [--db PATH] --apply [--limit N] [--undo-file PATH]
  *       Remove the markers (newest sessions first, at most N). Before any row
  *       changes, every marker row about to be removed is written to the undo
- *       file (default: next to the database).
+ *       file (default: next to the database). The survey runs without the
+ *       write lock; the write transaction only judges the chosen sessions
+ *       again and removes the ones that still qualify.
  *   node scripts/requeue-zero-markers.mjs [--db PATH] --undo FILE
  *       Put back the markers an --apply run removed, for the sessions nothing
  *       has touched since (no marker and no claim today).
@@ -83,39 +85,82 @@ function columnsOf(db, table) {
   return db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all().map((c) => c.name);
 }
 
-/** The project the backfill worker would hand the extractor for this session (its sessionProject). */
+/**
+ * The project the backfill worker would hand the extractor for this session
+ * (its sessionProject) — the same two queries, over the session's rows as
+ * findTargets copied them (temp.requeue_exchanges).
+ */
 function sessionProject(db, sid) {
   const byCwd = db.prepare(`
-    SELECT cwd, COUNT(*) AS n FROM exchanges
+    SELECT cwd, COUNT(*) AS n FROM temp.requeue_exchanges
     WHERE session_id = ? AND cwd IS NOT NULL
     GROUP BY cwd ORDER BY n DESC LIMIT 1
   `).get(sid);
   if (byCwd?.cwd) return byCwd.cwd;
-  const bySlug = db.prepare('SELECT project FROM exchanges WHERE session_id = ? LIMIT 1').get(sid);
+  const bySlug = db.prepare('SELECT project FROM temp.requeue_exchanges WHERE session_id = ? LIMIT 1').get(sid);
   return bySlug ? canonicalizeProject(db, bySlug.project) : null;
 }
 
-/** Every exchange id some stored fact names as a source (active or not — a deactivated fact was still extracted). */
-function factSourceExchangeIds(db) {
-  if (columnsOf(db, 'facts').length === 0) return new Set();
-  const ids = new Set();
+/**
+ * Of the given sessions, the ones some stored fact names an exchange of as a
+ * source (active or not — a deactivated fact was still extracted). The backfill
+ * worker's seedFromExistingFacts reads the same column the same way. One pass
+ * over the fact table; the sessions' exchange ids come from temp.requeue_exchanges.
+ */
+function sessionsWithFacts(db, sessions) {
+  const yielded = new Set();
+  if (columnsOf(db, 'facts').length === 0) return yielded;
+  const sessionOf = new Map();
+  const exchangeIds = db.prepare('SELECT id FROM temp.requeue_exchanges WHERE session_id = ?');
+  for (const s of sessions) for (const e of exchangeIds.all(s.sid)) sessionOf.set(e.id, s.sid);
+  if (sessionOf.size === 0) return yielded;
   const rows = db.prepare(
-    "SELECT source_exchange_ids FROM facts WHERE source_exchange_ids IS NOT NULL AND source_exchange_ids != '[]'",
+    "SELECT source_exchange_ids FROM main.facts WHERE source_exchange_ids IS NOT NULL AND source_exchange_ids != '[]'",
   ).iterate();
   for (const row of rows) {
     let parsed;
     try { parsed = JSON.parse(row.source_exchange_ids); } catch { continue; }   // a malformed list names no exchange
-    if (Array.isArray(parsed)) for (const id of parsed) ids.add(id);
+    if (!Array.isArray(parsed)) continue;
+    for (const id of parsed) {
+      const sid = sessionOf.get(id);
+      if (sid !== undefined) yielded.add(sid);
+    }
   }
-  return ids;
+  return yielded;
+}
+
+// The message text and the stored vector are what make an exchanges row large; nothing here reads them.
+const HEAVY_EXCHANGE_COLUMNS = new Set(['user_message', 'assistant_message', 'embedding']);
+
+function dropTemp(db) {
+  db.exec(`
+    DROP VIEW IF EXISTS temp.exchanges;
+    DROP VIEW IF EXISTS temp.extraction_log;
+    DROP TABLE IF EXISTS temp.requeue_only;
+    DROP TABLE IF EXISTS temp.requeue_sessions;
+    DROP TABLE IF EXISTS temp.requeue_exchanges;
+    DROP TABLE IF EXISTS temp.requeue_log;
+  `);
 }
 
 /**
  * The markers to remove, newest session first, and why the others stay.
- * Reads only; its two temp tables live in the connection's temp schema and are
- * dropped before it returns (a read-only connection may create them).
+ * `only` (session ids) narrows the whole judgment to those sessions — what
+ * --apply runs again under the write lock. Reads the database only; its temp
+ * tables and views live in the connection's temp schema and are dropped before
+ * it returns (a read-only connection may create them).
+ *
+ * The exchanges table is read once: the rows of the zero-marker sessions,
+ * reached from the marker side through the session_id index (CROSS JOIN keeps
+ * the markers as the outer loop), copied without their text. Every later step
+ * reads that copy. The first version asked, per marker, "is there a main-chain
+ * exchange of this session" in a form the planner (no sqlite_stat1) answered
+ * through the is_sidechain index — every main-chain exchange once per marker.
+ * Measured on a real database of 38,088 zero markers and 69,081 main-chain
+ * exchanges: no output after 56 minutes; this way the survey takes about 5 seconds.
  */
-function findTargets(db) {
+function findTargets(db, only = null) {
+  dropTemp(db);
   const logCols = columnsOf(db, 'extraction_log');
   if (logCols.length === 0) fail('this database has no extraction_log table');
   const exCols = columnsOf(db, 'exchanges');
@@ -125,65 +170,95 @@ function findTargets(db) {
     + (logCols.includes('dropped_batches') ? ' AND COALESCE(l.dropped_batches, 0) = 0' : '')
     + (logCols.includes('seen_exchanges') ? ' AND COALESCE(l.seen_exchanges, 0) = 0' : '');
 
-  const counts = {
-    zeroMarkers: db.prepare(`SELECT COUNT(*) AS n FROM main.extraction_log l WHERE ${zeroMarker}`).get().n,
-  };
-
-  db.exec('DROP TABLE IF EXISTS temp.requeue_candidates; DROP TABLE IF EXISTS temp.extraction_log');
   try {
-    // Step 1 — zero markers whose session was indexed only after the marker.
-    // The marker's second is rounded up: an exchange indexed within the marker's
+    let scope = '';
+    if (only !== null) {
+      db.exec('CREATE TEMP TABLE requeue_only (sid TEXT PRIMARY KEY)');
+      const add = db.prepare('INSERT OR IGNORE INTO temp.requeue_only (sid) VALUES (?)');
+      for (const sid of only) add.run(sid);
+      scope = ' AND l.session_id IN (SELECT sid FROM temp.requeue_only)';
+    }
+
+    const counts = {
+      zeroMarkers: db.prepare(`SELECT COUNT(*) AS n FROM main.extraction_log l WHERE ${zeroMarker}${scope}`).get().n,
+    };
+
+    // Every exchange (side chains too) of the zero-marker sessions, every column
+    // but the text and the vector — so a predicate that starts reading another
+    // column still finds it.
+    const light = exCols.filter((c) => !HEAVY_EXCHANGE_COLUMNS.has(c)).map((c) => `e.${c} AS ${c}`).join(', ');
+    db.exec(`
+      CREATE TEMP TABLE requeue_exchanges AS
+      SELECT ${light}
+      FROM main.extraction_log l
+      CROSS JOIN main.exchanges e
+      WHERE ${zeroMarker}${scope}
+        AND e.session_id = l.session_id;
+      CREATE INDEX temp.requeue_exchanges_sid ON requeue_exchanges(session_id);
+    `);
+
+    // Step 1 — the zero markers whose session has main-chain exchanges today,
+    // and of those the ones indexed only after the marker (after_marker). The
+    // marker's second is rounded up: an exchange indexed within the marker's
     // own second counts as "may have been read".
     db.exec(`
-      CREATE TEMP TABLE requeue_candidates AS
-      SELECT l.session_id AS sid, MAX(e.timestamp) AS ts, COUNT(*) AS n
+      CREATE TEMP TABLE requeue_sessions AS
+      SELECT l.session_id AS sid, MAX(e.timestamp) AS ts, COUNT(*) AS n,
+             (strftime('%s', l.processed_at) IS NOT NULL
+              AND COUNT(e.last_indexed) = COUNT(*)
+              AND MIN(e.last_indexed) >= (CAST(strftime('%s', l.processed_at) AS INTEGER) + 1) * 1000) AS after_marker
       FROM main.extraction_log l
-      JOIN exchanges e ON e.session_id = l.session_id AND e.is_sidechain = 0
-      WHERE ${zeroMarker}
-        AND strftime('%s', l.processed_at) IS NOT NULL
+      CROSS JOIN temp.requeue_exchanges e
+      WHERE ${zeroMarker}${scope}
+        AND e.session_id = l.session_id AND e.is_sidechain = 0
       GROUP BY l.session_id
-      HAVING COUNT(e.last_indexed) = COUNT(*)
-         AND MIN(e.last_indexed) >= (CAST(strftime('%s', l.processed_at) AS INTEGER) + 1) * 1000
     `);
-    counts.withExchanges = db.prepare(`
-      SELECT COUNT(*) AS n FROM main.extraction_log l
-      WHERE ${zeroMarker}
-        AND EXISTS (SELECT 1 FROM exchanges e WHERE e.session_id = l.session_id AND e.is_sidechain = 0)
-    `).get().n;
-    counts.indexedAfterMarker = db.prepare('SELECT COUNT(*) AS n FROM temp.requeue_candidates').get().n;
+    counts.withExchanges = db.prepare('SELECT COUNT(*) AS n FROM temp.requeue_sessions').get().n;
+    counts.indexedAfterMarker = db.prepare('SELECT COUNT(*) AS n FROM temp.requeue_sessions WHERE after_marker').get().n;
 
     // Step 2 — of those, the ones the backfill would take if the marker were gone.
-    // The backfill's predicate reads `extraction_log` unqualified; a temp table of
-    // that name is what it sees on this connection (temp is searched before main).
+    // The backfill's predicate reads `exchanges` and `extraction_log` unqualified;
+    // on this connection temp views of those names are what it sees (temp is
+    // searched before main): the copied exchanges, and the marker table with the
+    // candidates taken out. A session's verdict depends on its own rows only, so
+    // this is the predicate's answer for each candidate without reading every
+    // exchange in the database.
     db.exec(`
-      CREATE TEMP TABLE extraction_log AS
-      SELECT * FROM main.extraction_log WHERE session_id NOT IN (SELECT sid FROM temp.requeue_candidates);
-      CREATE INDEX temp.requeue_shadow_sid ON extraction_log(session_id);
+      CREATE TEMP TABLE requeue_log AS
+      SELECT * FROM main.extraction_log
+      WHERE session_id NOT IN (SELECT sid FROM temp.requeue_sessions WHERE after_marker);
+      CREATE INDEX temp.requeue_log_sid ON requeue_log(session_id);
+      CREATE TEMP VIEW exchanges AS SELECT * FROM temp.requeue_exchanges;
+      CREATE TEMP VIEW extraction_log AS SELECT * FROM temp.requeue_log;
     `);
-    // Quiet period off: a session still in its quiet period is pending later, not never.
-    const { sql, params } = pendingExtractionCoreQuery({ ...getExtractionConfig(), quietMinutes: 0 });
-    const pending = db.prepare(`
-      SELECT p.sid AS sid, p.n AS n FROM (${sql}) p
-      JOIN temp.requeue_candidates c ON c.sid = p.sid
-      ORDER BY p.ts DESC, p.sid
-    `).all(...params);
+    let pending;
+    try {
+      // Quiet period off: a session still in its quiet period is pending later, not never.
+      const { sql, params } = pendingExtractionCoreQuery({ ...getExtractionConfig(), quietMinutes: 0 });
+      pending = db.prepare(`
+        SELECT p.sid AS sid, p.n AS n FROM (${sql}) p
+        JOIN temp.requeue_sessions c ON c.sid = p.sid AND c.after_marker
+        ORDER BY p.ts DESC, p.sid
+      `).all(...params);
+    } finally {
+      // Gone before anything else runs: canonicalizeProject (step 3) reads the real `exchanges`.
+      db.exec('DROP VIEW IF EXISTS temp.exchanges; DROP VIEW IF EXISTS temp.extraction_log');
+    }
     counts.pendingWithoutMarker = pending.length;
 
     // Step 3 — not the ones the extractor excludes at once (it would write the same marker again).
     const notExcluded = pending.filter((s) => !isExcludedProjectPath(sessionProject(db, s.sid)));
     counts.excludedByExtractor = pending.length - notExcluded.length;
 
-    // Step 4 — not the ones that already yielded facts (the backfill worker's
-    // seedFromExistingFacts reads the same column the same way).
-    const sourced = factSourceExchangeIds(db);
-    const exchangeIds = db.prepare('SELECT id FROM exchanges WHERE session_id = ?');
-    const targets = notExcluded.filter((s) => !exchangeIds.all(s.sid).some((e) => sourced.has(e.id)));
+    // Step 4 — not the ones that already yielded facts.
+    const yielded = sessionsWithFacts(db, notExcluded);
+    const targets = notExcluded.filter((s) => !yielded.has(s.sid));
     counts.alreadyYieldedFacts = notExcluded.length - targets.length;
     counts.targets = targets.length;
     counts.targetExchanges = targets.reduce((sum, s) => sum + s.n, 0);
     return { counts, targets };
   } finally {
-    db.exec('DROP TABLE IF EXISTS temp.extraction_log; DROP TABLE IF EXISTS temp.requeue_candidates');
+    dropTemp(db);
   }
 }
 
@@ -201,7 +276,7 @@ function printCounts(counts) {
 function dryRun() {
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
   try {
-    const { counts } = findTargets(db);
+    const { counts } = db.transaction(() => findTargets(db))();   // one read snapshot for every step
     printCounts(counts);
     console.log(counts.targets > 0
       ? 'dry run: nothing changed. --apply [--limit N] removes those markers (newest sessions first) and writes an undo file first.'
@@ -221,46 +296,70 @@ function apply() {
   db.pragma('busy_timeout = 15000');
   let undoWritten = false;
   try {
-    // One write transaction from the scan to the last DELETE: no extraction can
-    // claim or re-mark one of these sessions in between, so the undo file lists
-    // exactly the rows this run removed.
+    // The survey only reads (one read snapshot, no write lock). On a real
+    // database it takes seconds, and every other process — indexing, extraction,
+    // even a plain open of the database — needs the write lock in that time.
+    const { counts, targets } = db.transaction(() => findTargets(db))();
+    printCounts(counts);
+    const chosen = limit === null ? targets : targets.slice(0, limit);
+    if (chosen.length === 0) {
+      console.log('nothing to requeue — no row changed, no undo file written.');
+      return;
+    }
+
+    // The write transaction judges the chosen sessions again — the same
+    // findTargets, narrowed to them — and removes the ones that still qualify.
+    // No extraction can claim, re-mark or extract one of them between that
+    // judgment and the DELETE, so the undo file lists exactly the rows this run
+    // removed. A session that changed since the survey is left alone.
+    let noLongerQualified = 0;
+    let lockedMs = 0;
     const removed = db.transaction(() => {
-      const { counts, targets } = findTargets(db);
-      printCounts(counts);
-      const chosen = limit === null ? targets : targets.slice(0, limit);
-      if (chosen.length === 0) return 0;
-
-      const read = db.prepare('SELECT * FROM main.extraction_log WHERE session_id = ?');
-      const markers = chosen.map((s) => read.get(s.sid));
-      if (markers.some((m) => !m)) throw new Error('a marker row disappeared inside the transaction');
-
-      // The undo file first — if it cannot be written, no row changes.
-      const lines = [
-        JSON.stringify({ kind: UNDO_KIND, version: 1, db: dbPath, applied_at: appliedAt, count: markers.length }),
-        ...markers.map((m) => JSON.stringify(m)),
-      ];
-      const fd = fs.openSync(undoPath, 'wx', 0o600);
+      const lockedAt = Date.now();
       try {
-        fs.writeSync(fd, lines.join('\n') + '\n');
-        fs.fsyncSync(fd);
-      } finally {
-        fs.closeSync(fd);
-      }
-      undoWritten = true;
+        const still = new Set(findTargets(db, chosen.map((s) => s.sid)).targets.map((s) => s.sid));
+        const confirmed = chosen.filter((s) => still.has(s.sid));
+        noLongerQualified = chosen.length - confirmed.length;
+        if (confirmed.length === 0) return 0;
 
-      const del = db.prepare('DELETE FROM main.extraction_log WHERE session_id = ? AND extracted = 0 AND saved = 0 AND processed_at = ?');
-      let n = 0;
-      for (const m of markers) n += del.run(m.session_id, m.processed_at).changes;
-      if (n !== markers.length) throw new Error(`expected to remove ${markers.length} marker(s), removed ${n}`);
-      return n;
+        const read = db.prepare('SELECT * FROM main.extraction_log WHERE session_id = ?');
+        const markers = confirmed.map((s) => read.get(s.sid));
+        if (markers.some((m) => !m)) throw new Error('a marker row disappeared inside the transaction');
+
+        // The undo file first — if it cannot be written, no row changes.
+        const lines = [
+          JSON.stringify({ kind: UNDO_KIND, version: 1, db: dbPath, applied_at: appliedAt, count: markers.length }),
+          ...markers.map((m) => JSON.stringify(m)),
+        ];
+        const fd = fs.openSync(undoPath, 'wx', 0o600);
+        try {
+          fs.writeSync(fd, lines.join('\n') + '\n');
+          fs.fsyncSync(fd);
+        } finally {
+          fs.closeSync(fd);
+        }
+        undoWritten = true;
+
+        const del = db.prepare('DELETE FROM main.extraction_log WHERE session_id = ? AND extracted = 0 AND saved = 0 AND processed_at = ?');
+        let n = 0;
+        for (const m of markers) n += del.run(m.session_id, m.processed_at).changes;
+        if (n !== markers.length) throw new Error(`expected to remove ${markers.length} marker(s), removed ${n}`);
+        return n;
+      } finally {
+        lockedMs = Date.now() - lockedAt;
+      }
     }).immediate();
 
+    if (noLongerQualified > 0) {
+      console.log(`${noLongerQualified} of the ${chosen.length} chosen session(s) no longer qualified when judged again under the write lock (claimed, re-marked, extracted or changed since the survey) — left alone.`);
+    }
     if (removed === 0) {
       console.log('nothing to requeue — no row changed, no undo file written.');
     } else {
       console.log(`removed ${removed} marker(s)${limit !== null ? ` (--limit ${limit})` : ''}. undo file: ${undoPath}`);
       console.log('The backfill worker extracts them on its next runs (BACKFILL_EXTRACT_MAX sessions per run, after the quiet period).');
     }
+    console.log(`write lock held for about ${lockedMs}ms (the survey ran without it).`);
   } catch (e) {
     // The transaction rolled back: an undo file left behind would describe a change that did not happen.
     if (undoWritten) { try { fs.unlinkSync(undoPath); } catch { /* reported below */ } }

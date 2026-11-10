@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
@@ -20,6 +20,10 @@ import path from 'node:path';
  *  - 추출기가 곧바로 제외할 세션(제외 저장소의 하위 폴더)은 걷어 내지 않는다
  *  - 앞선 추출이 사실을 저장한 적이 있는 세션은 걷어 내지 않는다(다시 추출하면 두 벌)
  *  - --apply 는 되돌리기 파일을 먼저 쓰고, --undo 는 그 뒤 아무도 손대지 않은 세션만 되돌린다
+ *  - --apply 의 조사는 쓰기 잠금 밖에서 돈다. 잠금 안에서는 고른 세션만 다시 판정하고,
+ *    조사 뒤에 바뀐 세션(선점됨·사실이 저장됨)은 걷어 내지 않는다
+ *  - 0건 표식과 교환이 많아도 조사가 표식마다 교환 전체를 훑지 않는다(실DB 에서 dry-run 이
+ *    끝나지 않던 조회)
  */
 
 const REPO = path.resolve(__dirname, '..');
@@ -100,18 +104,39 @@ async function seed(): Promise<void> {
   delete process.env.MEMORY_BANK_CONFIG_DIR;
 }
 
+const scriptEnv = (): NodeJS.ProcessEnv => ({
+  ...process.env,
+  MEMORY_BANK_CONFIG_DIR: path.join(tmp, 'cfg'),
+  MEMORY_BANK_DB_PATH: path.join(tmp, 'not-used.sqlite'),
+  BACKFILL_EXCLUDE_PROJECTS: EXCLUDED,
+  BACKFILL_MIN_EXCHANGES: '',
+});
+
 function run(...argv: string[]): { code: number; out: string } {
   const r = spawnSync(process.execPath, [SCRIPT, ...argv], {
-    cwd: REPO, encoding: 'utf8', timeout: 60_000,
-    env: {
-      ...process.env,
-      MEMORY_BANK_CONFIG_DIR: path.join(tmp, 'cfg'),
-      MEMORY_BANK_DB_PATH: path.join(tmp, 'not-used.sqlite'),
-      BACKFILL_EXCLUDE_PROJECTS: EXCLUDED,
-      BACKFILL_MIN_EXCHANGES: '',
-    },
+    cwd: REPO, encoding: 'utf8', timeout: 60_000, env: scriptEnv(),
   });
   return { code: r.status ?? -1, out: `${r.stdout}${r.stderr}` };
+}
+
+/** 스크립트를 기다리지 않고 띄운다 — 도는 동안 다른 연결이 무엇을 할 수 있는지 보려고. */
+function start(...argv: string[]): { state: { out: string }; exited: Promise<number>; stop: () => void } {
+  const child = spawn(process.execPath, [SCRIPT, ...argv], { cwd: REPO, env: scriptEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+  const state = { out: '' };
+  child.stdout.on('data', (d) => { state.out += d; });
+  child.stderr.on('data', (d) => { state.out += d; });
+  let done = false;
+  const exited = new Promise<number>((resolve) => child.on('exit', (code) => { done = true; resolve(code ?? -1); }));
+  return { state, exited, stop: () => { if (!done) child.kill('SIGKILL'); } };
+}
+
+async function until(cond: () => boolean, ms: number): Promise<boolean> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (cond()) return true;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return cond();
 }
 
 const dbHash = () => createHash('sha256').update(fs.readFileSync(dbPath)).digest('hex');
@@ -247,6 +272,98 @@ describe('requeue-zero-markers.mjs', () => {
     expect(now['victim-old']).toEqual({ extracted: 0, saved: 0, processed_at: MARK });
     expect(now['victim-new']).toEqual({ extracted: -3, saved: 0, processed_at: '2026-11-10T00:00:00.000Z' });
     expect(Object.keys(now).sort()).toEqual(markedBefore);
+  });
+
+  /**
+   * 다른 연결이 쓰기 잠금을 쥔 채로 --apply 를 띄운다. 조사가 쓰기 잠금을 필요로 하면 건수가
+   * 나오지 않는다(예전 코드: 조사 전체가 BEGIN IMMEDIATE 안 — 실DB 에서 조사 내내 다른 쓰기가
+   * SQLITE_BUSY 였다). 건수가 나온 뒤 `change` 를 커밋해 잠금을 풀면 스크립트가 잠금을 얻는다.
+   */
+  async function applyWhileLocked(change: (holder: Database.Database) => void): Promise<{ code: number; out: string; undoFile: string }> {
+    const undoFile = path.join(tmp, 'undo.jsonl');
+    const holder = new Database(dbPath);
+    holder.exec('BEGIN IMMEDIATE');
+    const script = start('--db', dbPath, '--apply', '--undo-file', undoFile);
+    let committed = false;
+    try {
+      const surveyed = await until(() => /sessions to requeue: 2 \(6 exchange\(s\)\)/.test(script.state.out), 10_000);
+      expect(surveyed, `the survey did not finish while another connection held the write lock:\n${script.state.out}`).toBe(true);
+      expect(script.state.out).not.toMatch(/removed|nothing to requeue/);
+      change(holder);
+      holder.exec('COMMIT');
+      committed = true;
+      const code = await script.exited;
+      return { code, out: script.state.out, undoFile };
+    } finally {
+      if (!committed) holder.exec('ROLLBACK');
+      holder.close();
+      script.stop();
+    }
+  }
+
+  it('--apply 의 조사는 쓰기 잠금 밖에서 돈다 — 그 사이 선점된 세션은 잠금 안의 재확인에서 빠진다', async () => {
+    const { code, out, undoFile } = await applyWhileLocked((holder) => {
+      // 조사와 잠금 사이에 backfill 이 한 세션을 선점했다.
+      holder.prepare(`UPDATE extraction_log SET extracted = -3, processed_at = ?, claim_owner = 'owner-1'
+                      WHERE session_id = 'victim-new'`).run(FRESH);
+    });
+
+    expect(code, out).toBe(0);
+    expect(out).toMatch(/removed 1 marker\(s\)/);
+    expect(out).toMatch(/1 of the 2 chosen session\(s\) no longer qualified/);
+    const left = markers();
+    expect(left['victim-new']).toEqual({ extracted: -3, saved: 0, processed_at: FRESH });
+    expect(Object.keys(left)).not.toContain('victim-old');
+    // 되돌리기 파일은 실제로 걷어 낸 표식만 담는다.
+    const lines = fs.readFileSync(undoFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    expect(lines[0]).toMatchObject({ kind: 'requeue-zero-markers-undo', version: 1, count: 1 });
+    expect(lines.slice(1).map((r) => r.session_id)).toEqual(['victim-old']);
+  });
+
+  it('조사 뒤에 사실이 저장된 세션도 잠금 안의 재확인에서 빠진다 — 전부 빠지면 아무것도 바꾸지 않는다', async () => {
+    const before = Object.keys(markers()).sort();
+    const { code, out, undoFile } = await applyWhileLocked((holder) => {
+      const fact = holder.prepare(`INSERT INTO facts (id, fact, category, scope_type, source_exchange_ids, created_at, updated_at)
+                                   VALUES (?, 'Builds run on the release branch.', 'constraint', 'global', ?, ?, ?)`);
+      fact.run('f-late-old', JSON.stringify(['victim-old-2']), FRESH, FRESH);
+      fact.run('f-late-new', JSON.stringify(['victim-new-0']), FRESH, FRESH);
+    });
+
+    expect(code, out).toBe(0);
+    expect(out).toMatch(/2 of the 2 chosen session\(s\) no longer qualified/);
+    expect(out).toMatch(/nothing to requeue/);
+    expect(Object.keys(markers()).sort()).toEqual(before);
+    expect(fs.existsSync(undoFile)).toBe(false);
+  });
+
+  it('0건 표식과 본 대화 교환이 많아도 dry-run 이 표식마다 교환 전체를 훑지 않는다', () => {
+    // 교환이 없는 세션의 0건 표식 20,000개 + 표식 없는 세션들의 본 대화 교환 40,000개.
+    // 표식마다 본 대화 교환을 끝까지 훑는 조회(is_sidechain 색인)는 8억 행을 읽는다 —
+    // 실DB(표식 38,088 · 본 대화 교환 69,081)에서는 dry-run 이 56분 뒤에도 끝나지 않았다.
+    const db = new Database(dbPath);
+    try {
+      const ex = db.prepare(`INSERT INTO exchanges
+        (id, project, timestamp, user_message, assistant_message, archive_path, line_start, line_end,
+         session_id, is_sidechain, cwd, last_indexed)
+        VALUES (?, '-repos-app', '2026-07-01T00:00:00.000Z', 'question', 'answer', ?, ?, ?, ?, 0, '/repos/app', ?)`);
+      const mk = db.prepare(`INSERT INTO extraction_log (session_id, processed_at, extracted, saved) VALUES (?, ?, 0, 0)`);
+      db.transaction(() => {
+        for (let s = 0; s < 2000; s++) {
+          for (let i = 0; i < 20; i++) ex.run(`bulk-${s}-${i}`, `/archive/bulk-${s}.jsonl`, i * 2 + 1, i * 2 + 2, `bulk-${s}`, AFTER);
+        }
+        for (let m = 0; m < 20_000; m++) mk.run(`gone-${m}`, MARK);
+      })();
+    } finally {
+      db.close();
+    }
+
+    const started = Date.now();
+    const r = spawnSync(process.execPath, [SCRIPT, '--db', dbPath], { cwd: REPO, encoding: 'utf8', timeout: 15_000, env: scriptEnv() });
+    const out = `${r.stdout}${r.stderr}`;
+    expect(r.status, `dry run did not finish in 15s (signal ${r.signal}, ${Date.now() - started}ms):\n${out}`).toBe(0);
+    expect(out).toMatch(/0-fact completion markers: 20011$/m);
+    expect(out).toMatch(/with at least one indexed main-chain exchange today: 10$/m);
+    expect(out).toMatch(/sessions to requeue: 2 \(6 exchange\(s\)\)$/m);
   });
 
   it('--undo 는 이 스크립트의 되돌리기 파일이 아니면 거부한다', () => {
