@@ -694,7 +694,7 @@ function renderReplacementOsLoginPage() {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hue OS</title>
-<style>body{margin:0;min-height:100vh;background:#05060a;color:#edf0f7;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;place-items:center}.box{width:min(460px,calc(100vw - 32px));border:1px solid rgba(255,255,255,.1);border-radius:28px;padding:28px}h1{font-size:28px;letter-spacing:-.04em;margin:0 0 12px}p{color:#8c93a6;font-size:14px;line-height:1.6;margin:0 0 10px}code{color:#66e6ff}</style>
+<style>*{box-sizing:border-box}body{margin:0;min-height:100vh;background:#05060a;color:#edf0f7;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;place-items:center}.box{width:min(460px,calc(100vw - 32px));border:1px solid rgba(255,255,255,.1);border-radius:28px;padding:28px}h1{font-size:28px;letter-spacing:-.04em;margin:0 0 12px}p{color:#8c93a6;font-size:14px;line-height:1.6;margin:0 0 10px}code{color:#66e6ff;overflow-wrap:anywhere}</style>
 </head>
 <body>
 <div class="box" id="notConfigured">
