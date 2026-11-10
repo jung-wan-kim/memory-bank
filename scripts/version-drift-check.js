@@ -59,6 +59,18 @@ import { liveApply } from './live-apply.js';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const REMOTE_TIMEOUT_MS = 3000;
+/**
+ * git's own give-up for an HTTP remote: under LOW_SPEED_BYTES/s for LOW_SPEED_SECONDS in a row. Longer than
+ * REMOTE_TIMEOUT_MS on purpose — while this script lives, its timer ends the lookup; these two only matter
+ * when the script was killed first (SIGKILL cannot be handled) and nobody is left to end git: without them a
+ * connection that is accepted and never answered keeps git and its helpers for as long as the remote likes.
+ */
+const LOW_SPEED_BYTES = 1000;
+const LOW_SPEED_SECONDS = 5;
+/** Signals that end this script while the lookup runs — git's process group is ended first, then the signal is re-sent. */
+const END_SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'];
+/** Windows has no process groups to signal; there git is a plain child and only it is killed. */
+const OWN_PROCESS_GROUP = process.platform !== 'win32';
 /** A successful remote answer is reused for a day. */
 const REMOTE_TTL_MS = 24 * 60 * 60 * 1000;
 /** A failed one for an hour — offline machines do not pay 3s at every session start, and a release is not hidden for a day by one bad moment. */
@@ -119,33 +131,56 @@ function remoteUrl(pkg) {
   return url ? url.replace(/^git\+/, '') : null;
 }
 
-/** `git ls-remote --tags --refs <url>` within REMOTE_TIMEOUT_MS: { stdout } or { error }. Never rejects. */
+/**
+ * `git ls-remote --tags --refs <url>` within REMOTE_TIMEOUT_MS: { stdout } or { error }. Never rejects.
+ *
+ * git runs as the leader of its own process group, and the group is what gets killed. For an HTTP remote git
+ * starts `git remote-http`, which starts `git-remote-http`; killing git alone left those two under PID 1,
+ * holding the connection until the remote answered (v1.8.0 review: both still there 20s after the hook had
+ * exited — one pair per session start on a network that does not answer). In its own group git no longer
+ * dies with a signal sent to this script's group, so the signals that end this script end git's group first.
+ */
 function lsRemoteTags(url) {
   return new Promise((resolve) => {
     let settled = false;
     let out = '';
     let err = '';
     let child;
+    const killTree = () => {
+      if (!child || !child.pid) return;
+      // Negative pid = the group. Only when the group is ours: child.pid names a group only because of `detached`.
+      if (OWN_PROCESS_GROUP) { try { process.kill(-child.pid, 'SIGKILL'); return; } catch { /* the group is gone */ } }
+      try { child.kill('SIGKILL'); } catch { /* gone */ }
+    };
+    const onEndSignal = (signal) => {
+      killTree();
+      for (const s of END_SIGNALS) process.removeListener(s, onEndSignal);
+      process.kill(process.pid, signal); // the default action, now that no listener is left
+    };
     const done = (v) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      for (const s of END_SIGNALS) process.removeListener(s, onEndSignal);
       // Do not wait for the pipes: a helper process git started may still hold them.
       try { child.stdout.destroy(); child.stderr.destroy(); child.unref(); } catch { /* never spawned */ }
       resolve(v);
     };
     const timer = setTimeout(() => {
-      try { child.kill('SIGKILL'); } catch { /* gone */ }
+      killTree();
       done({ error: `timed out after ${REMOTE_TIMEOUT_MS}ms` });
     }, REMOTE_TIMEOUT_MS);
     try {
-      child = spawn('git', ['ls-remote', '--tags', '--refs', url], {
+      child = spawn('git', ['-c', `http.lowSpeedLimit=${LOW_SPEED_BYTES}`, '-c', `http.lowSpeedTime=${LOW_SPEED_SECONDS}`, 'ls-remote', '--tags', '--refs', url], {
         stdio: ['ignore', 'pipe', 'pipe'],
+        detached: OWN_PROCESS_GROUP,
+        windowsHide: true,
         env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, // never wait for a credential prompt
       });
     } catch (e) {
       return done({ error: e && e.message ? e.message : String(e) });
     }
+    for (const s of END_SIGNALS) process.on(s, onEndSignal);
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (d) => { if (out.length < 4 * 1024 * 1024) out += d; });
