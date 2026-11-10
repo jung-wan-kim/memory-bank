@@ -692,12 +692,18 @@ function replyIndex(item: unknown): number | null {
  * numbering cannot be trusted and nothing of it may be applied.
  *
  * Items are matched to facts by `index` alone, so the numbers are believed
- * only when the reply carries every index 0..count-1 exactly once. A model
- * that leaves one item out and numbers the rest 0..count-2, or counts from 1,
- * produces nothing but in-range integers: applied as they stand, every fact
- * after the gap was filed under its neighbour's category, and the run reported
+ * only when the reply carries every index exactly once. A model that leaves
+ * one item out and numbers the rest 0..count-2, or counts from 1, produces
+ * integers that look in range: applied as they stand, every fact after the
+ * gap was filed under its neighbour's category, and the run reported
  * "classified n-1, failed 1". With a number missing, out of range or repeated
  * there is no telling which items are shifted, so none is applied.
+ *
+ * Two numberings are complete: 0..count-1 (what was asked for) and 1..count —
+ * the same reply counted from 1. The two cannot be mistaken for each other (a
+ * reply counted from 0 has no item numbered `count`, one counted from 1 has
+ * none numbered 0), so a reply with every number of 1..count exactly once is
+ * applied shifted by one instead of being thrown away and asked again.
  *
  * One fact needs no numbering: the single item of the reply is its answer.
  * A reply with no usable item at all has nothing to apply — every fact fails,
@@ -709,13 +715,15 @@ function matchReplyToFacts(items: unknown[], count: number): Array<BatchClassify
     return [objects.length === 1 && isUsableItem(objects[0]) ? objects[0] : undefined];
   }
   const indices = items.map(replyIndex);
-  const everyIndexOnce = items.length === count
-    && indices.every((index) => index !== null && index >= 0 && index < count)
+  /** Every number of first..first+count-1, exactly once. */
+  const everyIndexOnceFrom = (first: number): boolean => items.length === count
+    && indices.every((index) => index !== null && index >= first && index < first + count)
     && new Set(indices).size === count;
-  if (!everyIndexOnce) return items.some(isUsableItem) ? null : new Array<undefined>(count).fill(undefined);
+  const first = everyIndexOnceFrom(0) ? 0 : everyIndexOnceFrom(1) ? 1 : null;
+  if (first === null) return items.some(isUsableItem) ? null : new Array<undefined>(count).fill(undefined);
   const byFact = new Array<BatchClassifyItem | undefined>(count).fill(undefined);
   items.forEach((item, k) => {
-    if (isUsableItem(item)) byFact[indices[k] as number] = item;
+    if (isUsableItem(item)) byFact[(indices[k] as number) - first] = item;
   });
   return byFact;
 }
@@ -729,9 +737,14 @@ function matchReplyToFacts(items: unknown[], count: number): Array<BatchClassify
  *
  * A reply is applied only when it carries every fact's index exactly once
  * (matchReplyToFacts). Otherwise none of it is applied and the facts are asked
- * again in two smaller batches, down to one fact per call, where the answer
- * needs no number — a fact is never filed under an item that may belong to
- * its neighbour.
+ * again — a fact is never filed under an item that may belong to its
+ * neighbour. Asking again is bounded: first in two halves (a slip, or one fact
+ * the model leaves out, costs two more calls and one half is applied whole);
+ * a half whose reply cannot be trusted either is asked fact by fact, where the
+ * answer needs no number. That is at most n + 3 calls for n facts. Halving all
+ * the way down took 2n − 1 with a model that misnumbers every multi-fact
+ * reply: 39 calls for a save batch of 20, 99 for a backfill batch of 50, each
+ * a headless model session. (`reask` is that recursion's own argument.)
  *
  * Failure taxonomy (mirrors the external-probe 3-way classification):
  * - `failed`    — the LLM RESPONDED but produced no usable item for the fact
@@ -751,6 +764,7 @@ function matchReplyToFacts(items: unknown[], count: number): Array<BatchClassify
 export async function classifyFactsBatch(
   db: Database.Database,
   facts: Fact[],
+  reask: { partOfUntrustedBatch?: boolean } = {},
 ): Promise<{
   classified: string[];
   deterministic: string[];
@@ -889,20 +903,22 @@ export async function classifyFactsBatch(
   // previous pipeline swallowed errors and logged "failed 0" regardless).
   const itemOfFact = matchReplyToFacts(replyItems, remaining.length);
   if (itemOfFact === null) {
-    // The numbering cannot be trusted (see matchReplyToFacts): apply nothing,
-    // ask again in two halves. A half answered in full is applied; one that is
-    // not is halved again, down to single facts.
+    // The numbering cannot be trusted (see matchReplyToFacts): apply nothing
+    // and ask again. The first time in two halves — a half answered in full is
+    // applied. A half that is not is asked fact by fact, not halved again: the
+    // second untrusted reply in a row says the numbering is not a slip.
+    const oneByOne = reask.partOfUntrustedBatch === true;
     console.error(
       `Batch classification reply not applied — ${replyItems.length} item(s) for ${remaining.length} facts ` +
-      `without every index exactly once; asking again in smaller batches`,
+      `without every index exactly once; asking again ${oneByOne ? 'fact by fact' : 'in two halves'}`,
     );
     const middle = Math.ceil(remaining.length / 2);
     const merged = {
       classified: [] as string[], deterministic, failed: [...preFailed], transient: [...preTransient], assignments, refused: [] as string[],
     };
-    const halves = [remaining.slice(0, middle), remaining.slice(middle)];
-    for (let h = 0; h < halves.length; h++) {
-      const part = await classifyFactsBatch(db, halves[h]);
+    const parts = oneByOne ? remaining.map((fact) => [fact]) : [remaining.slice(0, middle), remaining.slice(middle)];
+    for (let p = 0; p < parts.length; p++) {
+      const part = await classifyFactsBatch(db, parts[p], { partOfUntrustedBatch: true });
       merged.classified.push(...part.classified);
       merged.deterministic.push(...part.deterministic);
       merged.failed.push(...part.failed);
@@ -910,8 +926,8 @@ export async function classifyFactsBatch(
       merged.refused.push(...(part.refused ?? []));
       for (const [id, a] of part.assignments) merged.assignments.set(id, a);
       if (part.transient.length > 0) {
-        // The call itself failed: the other half would only spend a call. Next run.
-        for (const rest of halves.slice(h + 1)) merged.transient.push(...rest.map((f) => f.id));
+        // The call itself failed: the parts left would only spend calls. Next run.
+        for (const rest of parts.slice(p + 1)) merged.transient.push(...rest.map((f) => f.id));
         break;
       }
     }

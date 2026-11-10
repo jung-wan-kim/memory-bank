@@ -128,6 +128,98 @@ describe('batch classification: a reply is applied only when it carries every in
     expect(filed(items).every((r) => r.attempts === 0)).toBe(true);
   });
 
+  // 검수 LSO-6-R: 1부터 빠짐없이 센 응답은 0부터 센 응답과 헷갈릴 수 없다(0부터 센 응답에는 n 이 올 수 없다).
+  // 버리고 다시 물으면 사실 5건에 호출 9회가 들었다.
+  it('indices counted from 1, every one of 1..n exactly once: applied from that one call, each item to its own fact', async () => {
+    const items = save();
+    transform = (reply) => [...reply].reverse().map((item) => ({ ...item, index: item.index + 1 }));
+
+    const result = await classifyAndLinkFacts(db, items);
+
+    expect(askedSizes()).toEqual([5]);
+    expect(filed(items)).toEqual(TOPICS.map((topic) => ({ topic, category: `Cat ${topic}`, attempts: 0 })));
+    expect(result).toMatchObject({ classified: 5, failed: 0, transient: 0, fallback: 0 });
+  });
+
+  it('counted from 1 but with a number missing or repeated is not a shifted reply: nothing of it is applied', async () => {
+    const items = save();
+    // 1,2,3,4,4 for five facts — every number within 1..n, but not every number once
+    transform = (reply) => (reply.length < 2 ? reply : reply.map((item) => ({ ...item, index: Math.min(item.index + 1, reply.length - 1) })));
+
+    const result = await classifyAndLinkFacts(db, items);
+
+    expect(wrong(filed(items))).toEqual([]);
+    expect(result).toMatchObject({ classified: 5, failed: 0 });
+    expect(askedSizes().length).toBeGreaterThan(1);
+  });
+
+  // 검수 LSO-6-R: 반으로 나눠 다시 묻기를 한 건이 될 때까지 되풀이하면, 여러 건짜리 응답의 번호를 매번
+  // 어긋나게 주는 모델에서 n 건에 호출이 2n−1 회였다(저장 묶음 20건 39회, 백필 묶음 50건 99회).
+  describe('asking again is bounded: two halves once, then fact by fact — at most n + 3 calls for n facts', () => {
+    const manyTopics = (n: number) => Array.from({ length: n }, (_, i) => `topic${String(i + 1).padStart(2, '0')}`);
+    // every multi-fact reply comes back without its numbers
+    const neverNumbers = (reply: Item[]) => (reply.length < 2 ? reply : reply.map(({ index: _dropped, ...rest }) => rest));
+
+    it('5 facts: 5 → 3 + 2 → five single calls (8 calls, was 9)', async () => {
+      const items = save();
+      transform = neverNumbers;
+
+      const result = await classifyAndLinkFacts(db, items);
+
+      expect(askedSizes()).toEqual([5, 3, 1, 1, 1, 2, 1, 1]);
+      expect(filed(items)).toEqual(TOPICS.map((topic) => ({ topic, category: `Cat ${topic}`, attempts: 0 })));
+      expect(result).toMatchObject({ classified: 5, failed: 0, transient: 0 });
+    });
+
+    it('20 facts (one save batch): 23 calls, was 39 — and every fact is still filed right', async () => {
+      const topics = manyTopics(20);
+      const items = save(topics);
+      transform = neverNumbers;
+
+      const result = await classifyAndLinkFacts(db, items);
+
+      expect(askedSizes().length).toBe(20 + 3);
+      expect(askedSizes().slice(0, 2)).toEqual([20, 10]);
+      expect(askedSizes().filter((n) => n === 1).length).toBe(20);
+      expect(filed(items)).toEqual(topics.map((topic) => ({ topic, category: `Cat ${topic}`, attempts: 0 })));
+      expect(result).toMatchObject({ classified: 20, failed: 0, transient: 0 });
+    });
+
+    it('a slip in the first reply only costs two more calls: both halves come back whole', async () => {
+      const topics = manyTopics(20);
+      const items = save(topics);
+      let first = true;
+      transform = (reply) => {
+        if (!first) return reply;
+        first = false;
+        return neverNumbers(reply);
+      };
+
+      const result = await classifyAndLinkFacts(db, items);
+
+      expect(askedSizes()).toEqual([20, 10, 10]);
+      expect(filed(items)).toEqual(topics.map((topic) => ({ topic, category: `Cat ${topic}`, attempts: 0 })));
+      expect(result).toMatchObject({ classified: 20, failed: 0 });
+    });
+
+    it('one fact the model always leaves out: its half goes fact by fact, the other half is one call', async () => {
+      const topics = manyTopics(8);
+      const items = save(topics);
+      // the item of topic02 is dropped and the rest renumbered 0..n-2, whenever topic02 is asked with others
+      transform = (reply, asked) => {
+        const at = asked.findIndex((f) => f.fact === 'fact about topic02');
+        if (at < 0 || reply.length < 2) return reply;
+        return reply.filter((_, k) => k !== at).map((item, k) => ({ ...item, index: k }));
+      };
+
+      const result = await classifyAndLinkFacts(db, items);
+
+      expect(askedSizes()).toEqual([8, 4, 1, 1, 1, 1, 4]);
+      expect(filed(items)).toEqual(topics.map((topic) => ({ topic, category: `Cat ${topic}`, attempts: 0 })));
+      expect(result).toMatchObject({ classified: 8, failed: 0 });
+    });
+  });
+
   it('items in order with no index at all: each fact is asked on its own', async () => {
     const items = save();
     transform = (reply) => reply.map(({ index: _dropped, ...rest }) => rest);
