@@ -234,14 +234,31 @@ export function ensureSeenExchangesColumn(db: { prepare: (sql: string) => { all:
  * A session qualifies only once its last main-chain exchange is `quietMinutes`
  * old (see DEFAULT_QUIET_MINUTES) — a session still in use is left to its own
  * SessionEnd.
+ *
+ * `opts.sessionId` asks the same question about ONE session ("would backfill
+ * pick it?"): the same predicate, reading only that session's exchanges. The
+ * result has that session's row or none; `params` then carries the session id
+ * too (twice, ahead of the excluded projects). Filtering the whole list from
+ * outside (`SELECT 1 FROM (…) WHERE sid = ?`) does not get there: the
+ * condition is not pushed below the GROUP BY, and the planner reaches the
+ * exchanges through the two-valued is_sidechain index either way — measured on
+ * a copy of a live DB (73,498 sessions, 341,840 exchanges): 14-22s a question,
+ * of which the excluded-project list alone is 11.7s. So the session form names
+ * the session in both places it is read and keeps `is_sidechain` out of index
+ * selection (unary plus): 0.1-2ms on the same copy.
  */
-export function pendingExtractionCoreQuery(cfg: ExtractionConfig): { sql: string; params: string[] } {
+export function pendingExtractionCoreQuery(
+  cfg: ExtractionConfig,
+  opts: { sessionId?: string } = {},
+): { sql: string; params: string[] } {
   const exTerms = cfg.excludeProjects;
+  const oneSession = typeof opts.sessionId === 'string' && opts.sessionId !== '';
   // `x.session_id IS NOT NULL` is load-bearing: one NULL inside NOT IN makes the
   // whole predicate NULL (3-valued logic) → zero pending sessions → silent drain.
+  // (`x.session_id = ?` keeps NULLs out the same way.)
   const exClause = `AND e.session_id NOT IN (
       SELECT DISTINCT x.session_id FROM exchanges x
-      WHERE x.session_id IS NOT NULL
+      WHERE ${oneSession ? 'x.session_id = ?' : 'x.session_id IS NOT NULL'}
         AND (x.cwd LIKE '%/memory-bank-llm'
       ${exTerms.length ? 'OR ' + exTerms.map(() => 'x.cwd = ?').join(' OR ') : ''})
     )`;
@@ -257,7 +274,7 @@ export function pendingExtractionCoreQuery(cfg: ExtractionConfig): { sql: string
   const sql = `
     SELECT e.session_id AS sid, MAX(e.timestamp) AS ts, COUNT(*) AS n
     FROM exchanges e
-    WHERE e.is_sidechain = 0 AND e.session_id IS NOT NULL
+    WHERE ${oneSession ? '+e.is_sidechain = 0 AND e.session_id = ?' : 'e.is_sidechain = 0 AND e.session_id IS NOT NULL'}
       AND NOT EXISTS (
         SELECT 1 FROM extraction_log l
         WHERE l.session_id = e.session_id
@@ -273,5 +290,6 @@ export function pendingExtractionCoreQuery(cfg: ExtractionConfig): { sql: string
       ${exClause}
     GROUP BY e.session_id
     HAVING COUNT(*) >= ${cfg.minExchanges}${quietClause}`;
-  return { sql, params: exTerms };
+  // In the order the placeholders appear: the session (main WHERE, then the excluded-project list), the projects.
+  return { sql, params: oneSession ? [opts.sessionId as string, opts.sessionId as string, ...exTerms] : exTerms };
 }

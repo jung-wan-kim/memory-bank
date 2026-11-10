@@ -132,9 +132,14 @@ async function openDatabase() {
  * 이 세션을 backfill 이 집는가. 훅 경로에는 자체 재시도 예약이 없고, 마커가 없는 세션만
  * backfill 이 집는다(주 교환 수 조건 포함). 그 조건을 backfill 과 같은 술어로 묻는다 —
  * 조용함 조건만 뺀다(지금 막 끝난 세션이므로). 확인하지 못하면 예외를 던진다.
+ *
+ * 세션을 술어에 넘겨 그 세션의 교환만 읽게 한다. 전체 목록을 만들고 바깥에서만 거르면
+ * 모든 세션을 집계한다(실DB 복제본 73,498세션에서 한 번에 14~22초 — 그동안 이 워커가
+ * 세션 잠금을 쥔다). 바깥의 `sid = ?` 는 그대로 둔다: 답은 이 조건이 정하고, 안쪽 조건은
+ * 빠르게만 한다(세션 인자를 모르는 옛 dist 와 짝이 되어도 답은 같다).
  */
 function backfillWillPick(db, sessionId) {
-  const { sql, params } = pendingExtractionCoreQuery({ ...getExtractionConfig(), quietMinutes: 0 });
+  const { sql, params } = pendingExtractionCoreQuery({ ...getExtractionConfig(), quietMinutes: 0 }, { sessionId });
   return Boolean(db.prepare(`SELECT 1 FROM (${sql}) WHERE sid = ? LIMIT 1`).get(...params, sessionId));
 }
 

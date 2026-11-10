@@ -88,8 +88,9 @@ export function initDatabase() {
   fs.writeFileSync(path.join(dist, 'pending-extraction.js'), `
 import fs from 'node:fs';
 export function getExtractionConfig() { return { minExchanges: 2, excludeProjects: ['/x'], quietMinutes: 60 }; }
-export function pendingExtractionCoreQuery(cfg) {
+export function pendingExtractionCoreQuery(cfg, opts) {
   fs.appendFileSync(${order}, 'pending-cfg:' + JSON.stringify(cfg) + '\\n');
+  fs.appendFileSync(${order}, 'pending-opts:' + JSON.stringify(opts ?? null) + '\\n');
   return { sql: 'SELECT sid FROM stub_pending WHERE cwd <> ?', params: ['/x'] };
 }
 `);
@@ -210,6 +211,8 @@ describe('훅 워커: 선색인이 실패하면 일부만 색인된 세션을 "�
       expect(log, '정상 결과 줄처럼 보이면 안 된다').not.toMatch(/extracted=\d+ saved=\d+/);
       // backfill 과 같은 술어에 조용함 조건만 끄고 이 세션 하나를 묻는다(공급자 일시 실패 때와 같은 탐침).
       expect(order).toContain(`pending-cfg:${JSON.stringify({ minExchanges: 2, excludeProjects: ['/x'], quietMinutes: 0 })}`);
+      // 세션을 술어에 넘긴다 — 전체 목록을 만들지 않고 그 세션의 교환만 읽게(실DB 복제본에서 14~22초 → 2ms 이하).
+      expect(order).toContain(`pending-opts:${JSON.stringify({ sessionId: SID })}`);
       const probe = JSON.parse(order.find((l) => l.startsWith('probe:'))!.slice('probe:'.length));
       expect(probe.args).toEqual(['/x', SID]);
     });
@@ -272,7 +275,9 @@ describe('훅 워커: 실패 문구가 실제 처리와 같다', () => {
     expect(log, '훅 경로에는 "다음 run" 이 없다').not.toMatch(/다음 run 재시도/);
     // backfill 과 같은 술어에 조용함 조건만 끄고, 이 세션 하나를 묻는다.
     expect(order).toContain(`pending-cfg:${JSON.stringify({ minExchanges: 2, excludeProjects: ['/x'], quietMinutes: 0 })}`);
+    expect(order).toContain(`pending-opts:${JSON.stringify({ sessionId: SID })}`);
     const probe = JSON.parse(order.find((l) => l.startsWith('probe:'))!.slice('probe:'.length));
+    // 바깥의 세션 조건은 남는다: 답은 이 조건이 정한다(술어가 세션 인자를 무시해도 같은 답).
     expect(probe.sql).toBe('SELECT 1 FROM (SELECT sid FROM stub_pending WHERE cwd <> ?) WHERE sid = ? LIMIT 1');
     expect(probe.args).toEqual(['/x', SID]);
   });
