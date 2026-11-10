@@ -18,14 +18,19 @@ const MAX_LOG_BYTES = 5 * 1024 * 1024; // rotate at 5MB
 
 export interface InjectLogEntry {
   ts: string;
-  /** 'deduped': 후보 전부가 이 세션에서 이미 주입됨 → 재주입 0 (토큰 절약 관측용). */
-  status: 'injected' | 'no-match' | 'skipped' | 'error' | 'deduped';
+  /**
+   * 'deduped': 후보 전부가 이 세션에서 이미 주입됨 → 재주입 0 (토큰 절약 관측용).
+   * 'ledger-reset': 압축(compaction) 뒤 그 세션의 원장을 비웠다 (scripts/ledger-reset-hook.js) — 주입 줄이 아니다.
+   */
+  status: 'injected' | 'no-match' | 'skipped' | 'error' | 'deduped' | 'ledger-reset';
   project?: string;
   prompt_len?: number;
   candidates?: number;
   injected?: number;
   /** 세션 원장 dedup 으로 걸러진 fact 수 — 절감량이 로그로 상시 측정된다. */
   deduped?: number;
+  /** status='ledger-reset' only — 비운 원장에 있던 키 수(fact id + 본문 키). */
+  ledger_cleared?: number;
   /** 실제 주입된 블록 크기(자) — 토큰 비용 관측용 (~chars/3 tok). */
   chars?: number;
   duration_ms?: number;

@@ -56,6 +56,19 @@ describe('세션 원장 기록자', () => {
     expect(hook.before + '\n' + hook.text).toMatch(/if \(delivered && /);
   });
 
+  it('resetLedger 라는 이름이 나오는 곳은 압축 훅 스크립트의 import 와 호출 한 번씩뿐이고, 호출은 source=compact 확인 뒤에 있다', () => {
+    // 원장을 비우는 곳이 늘면(재개·시작 때 비우기 등) 컨텍스트에 남아 있는 사실이 다시 실린다 (2026-11-10)
+    const hits = scan(/\bresetLedger\b/);
+    expect([...new Set(hits.map((h) => h.file))], JSON.stringify(hits, null, 1)).toEqual(['scripts/ledger-reset-hook.js']);
+    expect(hits.filter((h) => /^import\b/.test(h.text)), 'import 한 줄').toHaveLength(1);
+    const calls = hits.filter((h) => !/^import\b/.test(h.text));
+    expect(calls, '호출 한 줄').toHaveLength(1);
+    const lines = fs.readFileSync(path.join(REPO, 'scripts', 'ledger-reset-hook.js'), 'utf8').split('\n');
+    const guard = lines.findIndex((l) => /input\.source !== 'compact'\) return;/.test(l));
+    expect(guard, 'source 확인 줄').toBeGreaterThanOrEqual(0);
+    expect(guard + 1, 'source 확인이 호출보다 앞').toBeLessThan(calls[0].line);
+  });
+
   it('원장 폴더(ledgerDir)에 직접 쓰는 코드는 원장 모듈 밖에 없다', () => {
     expect(scan(/\bledgerDir\b|inject-ledger['"/]/).filter((h) => !/^import\b/.test(h.text))).toEqual([]);
     expect(scan(/state[\\/]inject-ledger|'inject-ledger'/)).toEqual([]);

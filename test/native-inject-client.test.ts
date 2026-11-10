@@ -373,6 +373,24 @@ describe.skipIf(!cargo)('native inject client ≡ JS client', () => {
     expect(rsL.length).toBe(800); expect(rsL[0]).toBe('k2'); expect(rsL.slice(-2)).toEqual(['n1', 'n2']); expect(rsL.filter((k) => k === 'k5').length).toBe(1);
   }, 60_000);
 
+  it('after the compact hook cleared a session ledger both clients record the delivered block from empty — same file bytes, old keys gone', async () => {
+    await lineDaemon(sock(), (_req, c) => c.end(JSON.stringify({ ok: true, context: 'AFTER-COMPACT', ledger_keys: ['n1', 't:n1'] }) + '\n'), servers);
+    const dir = path.join(ci(), 'state', 'inject-ledger'); fs.mkdirSync(dir, { recursive: true });
+    const seed = JSON.stringify(['old1', 't:old1', 'n1']); // 'n1' was injected before the compaction too
+    for (const sid of ['sess-reset-js', 'sess-reset-rs']) {
+      fs.writeFileSync(path.join(dir, `${sid}.json`), seed);
+      const hook = await runChild(process.execPath, ['scripts/ledger-reset-hook.js'],
+        JSON.stringify({ session_id: sid, source: 'compact', hook_event_name: 'SessionStart', cwd: '/tmp/proj' }), baseEnv(), REPO, 30_000);
+      expect(hook.status).toBe(0);
+      expect(readLedger(tmp, sid), 'the hook removes the file — both clients read an absent ledger as empty').toBeNull();
+    }
+    const js = await runNode(envelope({ session_id: 'sess-reset-js' })); const rs = await runNative(envelope({ session_id: 'sess-reset-rs' }));
+    expect(rs.stdout).toBe('AFTER-COMPACT\n'); expect(rs.stdout).toBe(js.stdout);
+    expect(await waitFor(() => readLedger(tmp, 'sess-reset-rs') !== null && readLedger(tmp, 'sess-reset-js') !== null)).toBe(true);
+    expect(readLedger(tmp, 'sess-reset-rs')).toBe('["n1","t:n1"]');
+    expect(readLedger(tmp, 'sess-reset-rs')).toBe(readLedger(tmp, 'sess-reset-js'));
+  }, 60_000);
+
   it('a prompt the native client hands to node keeps client_impl native on the fallback log line (fallback rate stays measurable)', async () => {
     const rs = await runNative(envelope({ session_id: 'sess-fb-tag' })); // no daemon listening, real node on PATH
     expect(rs.status).toBe(0);
