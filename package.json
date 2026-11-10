@@ -39,7 +39,7 @@
     "postinstall": "npm rebuild better-sqlite3 2>/dev/null || true",
     "test": "vitest run",
     "test:watch": "vitest",
-    "pretest": "npm run build"
+    "pretest": "node scripts/check-dist-fresh.mjs"
   },
   "keywords": [
     "claude-code",

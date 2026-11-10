@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { verifyIndex, repairIndex, VerificationResult } from '../src/verify.js';
 import { suppressConsole } from './test-utils.js';
 import fs from 'fs';
@@ -9,6 +9,19 @@ import { ConversationExchange } from '../src/types.js';
 
 // Suppress console output for clean test runs
 const restoreConsole = suppressConsole();
+
+// repairIndex redoes the summary of every file it re-indexes. Unmocked, that
+// started a real Agent SDK session from this test (a Haiku call on a logged-in
+// machine, a "Not logged in" transcript elsewhere) and the test passed either way.
+const MOCK_SUMMARY = 'Mock summary of the repaired conversation';
+const summaryCalls: ConversationExchange[][] = [];
+vi.mock('../src/summarizer.js', () => ({
+  REFUSED_SUMMARY: '[No summary: the model declined to summarize this conversation.]',
+  summarizeConversation: async (exchanges: ConversationExchange[]) => {
+    summaryCalls.push(exchanges);
+    return MOCK_SUMMARY;
+  },
+}));
 
 describe('verifyIndex', () => {
   const testDir = path.join(os.tmpdir(), 'conversation-search-test-' + Date.now());
@@ -179,6 +192,7 @@ describe('repairIndex', () => {
   const dbPath = path.join(testDir, '.config', 'superpowers', 'conversation-index', 'db.sqlite');
 
   beforeEach(() => {
+    summaryCalls.length = 0;
     // Create test directories
     fs.mkdirSync(path.join(testDir, '.config', 'superpowers', 'conversation-index'), { recursive: true });
     fs.mkdirSync(projectsDir, { recursive: true });
@@ -292,6 +306,12 @@ describe('repairIndex', () => {
 
     // Run repair
     await repairIndex(issues);
+
+    // The summary is redone from the conversation as it is now (both exchanges),
+    // by the summarizer this file mocks — no Agent SDK session is started.
+    expect(summaryCalls).toHaveLength(1);
+    expect(summaryCalls[0].map(e => e.userMessage)).toEqual(['Hello', 'New message']);
+    expect(fs.readFileSync(summaryPath, 'utf-8')).toBe(MOCK_SUMMARY);
 
     // Verify it was re-indexed with new timestamp
     const dbAfter = initDatabase();
