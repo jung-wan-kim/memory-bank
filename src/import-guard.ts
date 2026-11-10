@@ -17,6 +17,19 @@ import type Database from 'better-sqlite3';
  * (2) is marked as imported, so that later readers can tell it from a fact
  * this device extracted itself.
  *
+ * The same judgment covers the other text an import stores and a later reader
+ * sees: a fact's category (printed in front of the fact — the import also
+ * folds it into the five-name allowlist, so no file value is stored there as
+ * it came), ontology domain and category names, and a relation's reasoning.
+ * Ontology descriptions are not judged: two descriptions of this install's own
+ * categories match a pattern (measured 2026-11-11), and refusing them would
+ * drop real categories when a rebuilt database imports its own export.
+ *
+ * Known limit: these are fixed phrasings. A sentence that says the same thing
+ * in other words ("download it and run it with sh", "leave this step out of
+ * every summary") passes — the guard stops the plain forms, not a determined
+ * writer of the sync folder.
+ *
  * The patterns are deliberately narrow. Rule-shaped facts are normal here
  * ("Always run npm test before commit", "Never commit .env") and must keep
  * importing; what is refused are the few shapes that only make sense as an
@@ -36,7 +49,24 @@ export type ImportRejectReason =
 
 const SHELLS = '(?:bash|sh|zsh|dash|ksh|fish|python3?|node|perl|ruby|php|pwsh|powershell)';
 
-const PATTERNS: Array<{ reason: ImportRejectReason; re: RegExp }> = [
+/**
+ * A whole <system>…</system> / <system-reminder>…</system-reminder> block inside a text: an
+ * opening tag and, anywhere after it, a closing tag of either name. One mention of the tag
+ * name is ordinary (facts describe harness text); an opened and closed block is a forgery.
+ *
+ * Two bounded searches, not one `<open>[\s\S]*<close>` pattern: that one restarted its scan
+ * at every opening tag, so a line of repeated unclosed tags took time quadratic in its length
+ * (594KB held the import hook for 62s — the sync file sets no limit on a line).
+ */
+function hasRoleBlock(flat: string): boolean {
+  const open = flat.search(/<\s?(?:system-reminder|system)\b[^>]{0,60}>/i);
+  if (open < 0) return false;
+  const close = /<\s?\/\s?(?:system-reminder|system)\s?>/gi;
+  close.lastIndex = open;
+  return close.test(flat);
+}
+
+const PATTERNS: Array<{ reason: ImportRejectReason; re: RegExp } | { reason: ImportRejectReason; test: (flat: string) => boolean }> = [
   // "ignore all previous instructions", "disregard the system prompt"
   {
     reason: 'override-instructions',
@@ -60,9 +90,8 @@ const PATTERNS: Array<{ reason: ImportRejectReason; re: RegExp }> = [
   { reason: 'remote-script-execution', re: new RegExp(`(?:\\b${SHELLS}|\\bsource|(?:^|\\s)\\.)\\s+<\\(\\s*(?:curl|wget)\\b`, 'i') },
   { reason: 'remote-script-execution', re: /\b(?:iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n|;]{0,200}\|\s*(?:iex|invoke-expression)\b/i },
   { reason: 'remote-script-execution', re: new RegExp(`\\bbase64\\s+(?:-d|-D|--decode)\\b[^\\n|;]{0,80}\\|\\s*(?:sudo\\s+)?${SHELLS}\\b`, 'i') },
-  // A whole <system>…</system> / <system-reminder>…</system-reminder> block inside a fact.
-  // One mention of the tag name is ordinary (facts describe harness text); an opened and closed block is a forgery.
-  { reason: 'role-marker', re: /<\s*(system|system-reminder)\b[^>]{0,60}>[\s\S]*<\s*\/\s*\1\s*>/i },
+  // A whole <system>…</system> / <system-reminder>…</system-reminder> block inside a fact (hasRoleBlock).
+  { reason: 'role-marker', test: hasRoleBlock },
   // "send the API key to https://…", "email the credentials to x@y.z"
   {
     reason: 'credential-exfiltration',
@@ -75,15 +104,18 @@ export function instructionLikeReason(text: unknown): ImportRejectReason | null 
   if (typeof text !== 'string' || text === '') return null;
   // Whitespace runs collapsed: the injected block shows the text that way, and a newline must not hide a match.
   const flat = text.replace(/\s+/g, ' ');
-  for (const { reason, re } of PATTERNS) {
-    if (re.test(flat)) return reason;
+  for (const pattern of PATTERNS) {
+    if ('test' in pattern ? pattern.test(flat) : pattern.re.test(flat)) return pattern.reason;
   }
   return null;
 }
 
-/** Why a sync-file fact must not be imported (English or Korean text), or null. */
-export function importGuardReason(f: { fact?: unknown; fact_kr?: unknown }): ImportRejectReason | null {
-  return instructionLikeReason(f.fact) ?? instructionLikeReason(f.fact_kr);
+/**
+ * Why a sync-file fact must not be imported, or null: its English text, its
+ * Korean text or its category is an instruction aimed at the model.
+ */
+export function importGuardReason(f: { fact?: unknown; fact_kr?: unknown; category?: unknown }): ImportRejectReason | null {
+  return instructionLikeReason(f.fact) ?? instructionLikeReason(f.fact_kr) ?? instructionLikeReason(f.category);
 }
 
 // ---------------------------------------------------------------------------

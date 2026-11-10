@@ -4,9 +4,9 @@ import { initDatabase, getVecQuant, embeddingToVecBlob, vecParamSql } from './db
 import { generateEmbedding, initEmbeddings, EMBEDDING_VERSION } from './embeddings.js';
 import { getSyncDir, ownExportStillInDb } from './sync-export.js';
 import { canonicalizeProject } from './project-canon.js';
-import { factRejectReason, ontologyNameRejectReason } from './fact-validity.js';
+import { factRejectReason, normalizeCategory, ontologyNameRejectReason } from './fact-validity.js';
 import { secretRejectReason } from './secret-scan.js';
-import { importGuardReason, recordImportedFact } from './import-guard.js';
+import { importGuardReason, instructionLikeReason, recordImportedFact, type ImportRejectReason } from './import-guard.js';
 
 interface SyncFact {
   id: string;
@@ -23,6 +23,24 @@ interface SyncFact {
 }
 
 /**
+ * The highest consolidated_count an imported fact is stored with. The count
+ * orders the session-start block ("most confirmed first"), and the file value
+ * was stored as it came: one line with 999999 put a planted fact on the first
+ * line of every project. The highest count this install has reached itself is
+ * 51 (2026-11-11), so the bound changes no real row. It is a sanity bound, not
+ * a ranking defence — a planted line can still claim a count up to it.
+ */
+export const MAX_IMPORTED_CONSOLIDATED_COUNT = 100;
+
+/** The count to store for a sync-file value: an integer in 1..MAX_IMPORTED_CONSOLIDATED_COUNT. An absent value is 1. */
+function importedConsolidatedCount(value: unknown): { count: number; adjusted: boolean } {
+  if (value === undefined || value === null) return { count: 1, adjusted: false };
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) return { count: 1, adjusted: true };
+  if (value > MAX_IMPORTED_CONSOLIDATED_COUNT) return { count: MAX_IMPORTED_CONSOLIDATED_COUNT, adjusted: true };
+  return { count: value, adjusted: false };
+}
+
+/**
  * Import facts and ontology from sync/ JSONL files into local DB.
  * Only inserts records that don't already exist (by ID).
  * Generates embeddings for new facts.
@@ -32,6 +50,7 @@ export async function importFromSync(): Promise<{
   rejectedJunk: number; detachedCategoryRefs: number; failedFacts: number; failedFactErrors: string[];
   rejectedSecrets: number; rejectedSecretReasons: Record<string, number>;
   rejectedInstructionLike: number; rejectedInstructionLikeSamples: string[];
+  foldedCategories: number; clampedCounts: number;
 }> {
   const syncDir = getSyncDir();
   // rejectedJunk: rows in the sync files that fact-validity.ts refuses (template residue,
@@ -46,15 +65,26 @@ export async function importFromSync(): Promise<{
   // rejectedSecrets: facts whose text carries a credential-shaped string (secret-scan.ts) —
   //   never imported; like rejectedJunk the rows stay in the sync files until the exporting
   //   device stops exporting them. rejectedSecretReasons counts them by kind (no text).
-  // rejectedInstructionLike: facts whose text is an instruction aimed at the model (import-guard.ts) — like
-  //   rejectedJunk they stay in the files, so the count repeats per run. Samples: the first few "id: reason".
+  // rejectedInstructionLike: rows whose text is an instruction aimed at the model (import-guard.ts): a fact's
+  //   text or category, an ontology domain/category name, a relation's reasoning. Like rejectedJunk they stay
+  //   in the files, so the count repeats per run. Samples: the first few "id: reason" (facts), or
+  //   "domain|category|relation id: reason".
+  // foldedCategories: imported facts whose category was neither one of the five names nor a known alias —
+  //   stored as 'knowledge' (normalizeCategory). No file value is stored as a category as it came.
+  // clampedCounts: imported facts whose consolidated_count was not an integer in
+  //   1..MAX_IMPORTED_CONSOLIDATED_COUNT — stored as 1 (not a count) or as the bound (above it).
   const result = {
     newFacts: 0, newDomains: 0, newCategories: 0, newRelations: 0, rejectedJunk: 0, detachedCategoryRefs: 0,
     failedFacts: 0, failedFactErrors: [] as string[],
     rejectedSecrets: 0, rejectedSecretReasons: {} as Record<string, number>,
     rejectedInstructionLike: 0, rejectedInstructionLikeSamples: [] as string[],
+    foldedCategories: 0, clampedCounts: 0,
   };
   const rejectedDomainIds = new Set<string>();
+  const refuseInstructionLike = (label: string, reason: ImportRejectReason): void => {
+    result.rejectedInstructionLike++;
+    if (result.rejectedInstructionLikeSamples.length < 5) result.rejectedInstructionLikeSamples.push(`${label}: ${reason}`);
+  };
 
   // Check if sync files exist
   const factsPath = path.join(syncDir, 'facts.jsonl');
@@ -77,6 +107,8 @@ export async function importFromSync(): Promise<{
         try {
           const d = JSON.parse(line);
           if (ontologyNameRejectReason(d.name)) { result.rejectedJunk++; rejectedDomainIds.add(String(d.id)); continue; }
+          const domainGuard = instructionLikeReason(d.name);
+          if (domainGuard) { refuseInstructionLike(`domain ${d.id}`, domainGuard); rejectedDomainIds.add(String(d.id)); continue; }
           const existing = db.prepare('SELECT id FROM ontology_domains WHERE id = ?').get(d.id);
           if (!existing) {
             db.prepare('INSERT INTO ontology_domains (id, name, description, created_at) VALUES (?, ?, ?, ?)').run(
@@ -96,6 +128,8 @@ export async function importFromSync(): Promise<{
         try {
           const c = JSON.parse(line);
           if (ontologyNameRejectReason(c.name) || rejectedDomainIds.has(String(c.domain_id))) { result.rejectedJunk++; continue; }
+          const categoryGuard = instructionLikeReason(c.name);
+          if (categoryGuard) { refuseInstructionLike(`category ${c.id}`, categoryGuard); continue; }
           const existing = db.prepare('SELECT id FROM ontology_categories WHERE id = ?').get(c.id);
           if (!existing) {
             db.prepare('INSERT INTO ontology_categories (id, domain_id, name, description, created_at) VALUES (?, ?, ?, ?, ?)').run(
@@ -125,7 +159,7 @@ export async function importFromSync(): Promise<{
           continue;
         }
         const guardReason = importGuardReason(f);
-        if (guardReason) { result.rejectedInstructionLike++; if (result.rejectedInstructionLikeSamples.length < 5) result.rejectedInstructionLikeSamples.push(`${f.id}: ${guardReason}`); continue; }
+        if (guardReason) { refuseInstructionLike(String(f.id), guardReason); continue; }
 
         // Canonicalize scope before dedup/insert — other devices may still
         // export slug-format project names.
@@ -144,6 +178,14 @@ export async function importFromSync(): Promise<{
         if (existingByContent) continue;
 
         seenInBatch.add(contentKey);
+        // The category and the count are stored from here on, never as the file wrote them:
+        // the category is one of the five names, the count an integer within the bound.
+        const folded = normalizeCategory(f.category);
+        if (!folded.known) result.foldedCategories++;
+        f.category = folded.category;
+        const count = importedConsolidatedCount(f.consolidated_count);
+        if (count.adjusted) result.clampedCounts++;
+        f.consolidated_count = count.count;
         newFacts.push(f);
       } catch { /* skip malformed */ }
     }
@@ -220,6 +262,8 @@ export async function importFromSync(): Promise<{
           const r = JSON.parse(line);
           const existing = db.prepare('SELECT id FROM ontology_relations WHERE id = ?').get(r.id);
           if (!existing) {
+            const reasoningGuard = instructionLikeReason(r.reasoning);
+            if (reasoningGuard) { refuseInstructionLike(`relation ${r.id}`, reasoningGuard); continue; }
             db.prepare(`
               INSERT INTO ontology_relations (id, source_fact_id, relation_type, target_fact_id, reasoning, created_at)
               VALUES (?, ?, ?, ?, ?, ?)
