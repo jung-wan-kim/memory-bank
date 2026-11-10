@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Memory Bank is a Claude Code plugin that provides semantic search and fact extraction across past conversations. It runs as an MCP server exposing `search`, `read`, and `search_facts` tools.
+Memory Bank is a Claude Code plugin that provides semantic search and fact extraction across past conversations. It runs as an MCP server exposing 11 tools — `search`, `read`, `search_facts`, `search_ontology`, `ask_avatar`, `trace_fact`, `explore_graph`, `cross_project_insights`, `graph_stats`, `tag_fact`, `list_tags` (reference: `skills/remembering-conversations/MCP-TOOLS.md`).
 
 ## Build & Test Commands
 
@@ -23,7 +23,7 @@ The build is two-step: `tsc` compiles `src/` → `dist/`, then `esbuild` bundles
 ### Data Flow
 
 1. **Sync** (`src/sync.ts`): Copies JSONL conversation files from `~/.claude/projects/` to `~/.config/superpowers/conversation-archive/`, indexes new files into SQLite
-2. **Index** (`src/indexer.ts`): Parses JSONL → generates 384-dim embeddings via `Xenova/all-MiniLM-L6-v2` → stores in SQLite with `sqlite-vec`
+2. **Index** (`src/indexer.ts`): Parses JSONL → generates 384-dim embeddings via `Xenova/multilingual-e5-small` (`src/embedding-version.ts`) → stores in SQLite with `sqlite-vec`
 3. **Search** (`src/search.ts`): Vector search (cosine similarity), text search (FTS), or combined mode
 4. **Fact Extraction** (`src/fact-extractor.ts`): LLM (Haiku) extracts decisions/preferences/patterns from exchanges at session end
 5. **Consolidation** (`src/consolidator.ts`): Deduplicates, resolves contradictions, and tracks evolution of facts via LLM comparison
@@ -32,7 +32,7 @@ The build is two-step: `tsc` compiles `src/` → `dist/`, then `esbuild` bundles
 
 | Module | Purpose |
 |--------|---------|
-| `mcp-server.ts` | MCP server entry point — registers `search`, `read`, `search_facts` tools |
+| `mcp-server.ts` | MCP server entry point — registers the 11 tools; their text is built in `search.ts` (`search`), `show.ts` (`read`), `facts-tool.ts` (fact tools) and `ontology-browse.ts` (`search_ontology`) so it can be tested without starting the server |
 | `db.ts` | SQLite schema init, migrations, CRUD for exchanges |
 | `fact-db.ts` | CRUD and vector search for facts table |
 | `inject-select.ts` | Which facts a prompt's block carries (KNN → baseline gate → 1-hop) — shared by the live hook and the replay bench; `PRODUCTION_SELECT_OPTIONS` is the bench's decision |
@@ -122,7 +122,7 @@ Automatic classification of facts into domain/category hierarchy:
 
 - TypeScript 5.9+ (ES2022, ESM modules — `"type": "module"` in package.json)
 - SQLite via `better-sqlite3` 12.x + `sqlite-vec` 0.1.x for vector search
-- `@xenova/transformers` 2.17+ for local embedding generation (all-MiniLM-L6-v2, 384-dim)
+- `@xenova/transformers` 2.17+ for local embedding generation (multilingual-e5-small, 384-dim)
 - `@anthropic-ai/sdk` 0.78+ for LLM calls (Haiku)
 - `@modelcontextprotocol/sdk` 1.20+ for MCP server
 - `zod` 3.x for input validation

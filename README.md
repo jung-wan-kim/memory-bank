@@ -223,15 +223,19 @@ Project A sees: Project A facts + Global facts (never Project B). Since v1.7.8 t
 
 | Tool | Description |
 |------|-------------|
-| `search` | Semantic/text search + RAG context (related facts auto-attached) |
-| `read` | Display full conversation from JSONL |
-| `search_facts` | Query facts with ontology context + graph relations |
-| `search_ontology` | Browse ontology hierarchy (Domain → Category → Facts) |
+| `search` | Semantic + keyword search (at most `limit` results; date/agent filters; machine-generated turns left out unless `include_noise`) + related facts attached |
+| `read` | Read a conversation or a line range of it (streamed — any file size; 40,000 characters per call with a `startLine` to continue from) |
+| `search_facts` | Query facts with ontology context + graph relations (category/agent/tag filters; identical sentences folded) |
+| `search_ontology` | Browse the ontology level by level: domains and category counts first, facts with a `category` filter (bounded output) |
 | `ask_avatar` | Ask your technical alter ego — answers grounded in past decisions |
 | `trace_fact` | Trace a fact back to its source conversations |
 | `explore_graph` | Multi-hop graph traversal (1-3 hops) from any fact |
 | `cross_project_insights` | Find similar decisions from other projects |
 | `graph_stats` | Knowledge graph statistics and health |
+| `tag_fact` | Add, remove or replace the user tags of a fact |
+| `list_tags` | Browse user tags, or the facts carrying them |
+
+Parameters, limits and what each answer says when it is cut short: [`skills/remembering-conversations/MCP-TOOLS.md`](skills/remembering-conversations/MCP-TOOLS.md).
 
 ### Knowledge Graph Tools
 

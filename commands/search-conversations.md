@@ -39,9 +39,9 @@ Describe what you're looking for in natural language:
 
 ## Search Modes
 
-- **Semantic** (default) - Finds conceptually similar discussions
-- **Text** - Exact string matching for SHAs, error codes
-- **Both** - Combines semantic + exact matching
+- **Both** (default) - Semantic + keyword, merged
+- **Semantic** - Finds conceptually similar discussions
+- **Text** - Keyword matching (every word must occur) for SHAs, error codes, identifiers
 
 **Filters available:**
 - Date range (--after, --before)

@@ -35,6 +35,7 @@ Search past conversations by meaning, by keyword, or both.
 | `after` | `string` | No | Only conversations on or after this date (YYYY-MM-DD, UTC timestamps) |
 | `before` | `string` | No | Only conversations before this date (YYYY-MM-DD, UTC timestamps) |
 | `coding_agent` | `string` | No | Only conversations of this agent (`claude-code`, `codex`, …) |
+| `include_noise` | `boolean` | No | Also return machine-generated turns (default `false`) |
 | `response_format` | `"markdown"` \| `"json"` | No | Default `"markdown"` |
 
 **Modes**
@@ -51,8 +52,24 @@ Search past conversations by meaning, by keyword, or both.
 - `Lines A-B in <path>` — pass these to `read` as `path`, `startLine`, `endLine`.
 
 Date and agent filters are applied to the semantic candidates themselves (the search keeps widening until
-`limit` rows pass). When even the widest search allowed cannot fill `limit`, the answer ends with a note
-saying how many candidates were examined and how many passed — it is cut short, not "nothing exists".
+`limit` rows pass). When even the widest search allowed cannot fill `limit`, the answer ends with a
+`Note:` line saying how many candidates were examined and how many passed — it is cut short, not "nothing
+exists". A `Note:` line also appears when the keyword pass had to scan every exchange instead of using its
+index (and why).
+
+**What is left out by default** — machine-generated turns: sub-agent warm-up turns (a sidechain turn whose
+user message is exactly `Warmup`) and other memory plugins' observer prompts (user message starting with
+`<observed_from_primary_session>`). `include_noise: true` brings them back. Snapshot copies of one turn
+(the same turn indexed again as the session grew) are folded into one result, the most complete copy.
+A conversation summary that is really a stored error message is not shown.
+
+**Markdown** answers end with a *Related Knowledge* section: up to 3 facts close to the query, each clipped
+to 300 characters with at most 5 related facts.
+
+**JSON** answers are compact: `{ results, count, mode, notes, hint }`. Each result has `exchange` (`id`,
+`project`, `timestamp`, `codingAgent`, `archivePath`, `lineStart`, `lineEnd`, and `userMessage` /
+`assistantMessage` clipped to 500 characters), `clipped`, `similarity`, `matchedBy`, `snippet`. The full
+text of an exchange is read with `read`.
 
 **Multi-concept search** — `query: ["authentication", "React Router", "error handling"]` returns
 conversations in which every concept has a semantic hit. `mode` is ignored.
@@ -96,6 +113,14 @@ facts.
 
 Each result shows the fact, its id, scope, confirmation count, similarity and ontology position.
 
+- The category, agent and tag conditions are part of the search (it widens until `limit` facts pass), so a
+  filter never turns facts that exist into an empty answer. If the widest search allowed still cannot fill
+  `limit`, a closing `Note:` says how many facts were examined.
+- Facts whose sentence is identical (whitespace and case ignored) are shown once; the other ids are listed
+  under `Same sentence also stored as:` so they can be tagged or handled together.
+- `Related:` lists at most 5 related facts of the same project scope (or global), 160 characters each,
+  contradicting and superseding ones first; the rest are counted. `explore_graph` lists more.
+
 ## trace_fact
 
 Find the facts closest to a query and list the conversations each one was extracted from, its revision
@@ -108,6 +133,10 @@ history and its related facts.
 | `query` | `string` | Yes | Finds the fact(s) to trace |
 | `project` | `string` | No | Project scope |
 | `limit` | `number` | No | Facts traced, 1-10 (default 3) |
+
+Per fact: the 5 newest source conversations (a 200-character look at the question, the path and the line
+range to pass to `read`) with the count of the rest and of recorded sources no longer in the index; and at
+most 5 related facts of the same project scope.
 
 ## search_ontology
 
@@ -145,6 +174,9 @@ Start from the facts closest to a query and follow relations (`SUPPORTS`, `INFLU
 | `hops` | `number` | No | Traversal depth, 1-3 (default 2) |
 | `project` | `string` | No | Project scope of the starting facts |
 
+Up to 20 connected facts are listed per starting fact, most relevant first, each clipped to 300
+characters; the rest are counted.
+
 ## graph_stats
 
 Totals of the knowledge graph: active facts, domains, categories, relations, revisions, facts per category
@@ -167,6 +199,9 @@ Facts similar to a query from projects other than the current one.
 | `query` | `string` | Yes | Topic or decision |
 | `current_project` | `string` | No | Project whose own facts are excluded (default: the server's working directory) |
 | `limit` | `number` | No | 1-20 (default 5) |
+
+Global facts and the current project's facts are skipped inside the search, so `limit` is filled with other
+projects' facts when they exist.
 
 ## ask_avatar
 
