@@ -229,6 +229,21 @@ function parseTranslateTexts(body) {
 }
 
 /**
+ * JSON for an inline <script>. JSON.stringify leaves `</script>`, `<!--` and
+ * U+2028/2029 as they are, so a stored string could end the script element (or
+ * the string literal) and continue as markup. Escaped, the JS parser reads back
+ * exactly the same value.
+ */
+function safeJsonForScript(value) {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
+/**
  * The client address a quota or login limit is counted against. X-Forwarded-For
  * is whatever the caller typed unless a proxy we run put it there, so it is
  * read only where that is the case (the public Hue OS listener, or
@@ -268,5 +283,6 @@ module.exports = {
   checkLocalAccess,
   parsePaging,
   parseTranslateTexts,
+  safeJsonForScript,
   clientAddress,
 };

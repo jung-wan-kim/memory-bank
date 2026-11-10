@@ -28,6 +28,9 @@ const SEEDED_EXCHANGES = 205;
 // Joined at run time: a token-shaped literal in a test file trips secret scanners.
 const UI_TOKEN = ['ui', 'access', 'value', 'for', 'tests', '0123456789abcdef'].join('-');
 const HUE_PASSWORD = 'correct-horse-9';
+// A stored fact that tries to leave the inline <script> of the graph page, and carries
+// the sequences String.replace treats specially in a replacement string.
+const SCRIPT_BREAKOUT = `</script><script>window.__mb_xss_probe=1</script> & <!-- $& $' $\` \u2028`;
 
 let tmp: string;
 let configDir: string;
@@ -140,6 +143,8 @@ beforeAll(async () => {
           insert.run(`ex-${i}`, new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(), `question ${i} ${MARKER}`, `answer ${i}`, i * 2 + 1, i * 2 + 2);
         }
       })();
+      db.prepare(`INSERT INTO facts (id, fact, category, scope_type, source_exchange_ids, created_at, updated_at)
+        VALUES ('fact-breakout', ?, 'knowledge', 'global', '[]', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`).run(SCRIPT_BREAKOUT);
     } finally {
       db.close();
     }
@@ -493,5 +498,49 @@ describe('Hue OS public listener', () => {
     const profile = await request(port, '/api/replacement-os/profile', { headers: { ...tunnel, Cookie: cookie } });
     expect(profile.status).toBe(200);
     expect(JSON.parse(profile.body).quota).toMatchObject({ used: 0 });
+  });
+});
+
+describe('HTML output (SEC-09)', () => {
+  let server: Started;
+  beforeAll(async () => { server = await startServer(); });
+  afterAll(async () => { await server.stop(); });
+
+  it('injects live data into the graph page without letting a stored string end the script', async () => {
+    const page = await request(server.port, '/');
+    expect(page.status).toBe(200);
+    // The stored text is on the page — as data inside the script, not as markup.
+    expect(page.body).not.toContain('</script><script>window.__mb_xss_probe=1</script>');
+    expect(page.body).not.toContain('<script>window.__mb_xss_probe');
+    expect(page.body).toContain('\\u003c/script\\u003e\\u003cscript\\u003ewindow.__mb_xss_probe=1');
+
+    // What the browser's JS parser would read back is the stored text, byte for byte
+    // (and `$&` / `$'` did not splice parts of the page into it).
+    const inline = /var R=(\{.*\});\n(?=var DOM=)/.exec(page.body);
+    expect(inline, 'the live-data assignment').not.toBeNull();
+    const data = JSON.parse(inline![1]);
+    expect(data.facts.map((f: { id: string }) => f.id)).toEqual(['fact-breakout']);
+    expect(data.facts[0].fact).toBe(SCRIPT_BREAKOUT);
+    expect(data.projects[0]).toMatchObject({ project: 'demo-project', exchanges: SEEDED_EXCHANGES });
+  });
+
+  it('safeJsonForScript escapes every character that can leave a script element or a JS string', () => {
+    const value = { a: '</script>', b: '<!--', c: '&amp;', d: 'line\u2028sep\u2029' };
+    const out = guards.safeJsonForScript(value);
+    expect(out).not.toMatch(/[<>&\u2028\u2029]/);
+    expect(JSON.parse(out)).toEqual(value);
+  });
+
+  it('the dashboard escapes quotes too — its esc() output is used inside attributes', async () => {
+    const page = await request(server.port, '/dashboard');
+    expect(page.status).toBe(200);
+    const source = /function esc\(s\)\{.*?\}\n/.exec(page.body);
+    expect(source, 'esc() in the dashboard script').not.toBeNull();
+    const esc = new Function(`${source![0]}; return esc;`)() as (s: unknown) => string;
+    expect(esc(`x" onmouseover="alert(1)`)).toBe('x&quot; onmouseover=&quot;alert(1)');
+    expect(esc(`it's <b>&`)).toBe('it&#39;s &lt;b&gt;&amp;');
+    expect(esc('')).toBe('');
+    expect(esc(null)).toBe('');
+    expect(esc(42)).toBe('42');
   });
 });

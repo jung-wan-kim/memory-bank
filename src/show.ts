@@ -1,4 +1,4 @@
-import { marked } from 'marked';
+import { Marked } from 'marked';
 
 interface ConversationMessage {
   uuid: string;
@@ -481,6 +481,7 @@ export function formatConversationAsHTML(jsonl: string): string {
 <html>
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Conversation</title>
   <style>
@@ -791,9 +792,37 @@ function isMarkdown(text: string): boolean {
   return matchCount >= 2;
 }
 
+/** Link targets an exported conversation may carry. Anything else (javascript:, data:, vbscript:, file:) is dropped. */
+const SAFE_LINK = /^(?:https?:|mailto:|#)/i;
+
+/**
+ * Markdown renderer for conversation text. The text is whatever a model, a
+ * tool result or a pasted page said, so it is rendered as markdown only:
+ *  - raw HTML in it is written out as text (marked passes it through as markup
+ *    by default — a `<script>` in a message ran when the export was opened);
+ *  - a link keeps its target only for http(s)/mailto/#;
+ *  - an image is shown as its markdown source, never loaded — an export must
+ *    not call out to a URL that the conversation chose.
+ */
+const conversationMarkdown = new Marked({
+  renderer: {
+    html({ text }) {
+      return escapeHtml(text);
+    },
+    link({ href, tokens }) {
+      const label = this.parser.parseInline(tokens);
+      if (!SAFE_LINK.test(href.trim())) return label;
+      return `<a href="${escapeHtml(href)}" rel="noopener noreferrer">${label}</a>`;
+    },
+    image({ href, text }) {
+      return escapeHtml(`![${text}](${href})`);
+    },
+  },
+});
+
 function renderMarkdownSafely(text: string): string {
   try {
-    return marked.parse(text, { async: false }) as string;
+    return conversationMarkdown.parse(text, { async: false }) as string;
   } catch (error) {
     // Fallback to escaped HTML if markdown parsing fails
     return `<pre>${escapeHtml(text)}</pre>`;

@@ -25,6 +25,7 @@ const {
   checkLocalAccess,
   parsePaging,
   parseTranslateTexts,
+  safeJsonForScript,
   clientAddress,
 } = require('./server-guards.cjs');
 const {
@@ -358,10 +359,16 @@ function serveGraph3D(res) {
     let html = fs.readFileSync(graphPath, 'utf-8');
     // Replace hardcoded var R={...} data with live DB data
     const liveData = apiHandlers['/api/graph-data']();
-    html = html.replace(
-      /var R=\{[\s\S]*?\n(?=var DOM=)/,
-      `var R=${JSON.stringify(liveData)};\n`
-    );
+    const anchor = /var R=\{[\s\S]*?\n(?=var DOM=)/;
+    if (!anchor.test(html)) {
+      // Without the anchor the page would silently show the sample data shipped in the file.
+      writeJson(res, 500, { error: 'graph_template_mismatch', message: 'docs/graph-3d.html has no `var R={…}` block to fill with live data' });
+      return;
+    }
+    // The data goes inside a <script>: escaped so a stored string cannot end the element, and
+    // inserted through a function so `$&` / `$'` in the data are not read as replacement patterns.
+    const inline = `var R=${safeJsonForScript(liveData)};\n`;
+    html = html.replace(anchor, () => inline);
     writeHtml(res, 200, html);
   } else {
     res.writeHead(404, BASE_HEADERS); res.end('graph-3d.html not found');
@@ -734,7 +741,7 @@ select:focus{border-color:var(--accent);outline:none}
 <script>
 let currentTab='projects',currentProject='',searchOffset=0,projectSortBy='last_seen';
 
-function esc(s){if(!s)return'';const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+function esc(s){if(s===null||s===undefined||s==='')return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 // real_path가 있으면 사용, 없으면 project key에서 추정
 const projectPathMap={};
 function registerPath(project,realPath){if(realPath)projectPathMap[project]=realPath}
@@ -953,7 +960,7 @@ function renderResults(data,q,project){
 }
 
 async function showExchange(id){
-  const data=await api('/api/exchange?id='+id);if(!data.exchange)return;
+  const data=await api('/api/exchange?id='+encodeURIComponent(id));if(!data.exchange)return;
   const e=data.exchange;
   const el=getEl('results')||getEl('content');
   el.innerHTML=
