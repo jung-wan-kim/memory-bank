@@ -294,6 +294,7 @@ PORT=8080 node ui/server.cjs
 > **Local only.** The dashboard serves whole conversations, tool inputs and facts with no login, so it listens on `127.0.0.1` and answers only same-origin requests made directly by a browser on this machine: it sends no CORS headers, and a request with another `Host`, another `Origin`, or proxy headers (`X-Forwarded-For`, …) gets 403. `limit` is capped at 200 rows per request and request bodies at 1 MB.
 > To listen on another address set **both** `MEMORY_BANK_UI_HOST` and `MEMORY_BANK_UI_TOKEN` (16+ characters — without the token the server refuses to start). Every page and API then needs the token: `Authorization: Bearer <token>`, or open `/?token=<token>` once per browser (it becomes an HttpOnly cookie).
 > **Never point a tunnel or reverse proxy at this port** — see the Hue OS public listener below.
+> The Hue OS login limit and daily chat quota are counted per client address. On this port that is the address of the connection itself; with a token and a reverse proxy of your own in front, that is the proxy for everyone. `MEMORY_BANK_UI_TRUST_PROXY=1` makes this port take the address from `X-Forwarded-For` instead — set it only when a proxy you run writes that header (otherwise the caller types it). The Hue OS public listener always reads it.
 
 > **Note:** Requires `memory-bank sync` to have been run at least once to populate the database.
 > The Hue OS publication route (`/hue-os`, with `/replacement-os` kept as a compatibility alias) can still load from local Personal Mirror artifacts when the conversation database is unavailable.
@@ -347,6 +348,14 @@ export BACKFILL_EXTRACT_MAX=40        # sessions per run (ceiling 200; 0 disable
 export BACKFILL_BATCH_SIZE=20         # facts per LLM call (ceiling 50)
 export BACKFILL_CONCURRENCY=4         # concurrent batch calls (clamped to [1, 8])
 export BACKFILL_RELATIONS=0           # 1 = also detect relations during backfill
+
+# Backfill extraction waits for a session to go quiet: a session is picked up only
+# when its last exchange is at least this many minutes old (default 60; 0 = no wait;
+# above 10080 = 7 days, or not a number, means the default). Without the wait the
+# backfill extracted sessions that were still in progress and marked them done.
+# The price: a session that ended without its SessionEnd hook (killed) is
+# extracted that much later.
+export BACKFILL_QUIET_MINUTES=60
 
 # Deterministic category-reuse gate (DISABLED by default — live measurement
 # showed only 72% top-1 agreement at sim>=0.93; opt in after re-measuring

@@ -151,6 +151,7 @@ PORT=8080 node ui/server.cjs
 > **이 기기 전용입니다.** 대시보드는 대화 전문·도구 입력·사실을 로그인 없이 보여 주므로 `127.0.0.1` 에만 열리고, 이 기기의 브라우저가 직접 보낸 같은 출처 요청에만 답합니다. CORS 헤더를 보내지 않고, `Host`·`Origin` 이 다르거나 프록시 헤더(`X-Forwarded-For` 등)가 붙은 요청은 403 입니다. `limit` 은 요청당 200행, 요청 본문은 1MB 가 상한입니다.
 > 다른 주소에 열려면 `MEMORY_BANK_UI_HOST` 와 `MEMORY_BANK_UI_TOKEN`(16자 이상 — 토큰이 없으면 서버가 시작을 거부합니다)을 **둘 다** 정합니다. 그러면 모든 화면과 API 가 토큰을 요구합니다: `Authorization: Bearer <토큰>`, 또는 브라우저에서 `/?token=<토큰>` 을 한 번 열면 HttpOnly 쿠키로 바뀝니다.
 > **이 포트에 터널이나 리버스 프록시를 연결하지 마세요** — 아래 Hue OS 공개 리스너를 쓰세요.
+> Hue OS 로그인 제한과 하루 대화 한도는 접속 주소별로 셉니다. 이 포트에서는 연결 자체의 주소를 쓰므로, 토큰을 정하고 직접 운영하는 리버스 프록시를 앞에 두면 모든 사용자가 프록시 주소 하나로 세어집니다. `MEMORY_BANK_UI_TRUST_PROXY=1` 을 주면 이 포트도 `X-Forwarded-For` 에서 주소를 읽습니다 — 직접 운영하는 프록시가 그 헤더를 쓸 때만 켜세요(아니면 호출자가 아무 값이나 적어 보낼 수 있습니다). Hue OS 공개 리스너는 항상 그 헤더를 읽습니다.
 
 > **참고:** 데이터베이스를 채우려면 먼저 `memory-bank sync`를 한 번 이상 실행해야 합니다.
 > Hue OS 퍼블리케이션(`/hue-os`, `/replacement-os`는 호환 alias)은 대화 DB가 없어도 로컬 Personal Mirror 산출물에서 로드됩니다.
@@ -191,7 +192,34 @@ export ANTHROPIC_API_KEY=your-key
 
 # 요약 모델
 export MEMORY_BANK_API_MODEL=opus
+
+# 백필 추출은 세션이 조용해진 뒤에 합니다: 마지막 대화가 이 분(分) 이상 지난 세션만
+# backfill 이 추출합니다(기본 60, 0 = 기다리지 않음, 10080(7일) 초과나 숫자가 아닌 값은 기본값).
+# 기다리지 않으면 진행 중인 세션을 추출하고 완료로 표시해 버립니다. 대신 SessionEnd 훅 없이
+# 끝난(강제 종료된) 세션은 그만큼 늦게 추출됩니다.
+export BACKFILL_QUIET_MINUTES=60
+
+# 주입 스위치 — 정하지 않으면(기본) 아무것도 바뀌지 않습니다. MCP 서버와 훅이 모두 읽는 곳
+# (settings.json 의 "env")에 둡니다.
+#   `claude -p` / Agent SDK 세션(CLAUDE_CODE_ENTRYPOINT 가 sdk-*)에는 주입하지 않기:
+# export MEMORY_BANK_INJECT_HEADLESS=0
+#   Codex 프롬프트에는 주입하지 않기(Codex 는 대화형/비대화형 표시를 보내지 않아 전부 아니면 전무):
+# export MEMORY_BANK_INJECT_CODEX=0
+#   웜 데몬이 있는데 3초 안에 답하지 않으면 콜드 재계산을 건너뛰기
+#   (그 프롬프트는 주입 없이 진행하고 로그에 skipped 로 남습니다):
+# export MEMORY_BANK_INJECT_COLD_ON_TIMEOUT=0
+
+# 세션 시작의 "Project Key Facts": 프로젝트 사실이 먼저, 그 뒤 전역 사실은 최대 이 개수
+# (기본 3, 0 = 프로젝트 사실만).
+# export MEMORY_BANK_KEY_FACTS_GLOBAL_MAX=3
+
+# 세션 시작 버전 확인: 플러그인 캐시와 마켓플레이스 클론에 더해 원격 저장소의 릴리스 태그를
+# 묻습니다(git ls-remote, 하루 한 번 이하, 3초 제한. 실패한 확인은 "최신"이 아니라 unknown 으로 남습니다).
+# `off` = 묻지 않음, 그 밖의 값 = 대신 물을 저장소.
+# export MEMORY_BANK_DRIFT_REMOTE=off
 ```
+
+영문 README 의 Configuration 절에 나머지 설정(백필 상한, 유지보수 주기, 네이티브 클라이언트 등)이 있습니다.
 
 ## 아키텍처
 

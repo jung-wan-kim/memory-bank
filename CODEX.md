@@ -9,7 +9,7 @@ Memory Bank is a TypeScript/Node.js Claude Code plugin and package for semantic 
 - CLI entry points under `cli/` and `src/*-cli.ts`.
 - An MCP server in `src/mcp-server.ts` exposing `search, read, search_facts, search_ontology, ask_avatar, trace_fact, graph_stats, cross_project_insights, explore_graph`.
 - SQLite persistence through `better-sqlite3` plus `sqlite-vec` vector tables.
-- Local embeddings from `@xenova/transformers` (`all-MiniLM-L6-v2`, 384 dimensions).
+- Local embeddings from `@xenova/transformers` (`Xenova/multilingual-e5-small`, 384 dimensions; `src/embedding-version.ts`).
 - Fact extraction/consolidation via `src/fact-extractor.ts`, `src/consolidator.ts`, `src/llm.ts`.
 - Ontology graph storage/query through `src/ontology-db.ts` and `src/ontology-classifier.ts`.
 - A readonly web dashboard in `ui/server.cjs` plus graph HTML assets in `docs/`.
