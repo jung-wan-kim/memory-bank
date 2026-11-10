@@ -271,4 +271,170 @@ describe('redact-secret-facts.mjs', () => {
     expect(run('--db', dbPath, '--undo', path.join(tmp, 'absent.jsonl')).code).toBe(1);
     expect(dbHash()).toBe(before);
   });
+
+  // monotonicity-ok: 새로 더하는 시험이다(끄는 시험 없음). Windows 에는 POSIX 권한 비트가 없어 그 플랫폼에서만 건너뛴다 — file-perms.test.ts 와 같은 조건.
+  it.skipIf(process.platform === 'win32')('되돌리기 파일은 소유자 전용(0600)으로 만든다 — 기본 경로와 --undo-file 모두 (R2-SEC-3)', () => {
+    // 보통의 데스크톱 umask(자식 프로세스가 물려받는다): 권한을 주지 않으면 0644 로 만들어진다.
+    const previous = process.umask(0o022);
+    try {
+      const named = path.join(tmp, 'undo-named.jsonl');
+      expect(run('--db', dbPath, '--apply', '--undo-file', named).code).toBe(0);
+      expect(fs.statSync(named).mode & 0o777).toBe(0o600);
+
+      expect(run('--db', dbPath, '--undo', named).code).toBe(0);
+      expect(run('--db', dbPath, '--apply').code).toBe(0);
+      const byDefault = undoFiles().filter((f) => f !== 'undo-named.jsonl');
+      expect(byDefault).toHaveLength(1);
+      expect(fs.statSync(path.join(tmp, byDefault[0])).mode & 0o777).toBe(0o600);
+    } finally {
+      process.umask(previous);
+    }
+  });
+
+  it('이미 되돌린 파일로 --undo 를 다시 부르면 "already restored" 라고 답하고 아무것도 바꾸지 않는다 (R2-SEC-6)', () => {
+    const undoPath = path.join(tmp, 'undo.jsonl');
+    expect(run('--db', dbPath, '--apply', '--undo-file', undoPath).code).toBe(0);
+    expect(run('--db', dbPath, '--undo', undoPath).out).toMatch(/restored 2 of 2 fact\(s\)\n/);
+    const before = rows();
+
+    const again = run('--db', dbPath, '--undo', undoPath);
+    expect(again.code).toBe(0);
+    expect(again.out).toMatch(/restored 0 of 2 fact\(s\) — 2 already restored\n/);
+    expect(again.out, '바뀐 적 없는 행을 "그 뒤에 바뀌었다"고 하지 않는다').not.toMatch(/changed since/);
+    expect(rows()).toEqual(before);
+    expect(before['fact-token']).toEqual({ is_active: 1, updated_at: T0 });
+  });
+
+  it('--help 는 벡터 정리와 백업 표까지 적은 사용법을 찍고 아무것도 열지 않는다 (R2-SEC-6)', () => {
+    const before = dbHash();
+    const { code, out } = run('--help');
+    expect(code).toBe(0);
+    for (const part of ['--apply [--undo-file PATH]', '--undo FILE', 'vec_facts, vec_facts_kr', 'redact_secret_backup_<UTC time>', "drops that run's backup table", 'rotate it']) {
+      expect(out, part).toContain(part);
+    }
+    // 다른 인자와 섞이면 예전처럼 exit 1 — 도움말을 찍고 적용까지 하는 일은 없다
+    expect(run('--help', '--apply', '--db', dbPath).code).toBe(1);
+    expect(dbHash()).toBe(before);
+    expect(undoFiles()).toEqual([]);
+  });
+
+  describe('벡터 표가 있는 DB (실제 스키마)', () => {
+    let realPath: string;
+    let dbMod: typeof import('../src/db.js');
+    const savedEnv: Record<string, string | undefined> = {};
+
+    const withRealDb = <T>(fn: (db: ReturnType<typeof dbMod.initDatabase>) => T): T => {
+      const db = dbMod.initDatabase();
+      try { return fn(db); } finally { db.close(); }
+    };
+    const vecIds = (table: string): string[] =>
+      withRealDb((db) => (db.prepare(`SELECT id FROM ${table} ORDER BY id`).all() as Array<{ id: string }>).map((r) => r.id));
+    const vecHex = (table: string): Record<string, string> => withRealDb((db) => Object.fromEntries(
+      (db.prepare(`SELECT id, embedding FROM ${table} ORDER BY id`).all() as Array<{ id: string; embedding: Buffer }>)
+        .map((r) => [r.id, Buffer.from(r.embedding).toString('hex')])));
+    const backupTables = (): string[] => withRealDb((db) =>
+      (db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'redact_secret_backup_%' ORDER BY name").all() as Array<{ name: string }>).map((r) => r.name));
+    const active = (): Record<string, number> => withRealDb((db) => Object.fromEntries(
+      (db.prepare('SELECT id, is_active FROM facts ORDER BY id').all() as Array<{ id: string; is_active: number }>).map((r) => [r.id, r.is_active])));
+
+    beforeEach(async () => {
+      realPath = path.join(tmp, 'real.sqlite');
+      for (const key of ['MEMORY_BANK_CONFIG_DIR', 'MEMORY_BANK_DB_PATH']) savedEnv[key] = process.env[key];
+      process.env.MEMORY_BANK_CONFIG_DIR = path.join(tmp, 'cfg-real');
+      process.env.MEMORY_BANK_DB_PATH = realPath;
+      dbMod = await import('../src/db.js');
+      withRealDb((db) => {
+        const ins = db.prepare(`INSERT INTO facts (id, fact, fact_kr, category, scope_type, source_exchange_ids, created_at, updated_at, is_active)
+          VALUES (?, ?, ?, 'knowledge', 'global', '[]', ?, ?, 1)`);
+        ins.run('fact-token', `User keeps the bot credentials (Token: ${BOT_TOKEN}) in the config file.`, '봇 설정은 설정 파일에 있다', T0, T0);
+        ins.run('fact-key', `The deploy key is ${API_KEY} for now.`, '배포 키는 금고에 있다', T0, T0);
+        ins.run('fact-normal', 'Public APIs use REST.', '공개 API 는 REST 를 쓴다', T0, T0);
+        const vec = (seed: number) => Array.from({ length: 384 }, (_, i) => Math.sin(seed + i) / 20);
+        for (const [table, offset] of [['vec_facts', 0], ['vec_facts_kr', 100]] as const) {
+          const q = dbMod.getVecQuant(db, table);
+          const put = db.prepare(`INSERT INTO ${table} (id, embedding) VALUES (?, ${dbMod.vecParamSql(q)})`);
+          ['fact-token', 'fact-key', 'fact-normal'].forEach((id, i) => put.run(id, dbMod.embeddingToVecBlob(vec(i + 1 + offset), q)));
+        }
+      });
+    });
+    afterEach(() => {
+      for (const [key, value] of Object.entries(savedEnv)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    });
+
+    it('벡터 표의 꼴(dtype/scale)이 적용 때와 다르면 --undo 는 exit 1 이고 행·벡터·백업 표가 그대로다 (R2-SEC-3)', () => {
+      const undoPath = path.join(tmp, 'undo-real.jsonl');
+      expect(run('--db', realPath, '--apply', '--undo-file', undoPath).code).toBe(0);
+      const [table] = backupTables();
+      // 적용 뒤 벡터 표가 다른 꼴로 옮겨진 상황: 백업에 적힌 꼴과 지금 표의 꼴이 다르다
+      const quants = withRealDb((db) => (db.prepare(`SELECT DISTINCT quant FROM ${table}`).all() as Array<{ quant: string }>).map((r) => r.quant));
+      expect(quants).toHaveLength(1);
+      withRealDb((db) => db.prepare(`UPDATE ${table} SET quant = ?`).run(JSON.stringify({ dtype: 'another-shape' })));
+
+      const refused = run('--db', realPath, '--undo', undoPath);
+      expect(refused.code).toBe(1);
+      expect(refused.out).toMatch(/undo failed, no row changed: vec_facts(?:_kr)? is .* now but the backup holds/);
+      expect(active()).toEqual({ 'fact-key': 0, 'fact-normal': 1, 'fact-token': 0 });
+      expect(vecIds('vec_facts')).toEqual(['fact-normal']);
+      expect(vecIds('vec_facts_kr')).toEqual(['fact-normal']);
+      expect(backupTables()).toEqual([table]);
+
+      // 양성 대조: 꼴이 맞으면 같은 파일로 되돌아간다
+      withRealDb((db) => db.prepare(`UPDATE ${table} SET quant = ?`).run(quants[0]));
+      expect(run('--db', realPath, '--undo', undoPath).code).toBe(0);
+      expect(active()).toEqual({ 'fact-key': 1, 'fact-normal': 1, 'fact-token': 1 });
+    });
+
+    it('--undo 가 끝나면 그 실행의 백업 표를 지운다 — 적용·되돌리기를 되풀이해도 표가 쌓이지 않는다 (R2-SEC-6)', () => {
+      const before = { en: vecHex('vec_facts'), kr: vecHex('vec_facts_kr') };
+      for (const round of [1, 2]) {
+        const undoPath = path.join(tmp, `undo-round-${round}.jsonl`);
+        const applied = run('--db', realPath, '--apply', '--undo-file', undoPath);
+        expect(applied.code, applied.out).toBe(0);
+        const tables = backupTables();
+        expect(tables, `${round}회차 적용 뒤`).toHaveLength(1);
+
+        const undone = run('--db', realPath, '--undo', undoPath);
+        expect(undone.code, undone.out).toBe(0);
+        expect(undone.out).toMatch(/restored 2 of 2 fact\(s\)\n/);
+        expect(undone.out).toMatch(/put back 4 vector row\(s\)/);
+        expect(undone.out).toContain(`dropped ${tables[0]}`);
+        expect(backupTables(), `${round}회차 되돌린 뒤`).toEqual([]);
+        expect({ en: vecHex('vec_facts'), kr: vecHex('vec_facts_kr') }, '벡터가 지우기 전 바이트 그대로').toEqual(before);
+      }
+      // 표가 없어진 뒤 같은 파일로 다시 불러도 오류가 아니다: 되돌릴 것이 없다
+      const again = run('--db', realPath, '--undo', path.join(tmp, 'undo-round-2.jsonl'));
+      expect(again.code, again.out).toBe(0);
+      expect(again.out).toMatch(/restored 0 of 2 fact\(s\) — 2 already restored\n/);
+      expect(again.out).not.toMatch(/put back|dropped|kept/);
+    });
+
+    it('그 뒤에 바뀌어 되돌리지 않은 사실이 있으면 백업 표를 남기고 그렇게 말한다 (R2-SEC-6)', () => {
+      const undoPath = path.join(tmp, 'undo-real.jsonl');
+      expect(run('--db', realPath, '--apply', '--undo-file', undoPath).code).toBe(0);
+      const [table] = backupTables();
+      withRealDb((db) => db.prepare("UPDATE facts SET updated_at = '2026-11-11T00:00:00.000Z' WHERE id = 'fact-key'").run());
+
+      const undone = run('--db', realPath, '--undo', undoPath);
+      expect(undone.code, undone.out).toBe(0);
+      expect(undone.out).toMatch(/restored 1 of 2 fact\(s\) — 1 changed since the apply run and were left as they are\n/);
+      expect(undone.out).toContain(`kept ${table}`);
+      expect(backupTables()).toEqual([table]);
+      expect(active()).toEqual({ 'fact-key': 0, 'fact-normal': 1, 'fact-token': 1 });
+      expect(vecIds('vec_facts')).toEqual(['fact-normal', 'fact-token']);
+      // 남긴 표에는 되돌리지 않은 사실의 벡터가 그대로 있다
+      expect(withRealDb((db) => (db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE fact_id = 'fact-key'`).get() as { n: number }).n)).toBe(2);
+    });
+
+    it('되돌릴 행이 남아 있는데 백업 표가 사라졌으면 여전히 거부한다 — 벡터 없이 되살리지 않는다', () => {
+      const undoPath = path.join(tmp, 'undo-real.jsonl');
+      expect(run('--db', realPath, '--apply', '--undo-file', undoPath).code).toBe(0);
+      const [table] = backupTables();
+      withRealDb((db) => db.exec(`DROP TABLE ${table}`));
+
+      const refused = run('--db', realPath, '--undo', undoPath);
+      expect(refused.code).toBe(1);
+      expect(refused.out).toMatch(/is gone/);
+      expect(active()).toEqual({ 'fact-key': 0, 'fact-normal': 1, 'fact-token': 0 });
+    });
+  });
 });
