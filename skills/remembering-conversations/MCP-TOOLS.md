@@ -117,7 +117,7 @@ Read a conversation, or a line range of it, as Markdown.
   _Output truncated at the 40000-char limit: lines 3-3 of 4 shown, the message at line 3 up to character 39907. Without startChar the message starts over from its first character — to skip the rest of it instead, start at line 4. Continue with startLine=3, startChar=39907, endLine=4._
   ```
 
-  The line it names is the one the call started on: `startChar` is what moves on. Calling again with only
+  The line it names is that message's own line: `startChar` is what moves on. Calling again with only
   `startLine=3` returns the same first piece, every time. To leave the rest of the message unread, start at
   the line the closing line gives for that (here `startLine: 4`); when the message is the last line of the
   range the closing line says that nothing follows it. The next piece starts with

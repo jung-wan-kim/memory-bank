@@ -432,7 +432,8 @@ export async function readConversationRange(filePath: string, opts: Conversation
     const total = range.totalLines === null ? '' : ` of ${range.totalLines}`;
     let shownSoFar: string;
     if (next.char > 0) {
-      // The line named below is the one this call started on: what moves the next call forward is startChar.
+      // The line named below is this message's own line, not the next one: what moves the next call forward is
+      // startChar.
       // A caller that passes startLine alone gets the message from its start again, on every call — so the
       // footer says so, and names the way out. (It ends with the values to continue with, as before.)
       shownSoFar = `lines ${firstLine}-${next.line}${total} shown, the message at line ${next.line} up to character ${next.char}. `
