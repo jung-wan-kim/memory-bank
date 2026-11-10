@@ -175,7 +175,7 @@ describe('MCP server over stdio', () => {
       expect(overview.isError).toBe(false);
       expect(overview.text).toMatch(/4 domains · 240 categories · 2880 active facts/);
       expect(overview.text).not.toContain('Seeded fact');
-      expect(overview.text.length).toBeLessThanOrEqual(20_500);
+      expect(overview.text.length).toBeLessThanOrEqual(20_000);
 
       const facts = await call('search_ontology', { category: 'Topic 2-07' });
       expect(facts.text).toMatch(/### Topic 2-07/);
@@ -184,7 +184,7 @@ describe('MCP server over stdio', () => {
 
       const widest = await call('search_ontology', { category: 'Topic', facts_per_category: 50, max_categories: 200 });
       expect(widest.isError).toBe(false);
-      expect(widest.text.length).toBeLessThanOrEqual(20_500);
+      expect(widest.text.length).toBeLessThanOrEqual(20_000);
       expect(widest.text).toMatch(/Output limit \(20000 chars\) reached/);
     });
 

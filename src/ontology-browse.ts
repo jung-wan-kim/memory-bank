@@ -13,20 +13,28 @@ import type { DomainTree } from './types.js';
  * fact, characters in total) and says what it left out and which filter reaches it.
  */
 
-/** Most characters one answer carries (the closing note comes on top). */
+/** Most characters one answer carries, closing note included. */
 export const ONTOLOGY_MAX_OUTPUT_CHARS = 20_000;
+/**
+ * Characters of the ceiling kept for what is written after the last block: one domain's closing lines
+ * ("…and N more categories", "N empty categories not listed") and the final note — none of them carries a name.
+ */
+const CLOSING_RESERVE_CHARS = 600;
+const BODY_MAX_CHARS = ONTOLOGY_MAX_OUTPUT_CHARS - CLOSING_RESERVE_CHARS;
 /** Characters of one fact line — the full text is one search_facts away. */
 export const ONTOLOGY_FACT_CHARS = 300;
 /** Facts shown per category when a `category` filter is given and facts_per_category is not. */
 export const ONTOLOGY_DEFAULT_FACTS_PER_CATEGORY = 5;
-/** Categories listed per domain: without / with facts. */
+/** Categories listed per domain: in the overview / when a `domain` filter drills into one / with facts. */
 export const ONTOLOGY_DEFAULT_CATEGORIES_OVERVIEW = 8;
+export const ONTOLOGY_DEFAULT_CATEGORIES_DOMAIN = 200;
 export const ONTOLOGY_DEFAULT_CATEGORIES_WITH_FACTS = 20;
 /**
- * Categories whose facts are loaded for one answer. A category block is at least ~130 characters, so no
- * more than this many can fit under the output ceiling whatever the caller asks for.
+ * Lower bounds of what a category block prints (heading + count line; two lines per fact). They decide how
+ * many categories can possibly fit under the output ceiling, so only those categories' facts are loaded.
  */
-const FACT_CATEGORY_LOAD_CAP = 150;
+const CATEGORY_BLOCK_MIN_CHARS = 16;
+const FACT_LINES_MIN_CHARS = 40;
 
 export interface OntologyBrowseParams {
   domain?: string;
@@ -34,7 +42,7 @@ export interface OntologyBrowseParams {
   include_relations?: boolean;
   /** Facts shown per category (0 = names and counts only). Default: 5 with a `category` filter, else 0. */
   facts_per_category?: number;
-  /** Categories listed per domain, largest first. Default: 8 without facts, 20 with. */
+  /** Categories listed per domain, largest first. Default: 8 (200 with a `domain` filter) without facts, 20 with. */
   max_categories?: number;
 }
 
@@ -47,7 +55,9 @@ export function formatOntologyBrowse(db: Database.Database, params: OntologyBrow
   const factsPerCategory = params.facts_per_category ?? (params.category ? ONTOLOGY_DEFAULT_FACTS_PER_CATEGORY : 0);
   const withFacts = factsPerCategory > 0;
   const maxCategories = params.max_categories
-    ?? (withFacts ? ONTOLOGY_DEFAULT_CATEGORIES_WITH_FACTS : ONTOLOGY_DEFAULT_CATEGORIES_OVERVIEW);
+    ?? (withFacts
+      ? ONTOLOGY_DEFAULT_CATEGORIES_WITH_FACTS
+      : params.domain ? ONTOLOGY_DEFAULT_CATEGORIES_DOMAIN : ONTOLOGY_DEFAULT_CATEGORIES_OVERVIEW);
 
   // One aggregate JOIN: the tree with active-fact counts, no fact rows.
   const tree = getOntologyTree(db, { domain: params.domain, category: params.category, factsPerCategory: 0 });
@@ -83,10 +93,18 @@ export function formatOntologyBrowse(db: Database.Database, params: OntologyBrow
   if (params.domain || params.category) output += ' match the filter';
   output += '\n\n';
 
-  // Facts for the categories that can be shown, in display order — one ranked query, not one per category.
+  // Facts for the categories that can be shown — one ranked query, not one per category. Walking the
+  // display order with the block lower bounds gives the last category that could still fit under the
+  // ceiling; nothing after it is ever printed, so nothing after it is loaded (at most ~500 fact rows).
   const factsByCategory = new Map<string, CategoryEntry['facts']>();
   if (withFacts) {
-    const ids = domains.flatMap((d) => d.listed.map((entry) => entry.category.id)).slice(0, FACT_CATEGORY_LOAD_CAP);
+    const ids: string[] = [];
+    let lowerBound = 0;
+    for (const entry of domains.flatMap((d) => d.listed)) {
+      if (lowerBound > ONTOLOGY_MAX_OUTPUT_CHARS) break;
+      ids.push(entry.category.id);
+      lowerBound += CATEGORY_BLOCK_MIN_CHARS + FACT_LINES_MIN_CHARS * Math.min(entry.factCount, factsPerCategory);
+    }
     if (ids.length > 0) {
       for (const { categories } of getOntologyTree(db, { categoryIds: ids, factsPerCategory })) {
         for (const entry of categories) factsByCategory.set(entry.category.id, entry.facts);
@@ -94,26 +112,47 @@ export function formatOntologyBrowse(db: Database.Database, params: OntologyBrow
     }
   }
 
-  const categoryBlock = (entry: CategoryEntry): string => {
-    if (!withFacts) return `- ${entry.category.name} (${entry.factCount})\n`;
+  // Room kept for a block's count line and closing "more facts" line, written once the facts that fit are known.
+  const BLOCK_FRAME_CHARS = 200;
 
-    let block = `### ${entry.category.name}`;
-    if (entry.category.description) block += ` — ${clipLine(entry.category.description, ONTOLOGY_FACT_CHARS)}`;
+  /**
+   * One category's block within `room` characters: null when it does not fit at all, `cutShort` when only
+   * some of its loaded facts fit. Facts are added one at a time — a category whose facts are more than the
+   * whole ceiling (the largest real ones are) still shows as many as fit instead of nothing.
+   */
+  const categoryBlock = (entry: CategoryEntry, room: number): { text: string; cutShort: boolean } | null => {
+    if (!withFacts) {
+      const line = `- ${entry.category.name} (${entry.factCount})\n`;
+      return line.length <= room ? { text: line, cutShort: false } : null;
+    }
+
+    let heading = `### ${entry.category.name}`;
+    if (entry.category.description) heading += ` — ${clipLine(entry.category.description, ONTOLOGY_FACT_CHARS)}`;
     const facts = factsByCategory.get(entry.category.id) ?? [];
-    block += `\n(${plural(entry.factCount, 'fact', 'facts')}${facts.length < entry.factCount ? `, top ${facts.length} shown` : ''})\n\n`;
+    let body = '';
+    let shown = 0;
     for (const fact of facts) {
-      block += `- **[${fact.category}]** ${clipLine(fact.fact, ONTOLOGY_FACT_CHARS)}\n`;
-      block += `  - ID: ${fact.id} | Confirmed: ${fact.consolidated_count}x | ${fact.created_at.slice(0, 10)}\n`;
+      let lines = `- **[${fact.category}]** ${clipLine(fact.fact, ONTOLOGY_FACT_CHARS)}\n`;
+      lines += `  - ID: ${fact.id} | Confirmed: ${fact.consolidated_count}x | ${fact.created_at.slice(0, 10)}\n`;
       if (params.include_relations) {
         const related = summarizeRelated(getRelatedFacts(db, fact.id, 1));
-        for (const rel of related.shown) block += `  - ↔ [${rel.relationType}] "${rel.text}"\n`;
-        if (related.omitted > 0) block += `  - _…and ${related.omitted} more related facts (explore_graph lists them)._\n`;
+        for (const rel of related.shown) lines += `  - ↔ [${rel.relationType}] "${rel.text}"\n`;
+        if (related.omitted > 0) lines += `  - _…and ${related.omitted} more related facts (explore_graph lists them)._\n`;
       }
+      if (heading.length + BLOCK_FRAME_CHARS + body.length + lines.length > room) break;
+      body += lines;
+      shown++;
     }
-    if (facts.length < entry.factCount) {
-      block += `- _…and ${entry.factCount - facts.length} more facts — raise \`facts_per_category\` or use search_facts._\n`;
+    if (shown === 0) return null;
+
+    const cutShort = shown < facts.length;
+    let block = `${heading}\n(${plural(entry.factCount, 'fact', 'facts')}${shown < entry.factCount ? `, top ${shown} shown` : ''})\n\n${body}`;
+    if (shown < entry.factCount) {
+      block += cutShort
+        ? `- _…and ${entry.factCount - shown} more facts not shown (output limit) — narrow the filter or use search_facts._\n`
+        : `- _…and ${entry.factCount - shown} more facts — raise \`facts_per_category\` or use search_facts._\n`;
     }
-    return block + '\n';
+    return { text: block + '\n', cutShort };
   };
 
   // What the ceiling cut off, counted so the closing note can name it.
@@ -133,7 +172,7 @@ export function formatOntologyBrowse(db: Database.Database, params: OntologyBrow
     let header = `## ${d.domain.name} — ${plural(d.factCount, 'fact', 'facts')} in ${plural(d.categoryCount, 'category', 'categories')}\n`;
     if (d.domain.description) header += `> ${clipLine(d.domain.description, ONTOLOGY_FACT_CHARS)}\n`;
     header += '\n';
-    if (output.length + header.length > ONTOLOGY_MAX_OUTPUT_CHARS) {
+    if (output.length + header.length > BODY_MAX_CHARS) {
       full = true;
       cutDomains++;
       cutCategories += d.categoryCount;
@@ -144,15 +183,16 @@ export function formatOntologyBrowse(db: Database.Database, params: OntologyBrow
 
     let listedHere = 0;
     for (const entry of d.listed) {
-      const block = full ? '' : categoryBlock(entry);
-      if (full || output.length + block.length > ONTOLOGY_MAX_OUTPUT_CHARS) {
+      const block = full ? null : categoryBlock(entry, BODY_MAX_CHARS - output.length);
+      if (!block) {
         full = true;
         cutCategories++;
         cutFacts += entry.factCount;
         continue;
       }
-      output += block;
+      output += block.text;
       listedHere++;
+      if (block.cutShort) full = true; // its own closing line counts the facts left out
     }
 
     if (full) {
@@ -173,7 +213,9 @@ export function formatOntologyBrowse(db: Database.Database, params: OntologyBrow
     if (!withFacts || tail.length > 0) output += '\n';
   }
 
-  if (full) {
+  if (full && cutCategories === 0) {
+    output += `---\n_Output limit (${ONTOLOGY_MAX_OUTPUT_CHARS} chars) reached inside the last category shown — narrow the \`category\` filter or lower \`facts_per_category\`._\n`;
+  } else if (full) {
     output += `---\n_Output limit (${ONTOLOGY_MAX_OUTPUT_CHARS} chars) reached: ${plural(cutCategories, 'category', 'categories')} `
       + `(${plural(cutFacts, 'fact', 'facts')}) in ${plural(cutDomains, 'domain', 'domains')} not shown — narrow the \`domain\` / \`category\` filter._\n`;
   } else if (!withFacts) {

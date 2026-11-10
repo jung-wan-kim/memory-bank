@@ -179,7 +179,7 @@ const SearchOntologyInputSchema = z
       .min(1)
       .max(200)
       .optional()
-      .describe('Categories listed per domain, largest first. Default: 8 without facts, 20 with'),
+      .describe('Categories listed per domain, largest first. Default: 8 (200 with a domain filter) without facts, 20 with'),
   })
   .strict();
 
@@ -359,7 +359,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'search_ontology',
-        description: `Browse the ontology hierarchy (Domain > Category > Facts) level by level. Without a filter: every domain with its largest categories and their fact counts (no fact text). With \`domain\`: more of that domain's categories. With \`category\` (or facts_per_category > 0): the top facts of each matching category. One answer is at most ${ONTOLOGY_MAX_OUTPUT_CHARS} characters and states what it left out — narrow the domain/category filter to reach it; use search_facts to find facts by meaning.`,
+        description: `Browse the ontology hierarchy (Domain > Category > Facts) level by level. Without a filter: every domain with its largest categories and their fact counts (no fact text). With \`domain\`: up to 200 of that domain's categories. With \`category\` (or facts_per_category > 0): the top facts of each matching category. One answer is at most ${ONTOLOGY_MAX_OUTPUT_CHARS} characters and states what it left out — narrow the domain/category filter to reach it; use search_facts to find facts by meaning.`,
         inputSchema: {
           type: 'object',
           properties: {
@@ -367,7 +367,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             category: { type: 'string', description: 'Filter by category name (partial, case-insensitive)' },
             include_relations: { type: 'boolean', default: false, description: 'Include 1-hop relations for each fact shown (at most 5 per fact)' },
             facts_per_category: { type: 'number', minimum: 0, maximum: 50, description: 'Facts shown per category, most confirmed first (0 = names and counts only). Default: 5 with a category filter, otherwise 0' },
-            max_categories: { type: 'number', minimum: 1, maximum: 200, description: 'Categories listed per domain, largest first. Default: 8 without facts, 20 with' },
+            max_categories: { type: 'number', minimum: 1, maximum: 200, description: 'Categories listed per domain, largest first. Default: 8 (200 with a domain filter) without facts, 20 with' },
           },
           additionalProperties: false,
         },

@@ -128,8 +128,11 @@ describe('getOntologyTree', () => {
 
     expect(plans).toHaveLength(2);
     for (const plan of plans) {
-      expect(plan).toMatch(/USING (COVERING )?INDEX idx_facts_ontology \(ontology_category_id=\?\)/);
-      expect(plan).not.toMatch(/idx_facts_active/);
+      // facts are looked up per category through an index on ontology_category_id (whatever its name) …
+      expect(plan).toMatch(/SEARCH f USING (COVERING )?INDEX \w+ \(ontology_category_id=\?/);
+      // … never by walking every active fact (idx_facts_active has two values) or the whole table
+      expect(plan).not.toMatch(/idx_facts_active\b/);
+      expect(plan).not.toMatch(/SCAN f\b/);
     }
   });
 });
@@ -181,6 +184,18 @@ describe('formatOntologyBrowse (search_ontology output)', () => {
     expect(text).not.toContain('Fact 0-0-0');
     expect(text).toMatch(/`domain`/);
     expect(text).toMatch(/`category`/);
+  });
+
+  it('with a domain filter: that domain\'s categories beyond the overview\'s eight', () => {
+    seedWide(2, 30, 1);
+    const overview = formatOntologyBrowse(db, {});
+    expect([...overview.matchAll(/^- Topic 00-\d+ \(1\)$/gm)]).toHaveLength(8);
+    expect(overview).toMatch(/22 more categories \(22 facts\)/);
+
+    const oneDomain = formatOntologyBrowse(db, { domain: 'Domain 00' });
+    expect([...oneDomain.matchAll(/^- Topic 00-\d+ \(1\)$/gm)]).toHaveLength(30);
+    expect(oneDomain).not.toContain('Topic 01-');
+    expect(oneDomain).not.toMatch(/more categor/);
   });
 
   it('with a category filter: the top facts of each matching category, the rest counted', () => {
@@ -242,6 +257,58 @@ describe('formatOntologyBrowse (search_ontology output)', () => {
     expect(text).toMatch(/7 more related facts/);
   });
 
+  // Found on the real ontology shape: the largest category's 50 facts are more than the whole ceiling, and
+  // the answer was a header plus "limit reached" — nothing else.
+  it('a category whose facts exceed the ceiling is shown as far as it fits, the rest counted', () => {
+    const domain = createDomain(db, 'Big');
+    const big = createCategory(db, domain.id, 'Huge Category');
+    const small = createCategory(db, domain.id, 'Small Category');
+    const hubs: string[] = [];
+    for (let i = 0; i < 120; i++) hubs.push(addFact(db, big.id, `Huge fact ${i} ${'h'.repeat(600)}`, { count: 500 - i }));
+    addFact(db, small.id, 'The small fact');
+    for (const hub of hubs.slice(0, 60)) {
+      for (let n = 0; n < 6; n++) createRelation(db, hub, 'SUPPORTS', addFact(db, null, `Neighbour ${n} of a hub ${'n'.repeat(300)}`));
+    }
+
+    const text = formatOntologyBrowse(db, { facts_per_category: 50, max_categories: 200, include_relations: true });
+    expect(text.length).toBeLessThanOrEqual(ONTOLOGY_MAX_OUTPUT_CHARS);
+    expect(text).toMatch(/### Huge Category/);
+    const shown = [...text.matchAll(/^- \*\*\[decision\]\*\* Huge fact (\d+) /gm)].map((m) => Number(m[1]));
+    // most confirmed first, without a gap, as many as fit — and well more than none
+    expect(shown.length).toBeGreaterThanOrEqual(10);
+    expect(shown).toEqual(Array.from({ length: shown.length }, (_, i) => i));
+    expect(text).toContain(`${120 - shown.length} more facts`);
+    expect(text).toMatch(/Output limit \(20000 chars\) reached: 1 category \(1 fact\)/);
+    expect(text).not.toContain('The small fact');
+  });
+
+  it('loads facts only for the categories that can fit under the ceiling', () => {
+    seedWide(2, 150, 3); // 300 one-line categories would all be "listed" with max_categories 200
+    const loaded: number[] = [];
+    const realPrepare = db.prepare.bind(db);
+    db.prepare = ((sql: string) => {
+      const stmt = realPrepare(sql);
+      if (!/ROW_NUMBER\(\)/.test(sql)) return stmt;
+      const realAll = stmt.all.bind(stmt);
+      stmt.all = ((...args: unknown[]) => { const rows = realAll(...args); loaded.push(rows.length); return rows; }) as typeof stmt.all;
+      return stmt;
+    }) as typeof db.prepare;
+    const text = formatOntologyBrowse(db, { facts_per_category: 3, max_categories: 200 });
+    db.prepare = realPrepare;
+
+    expect(loaded).toHaveLength(1);
+    // 20,000 chars / (16 + 3×40) per block → at most 148 categories can fit → at most 444 fact rows
+    expect(loaded[0]).toBeLessThanOrEqual(444);
+    // every category that was printed has its facts (none was printed without its facts being loaded):
+    // three each, except that the last block may have been cut short by the ceiling
+    const printed = [...text.matchAll(/^### /gm)].length;
+    expect(printed).toBeGreaterThanOrEqual(10);
+    const factLines = [...text.matchAll(/^- \*\*\[decision\]\*\*/gm)].length;
+    expect(factLines).toBeGreaterThanOrEqual((printed - 1) * 3 + 1);
+    expect(factLines).toBeLessThanOrEqual(printed * 3);
+    expect(text).not.toMatch(/top 0 shown/);
+  });
+
   it('5,000 categories and 30,000 facts: under the output ceiling, in bounded time, with the remainder counted', () => {
     seedWide(25, 200, 6);
     expect(ONTOLOGY_MAX_OUTPUT_CHARS).toBe(20_000);
@@ -249,7 +316,7 @@ describe('formatOntologyBrowse (search_ontology output)', () => {
     const t0 = performance.now();
     const overview = formatOntologyBrowse(db, {});
     const overviewMs = performance.now() - t0;
-    expect(overview.length).toBeLessThanOrEqual(ONTOLOGY_MAX_OUTPUT_CHARS + 500);
+    expect(overview.length).toBeLessThanOrEqual(ONTOLOGY_MAX_OUTPUT_CHARS);
     expect(overview).toMatch(/25 domains · 5000 categories · 30000 active facts/);
     expect(overview).not.toMatch(/Fact \d+-\d+-\d+/);
     expect(overviewMs).toBeLessThan(5000);
@@ -258,7 +325,7 @@ describe('formatOntologyBrowse (search_ontology output)', () => {
     const t1 = performance.now();
     const everything = formatOntologyBrowse(db, { category: 'Topic', facts_per_category: 50, max_categories: 200, include_relations: true });
     const everythingMs = performance.now() - t1;
-    expect(everything.length).toBeLessThanOrEqual(ONTOLOGY_MAX_OUTPUT_CHARS + 500);
+    expect(everything.length).toBeLessThanOrEqual(ONTOLOGY_MAX_OUTPUT_CHARS);
     expect(everything).toMatch(/Output limit \(20000 chars\) reached/);
     expect(everything).toMatch(/narrow the `domain` \/ `category` filter/);
     expect(everythingMs).toBeLessThan(5000);

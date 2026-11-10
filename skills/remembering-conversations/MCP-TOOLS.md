@@ -149,16 +149,17 @@ Browse the ontology (Domain → Category → Facts) level by level.
 | `domain` | `string` | No | Domain name filter (partial, case-insensitive) |
 | `category` | `string` | No | Category name filter (partial, case-insensitive) |
 | `facts_per_category` | `number` | No | Facts shown per category, most confirmed first, 0-50. Default 5 with a `category` filter, otherwise 0 |
-| `max_categories` | `number` | No | Categories listed per domain, largest first, 1-200. Default 8 without facts, 20 with |
+| `max_categories` | `number` | No | Categories listed per domain, largest first, 1-200. Default 8 (200 with a `domain` filter) without facts, 20 with |
 | `include_relations` | `boolean` | No | Add up to 5 related facts under each fact shown |
 
 - No filter → every domain with its fact and category totals and its largest categories (names and counts,
   no fact text).
-- `domain` → more of that domain's categories.
+- `domain` → up to 200 of that domain's categories (names and counts).
 - `category` (or `facts_per_category` > 0) → the top facts of each matching category, each clipped to 300
   characters, with the count of the facts not shown.
 - One answer is at most 20,000 characters. When the limit is reached the answer says how many categories and
-  facts it left out — narrow `domain` / `category` to reach them. Empty categories are counted, not listed.
+  facts it left out — narrow `domain` / `category` to reach them. A category whose facts do not all fit shows
+  as many as fit and counts the rest. Empty categories are counted, not listed.
 - To find facts by meaning rather than by position in the tree, use `search_facts`.
 
 ## explore_graph
