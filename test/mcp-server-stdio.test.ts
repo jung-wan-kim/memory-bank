@@ -424,6 +424,29 @@ describe('MCP server over stdio', () => {
     });
   });
 
+  // R2-SEARCH-6 — `project` was accepted and described as "Project path to scope stats", but every total is of
+  // the whole graph: a caller that named a project read the whole graph's numbers as that project's.
+  describe('graph_stats', () => {
+    it('says that `project` is not applied — in the schema and in the answer', async () => {
+      const { tools } = await client.listTools();
+      const tool = tools.find((t) => t.name === 'graph_stats')!;
+      const described = (tool.inputSchema.properties as Record<string, { description: string }>).project.description;
+      expect(described).not.toMatch(/to scope stats/);
+      expect(described).toMatch(/not applied/);
+      expect(described).toMatch(/whole graph/);
+      expect(tool.description).toMatch(/whole graph/);
+
+      const all = await call('graph_stats', {});
+      const named = await call('graph_stats', { project: '/some/project' });
+      expect(named.isError).toBe(false);
+      expect(all.text).toMatch(/\| Active Facts \| \d+ \|/);
+      expect(all.text).not.toMatch(/not applied/);
+      // the same totals, followed by the note
+      expect(named.text.startsWith(all.text)).toBe(true);
+      expect(named.text.slice(all.text.length)).toMatch(/`project` is not applied: these totals cover the whole graph/);
+    });
+  });
+
   it('the server wrote nothing unexpected to stderr', () => {
     expect(serverStderr).not.toMatch(/Server error|UnhandledPromiseRejection|TypeError|ReferenceError/);
   });

@@ -462,11 +462,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'graph_stats',
-        description: 'Get knowledge graph statistics: total facts, domains, categories, relations, and top domains by fact count. Useful for understanding what knowledge has been accumulated.',
+        description: 'Get knowledge graph statistics: total facts, domains, categories, relations, and top domains by fact count. Useful for understanding what knowledge has been accumulated. The totals are always of the whole graph (every project).',
         inputSchema: {
           type: 'object',
           properties: {
-            project: { type: 'string', description: 'Project path to scope stats (optional, default: all)' },
+            project: { type: 'string', description: 'Accepted for compatibility and not applied: the totals always cover the whole graph' },
           },
           additionalProperties: false,
         },
@@ -840,7 +840,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     if (name === 'graph_stats') {
-      z.object({
+      // `project` is accepted (callers written against the old description pass it) but no total is scoped
+      // by it — the answer says so instead of letting whole-graph numbers be read as that project's.
+      const params = z.object({
         project: z.string().max(500).optional(),
       }).strict().parse(args);
 
@@ -892,6 +894,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           output += `## Relation Types\n\n`;
           for (const { relation_type, count } of relationBreakdown) output += `- ${relation_type}: ${count}\n`;
           output += '\n';
+        }
+
+        if (params.project !== undefined) {
+          output += '_Note: `project` is not applied: these totals cover the whole graph (every project)._\n';
         }
 
         return { content: [{ type: 'text', text: output }] };

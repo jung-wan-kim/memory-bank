@@ -234,7 +234,7 @@ type, the ten largest domains, relations per type.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `project` | `string` | No | Accepted for compatibility; the totals cover the whole graph |
+| `project` | `string` | No | Accepted for compatibility and not applied: the totals cover the whole graph, and an answer to a call that passed it ends with a note saying so |
 
 ## cross_project_insights
 
