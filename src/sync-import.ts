@@ -5,9 +5,8 @@ import { generateEmbedding, initEmbeddings, EMBEDDING_VERSION } from './embeddin
 import { getSyncDir, ownExportStillInDb, syncFilesNotMatchingMeta } from './sync-export.js';
 import { getIndexDir } from './paths.js';
 import { canonicalizeProject } from './project-canon.js';
-import { factRejectReason, normalizeCategory, ontologyNameRejectReason } from './fact-validity.js';
-import { secretRejectReason } from './secret-scan.js';
-import { importGuardReason, instructionLikeReason, recordImportedFact, type ImportRejectReason } from './import-guard.js';
+import { normalizeCategory, ontologyNameRejectReason } from './fact-validity.js';
+import { instructionLikeReason, recordImportedFact, syncFactRefusal, type ImportRejectReason } from './import-guard.js';
 
 interface SyncFact {
   id: string;
@@ -213,16 +212,17 @@ export async function importFromSync(): Promise<{
       try {
         const f = row as SyncFact;
         if (factExists.get(f.id)) continue;
-        if (factRejectReason(f)) { result.rejectedJunk++; refusedFactIds.add(String(f.id)); continue; }
-        const secretReason = secretRejectReason(f.fact) ?? secretRejectReason(f.fact_kr);
-        if (secretReason) {
-          result.rejectedSecrets++;
-          result.rejectedSecretReasons[secretReason] = (result.rejectedSecretReasons[secretReason] ?? 0) + 1;
+        // The same judgment the export applies before it writes the file (import-guard.ts syncFactRefusal).
+        const refusal = syncFactRefusal(f);
+        if (refusal) {
           refusedFactIds.add(String(f.id));
+          if (refusal.kind === 'validity') result.rejectedJunk++;
+          else if (refusal.kind === 'secret') {
+            result.rejectedSecrets++;
+            result.rejectedSecretReasons[refusal.reason] = (result.rejectedSecretReasons[refusal.reason] ?? 0) + 1;
+          } else refuseInstructionLike(String(f.id), refusal.reason as ImportRejectReason);
           continue;
         }
-        const guardReason = importGuardReason(f);
-        if (guardReason) { refuseInstructionLike(String(f.id), guardReason); refusedFactIds.add(String(f.id)); continue; }
 
         // Canonicalize scope before dedup/insert — other devices may still
         // export slug-format project names.

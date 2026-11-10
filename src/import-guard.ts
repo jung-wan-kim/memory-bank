@@ -1,4 +1,6 @@
 import type Database from 'better-sqlite3';
+import { factRejectReason } from './fact-validity.js';
+import { secretRejectReason } from './secret-scan.js';
 
 /**
  * Guard for facts that arrive through sync import.
@@ -116,6 +118,35 @@ export function instructionLikeReason(text: unknown): ImportRejectReason | null 
  */
 export function importGuardReason(f: { fact?: unknown; fact_kr?: unknown; category?: unknown }): ImportRejectReason | null {
   return instructionLikeReason(f.fact) ?? instructionLikeReason(f.fact_kr) ?? instructionLikeReason(f.category);
+}
+
+/** Why the sync files must not carry a fact: which check refused it, and that check's reason (never the text). */
+export interface SyncFactRefusal {
+  kind: 'validity' | 'secret' | 'instruction-like';
+  reason: string;
+}
+
+/**
+ * The one judgment the sync export and the sync import share: a fact this
+ * returns a refusal for is not written to the sync files and is not imported
+ * from them. In order: fact validity (template residue, the prompt's example,
+ * session-environment boilerplate), a credential-shaped string, an
+ * instruction aimed at the model.
+ *
+ * One function on purpose. While only the import checked, the export kept
+ * writing rows every receiving device refused at every session start (875 on
+ * 2026-11-11), credential-shaped facts among them.
+ */
+export function syncFactRefusal(
+  f: { fact: unknown; fact_kr?: unknown; category: unknown; scope_type: unknown },
+): SyncFactRefusal | null {
+  const validity = factRejectReason(f);
+  if (validity) return { kind: 'validity', reason: validity };
+  const secret = secretRejectReason(f.fact) ?? secretRejectReason(f.fact_kr);
+  if (secret) return { kind: 'secret', reason: secret };
+  const guard = importGuardReason(f);
+  if (guard) return { kind: 'instruction-like', reason: guard };
+  return null;
 }
 
 // ---------------------------------------------------------------------------

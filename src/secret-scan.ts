@@ -7,9 +7,10 @@
  * re-shown in injection blocks, search results and the cross-device sync
  * files, so a credential must not get that far.
  *
- * Used where a new fact enters the store: the extractor (before the save) and
- * the sync import. scripts/redact-secret-facts.mjs applies the same rules to
- * rows stored before the check existed. The answer is a refusal, not a
+ * Used where a new fact enters the store — the extractor (before the save) and
+ * the sync import — and where a stored one would leave it: the sync export.
+ * scripts/redact-secret-facts.mjs applies the same rules to rows stored before
+ * the check existed. The answer is a refusal, not a
  * rewrite — a fact whose point is a secret value has nothing left once the
  * value is gone, and the reason returned here never contains the matched text
  * (callers log it).

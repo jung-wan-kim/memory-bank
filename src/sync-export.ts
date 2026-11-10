@@ -5,6 +5,7 @@ import { createHash } from 'crypto';
 import type Database from 'better-sqlite3';
 import { initDatabase } from './db.js';
 import { getSuperpowersDir } from './paths.js';
+import { syncFactRefusal } from './import-guard.js';
 
 const SYNC_DIR_NAME = 'sync';
 
@@ -29,6 +30,19 @@ interface SyncMeta {
   relations_count: number;
   /** Content fingerprint per data file — what the next export compares against (absent in files an older version wrote). */
   files?: Record<string, SyncFileMeta>;
+  /** Active facts this export left out because an import refuses them: how many, by reason (no ids, no text). */
+  withheld_facts?: WithheldFacts;
+}
+
+interface WithheldFacts {
+  count: number;
+  by_reason: Record<string, number>;
+}
+
+function sameWithheld(a: WithheldFacts | undefined, b: WithheldFacts): boolean {
+  if (!a || typeof a !== 'object' || a.count !== b.count || !a.by_reason || typeof a.by_reason !== 'object') return false;
+  const keys = Object.keys(b.by_reason);
+  return Object.keys(a.by_reason).length === keys.length && keys.every((k) => a.by_reason[k] === b.by_reason[k]);
 }
 
 /**
@@ -126,9 +140,22 @@ function countRows(db: Database.Database): Record<string, number> {
  * meta.json is written last, and only when a data file was written or the meta
  * on disk does not describe this content.
  *
+ * An active fact the import refuses is not exported (syncFactRefusal — fact
+ * validity, a credential-shaped string, an instruction aimed at the model):
+ * the files used to carry rows stored before those checks existed, a bot token
+ * among them, and every receiving device refused the same 875 lines at every
+ * session start (measured 2026-11-11). The fact stays in this database as it
+ * is — scripts/redact-secret-facts.mjs deactivates the credential-shaped ones.
+ * `withheld` / `withheldByReason` and meta.json's `withheld_facts` say how many
+ * were left out and why (counts only). Relations are exported as before: one
+ * that names a fact the receiving device does not have is counted there.
+ *
  * `written` names the files this call rewrote ([] = nothing changed).
  */
-export function exportForSync(): { facts: number; domains: number; categories: number; relations: number; written: string[] } {
+export function exportForSync(): {
+  facts: number; domains: number; categories: number; relations: number; written: string[];
+  withheld: number; withheldByReason: Record<string, number>;
+} {
   const db = initDatabase();
   const syncDir = getSyncDir();
 
@@ -136,11 +163,20 @@ export function exportForSync(): { facts: number; domains: number; categories: n
     removeStaleTempFiles(syncDir);
 
     // Export facts (fact_kr included so other devices can build Korean vectors)
-    const facts = db.prepare(`
+    const activeFacts = db.prepare(`
       SELECT id, fact, fact_kr, category, scope_type, scope_project, source_exchange_ids,
              created_at, updated_at, consolidated_count, ontology_category_id
       FROM facts WHERE is_active = 1
     `).all() as Array<Record<string, unknown>>;
+    // Only what an import accepts goes into the file.
+    const withheldByReason: Record<string, number> = {};
+    const facts = activeFacts.filter((f) => {
+      const refusal = syncFactRefusal(f as { fact: unknown; fact_kr?: unknown; category: unknown; scope_type: unknown });
+      if (!refusal) return true;
+      withheldByReason[refusal.reason] = (withheldByReason[refusal.reason] ?? 0) + 1;
+      return false;
+    });
+    const withheld: WithheldFacts = { count: activeFacts.length - facts.length, by_reason: withheldByReason };
     const domains = db.prepare('SELECT * FROM ontology_domains').all();
     const categories = db.prepare('SELECT * FROM ontology_categories').all();
     const relations = db.prepare('SELECT * FROM ontology_relations').all();
@@ -174,7 +210,7 @@ export function exportForSync(): { facts: number; domains: number; categories: n
       written.push(name);
     }
 
-    const metaDescribesThis = prevMeta !== null && SYNC_FILES.every((name) => {
+    const metaDescribesThis = prevMeta !== null && sameWithheld(prevMeta.withheld_facts, withheld) && SYNC_FILES.every((name) => {
       const prev = prevMeta.files?.[name];
       return prev !== undefined && prev.sha256 === files[name].sha256 && prev.bytes === files[name].bytes;
     });
@@ -188,10 +224,20 @@ export function exportForSync(): { facts: number; domains: number; categories: n
         categories_count: categories.length,
         relations_count: relations.length,
         files,
+        withheld_facts: withheld,
       };
       metaText = JSON.stringify(meta, null, 2);
       writeAtomic(metaPath, metaText);
       written.push('meta.json');
+      if (withheld.count > 0) {
+        // Said when the export changed, not at every session end. Kinds and counts only.
+        const kinds = Object.entries(withheldByReason).map(([reason, n]) => `${reason} ${n}`).join(', ');
+        const secrets = Object.keys(withheldByReason).some((reason) => reason.startsWith('secret-'));
+        console.error(
+          `sync-export: left out ${withheld.count} active fact(s) an import refuses (${kinds})`
+          + (secrets ? ' — the credential-shaped ones are still active here: node scripts/redact-secret-facts.mjs lists them, --apply deactivates them' : ''),
+        );
+      }
     }
 
     // Record what this install wrote — after the files, so a run that dies in
@@ -219,6 +265,8 @@ export function exportForSync(): { facts: number; domains: number; categories: n
       categories: categories.length,
       relations: relations.length,
       written,
+      withheld: withheld.count,
+      withheldByReason,
     };
   } finally {
     db.close();
