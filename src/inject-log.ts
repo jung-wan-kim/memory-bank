@@ -49,7 +49,11 @@ export interface InjectLogEntry {
   reason?: string;
   /** Length of the text actually searched, when it differs from the prompt (prompt-gate.ts). */
   query_len?: number;
-  /** via='fallback' only — why the warm daemon did not answer ('no-daemon', 'daemon-timeout', 'daemon-closed', 'daemon-error'). */
+  /**
+   * via='fallback' only — why the warm daemon did not answer ('no-daemon', 'daemon-timeout', 'daemon-closed',
+   * 'daemon-error'), or why it was never asked: 'socket-path-too-long' (no socket name fits a unix socket path
+   * under this index dir, so no daemon runs there — version-guard.ts injectSocketPathIn).
+   */
   fallback_reason?: string;
   /** One id per hook run: a daemon line and a fallback line with the same id are one prompt. */
   req_id?: string;
