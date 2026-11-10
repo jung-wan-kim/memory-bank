@@ -794,7 +794,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
         }
 
-        return { content: [{ type: 'text', text: output }] };
+        // A failed LLM call is an error for the caller, not an answer with 0% confidence.
+        return result.failure
+          ? { content: [{ type: 'text', text: output }], isError: true }
+          : { content: [{ type: 'text', text: output }] };
       } catch (error) {
         return {
           content: [{ type: 'text', text: handleError(error) }],

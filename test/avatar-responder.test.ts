@@ -219,6 +219,46 @@ describe('avatar-responder', () => {
     expect(result.answer).toContain('잠시 후 다시 시도');
   });
 
+  // F9 — "Not logged in · Please run /login" is not a failure the shared classifier recognizes ('unknown'), so
+  // the answer said "try again later" — and trying again gave the same answer for as long as the login was missing.
+  it('tells the user to log in when the call fails for a missing login or key, not to wait', async () => {
+    const emb = new Array(384).fill(0.1);
+    insertTestFact(db, 'fact-l', 'Some fact', emb);
+
+    for (const failure of [
+      new Error('Not logged in · Please run /login'),
+      new Error('Invalid API key · Please run /login'),
+      Object.assign(new Error('authentication_error: invalid x-api-key'), { status: 401 }),
+    ]) {
+      (callHaiku as ReturnType<typeof vi.fn>).mockRejectedValue(failure);
+      const result = await askAvatar(db, 'question');
+      expect(result.failure).toBe('login');
+      expect(result.answer).toContain('/login');
+      expect(result.answer).toContain('(login)');
+      expect(result.answer).not.toContain('잠시 후 다시 시도');
+      expect(result.confidence).toBe(0);
+    }
+  });
+
+  it('marks every failed call as a failure, and an answered one not', async () => {
+    const { LlmRefusalError } = await import('../src/llm-error-class.js');
+    const emb = new Array(384).fill(0.1);
+    insertTestFact(db, 'fact-m', 'Some fact', emb);
+
+    (callHaiku as ReturnType<typeof vi.fn>).mockRejectedValue(new LlmRefusalError('cyber'));
+    expect((await askAvatar(db, 'question')).failure).toBe('refusal');
+    (callHaiku as ReturnType<typeof vi.fn>).mockRejectedValue(Object.assign(new Error('prompt is too long'), { status: 413 }));
+    expect((await askAvatar(db, 'question')).failure).toBe('deterministic');
+    (callHaiku as ReturnType<typeof vi.fn>).mockRejectedValue(Object.assign(new Error('overloaded'), { status: 529 }));
+    expect((await askAvatar(db, 'question')).failure).toBe('transient');
+    (callHaiku as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('something nobody has seen before'));
+    expect((await askAvatar(db, 'question')).failure).toBe('unknown');
+
+    (callHaiku as ReturnType<typeof vi.fn>).mockResolvedValue('{"answer":"ok","confidence":0.9,"cited_fact_ids":[]}');
+    (parseJsonResponse as ReturnType<typeof vi.fn>).mockReturnValue({ answer: 'ok', confidence: 0.9, cited_fact_ids: [] });
+    expect((await askAvatar(db, 'question')).failure).toBeUndefined();
+  });
+
   it('should fallback to raw response when JSON parse fails', async () => {
     const emb = new Array(384).fill(0.1);
     insertTestFact(db, 'fact-z', 'Some fact', emb);
