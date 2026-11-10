@@ -54,7 +54,10 @@ const CONCURRENCY = Math.max(1, boundedInt(process.env.BACKFILL_CONCURRENCY, 4, 
 // cron sessions). These are ~98% 1-exchange noise that the backfill itself
 // generates, so including them is a feedback loop that never converges.
 // Comma-separated cwd paths; env-overridable.
-const { minExchanges: MIN_EXCHANGES, excludeProjects: EXCLUDE_PROJECTS } = getExtractionConfig();
+// The whole config object goes to the pending query as it is: the SessionStart
+// probe passes getExtractionConfig() too, and a field picked out by hand here
+// (minExchanges, excludeProjects) once left a newer one (quietMinutes) behind.
+const EXTRACTION_CONFIG = getExtractionConfig();
 
 
 const LOCK = path.join(getIndexDir(), 'backfill-extract.lock');
@@ -133,7 +136,7 @@ function seedFromExistingFacts(db) {
 function pendingSessions(db, limit) {
   // Single source (pendingExtractionCoreQuery) shared with the SessionStart
   // hook's spawn condition so the two can never drift.
-  const { sql, params } = pendingExtractionCoreQuery({ minExchanges: MIN_EXCHANGES, excludeProjects: EXCLUDE_PROJECTS });
+  const { sql, params } = pendingExtractionCoreQuery(EXTRACTION_CONFIG);
   return db.prepare(`${sql} ORDER BY ts DESC LIMIT ?`).all(...params, limit);
 }
 

@@ -276,4 +276,40 @@ export const FAILURE_REPORT = {};
     // 삼키면 done 에도 buckets 에도 안 잡혀 "sessions 0" 으로 조용히 끝난다.
     expect(out, '격리 건수가 표면화돼야 한다').toMatch(/isolated-exceptions 4/);
   });
+
+  it('pending 술어에 getExtractionConfig() 의 설정 객체를 통째로 넘긴다 (탐침과 같은 술어)', () => {
+    writeStubs({ staleTable: false });
+    // 세션 시작 정비의 탐침은 getExtractionConfig() 를 그대로 넘긴다. 워커가 필드를 골라
+    // 새 객체를 만들면 나중에 생긴 필드(quietMinutes 등)가 워커에서만 빠져 둘이 갈린다.
+    const seen = path.join(sandbox, 'config-seen.json');
+    fs.writeFileSync(path.join(sandbox, 'dist', 'pending-extraction.js'), `
+import fs from 'node:fs';
+export function getExtractionConfig() {
+  return { minExchanges: 3, excludeProjects: ['/x'], quietMinutes: 17, addedLater: 'kept' };
+}
+export function pendingExtractionCoreQuery(cfg) {
+  fs.writeFileSync(${JSON.stringify(seen)}, JSON.stringify(cfg));
+  return { sql: 'SELECT 1', params: [] };
+}
+`);
+    const { code } = runWorker();
+    expect(code).toBe(0);
+    expect(JSON.parse(fs.readFileSync(seen, 'utf8')))
+      .toEqual({ minExchanges: 3, excludeProjects: ['/x'], quietMinutes: 17, addedLater: 'kept' });
+  });
+
+  it('선정 뒤 색인에서 사라진 세션(not_indexed)은 경보 없이 건너뛴다', () => {
+    writeStubs({ staleTable: false });
+    fs.writeFileSync(path.join(sandbox, 'dist', 'fact-extractor.js'), `
+export async function runFactExtraction() { return { extracted: 0, saved: 0, skipped: 'not_indexed' }; }
+export function classifyExtractionFailure() { return 'internal'; }
+export const FAILURE_REPORT = {
+  internal: { label: 'ERROR', note: 'i', bucket: 'budget', consumesBudget: true, escalate: true },
+};
+`);
+    const { out, code } = runWorker();
+    expect(code).toBe(0);
+    expect(out).toMatch(/skip \(not_indexed\)/);
+    expect(out, '장애가 아니다').not.toMatch(/INTERNAL failures|transient-deferred/);
+  });
 });

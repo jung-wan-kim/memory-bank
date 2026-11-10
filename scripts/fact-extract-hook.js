@@ -4,7 +4,7 @@
  * SessionEnd Hook: Extract facts from session conversations.
  *
  * Claude Code passes hook input as JSON on stdin:
- *   { "session_id": "...", "cwd": "...", "hook_event_name": "SessionEnd", ... }
+ *   { "session_id": "...", "cwd": "...", "hook_event_name": "SessionEnd", "reason": "...", ... }
  *
  * Env vars (SESSION_ID / CWD) are kept as a fallback for manual invocation.
  *
@@ -51,7 +51,12 @@ async function main() {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
-    env: { ...process.env, SESSION_ID: sessionId, CWD: project },
+    // reason: why the session ended. The worker only logs it — SessionEnd often arrives
+    // twice for one session, and the log is how the two events can be told apart.
+    env: {
+      ...process.env, SESSION_ID: sessionId, CWD: project,
+      SESSION_END_REASON: typeof input.reason === 'string' ? input.reason : '',
+    },
   });
   child.unref();
 

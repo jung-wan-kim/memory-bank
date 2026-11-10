@@ -10,7 +10,7 @@ import { factRejectReason } from './fact-validity.js';
 import { secretRejectReason } from './secret-scan.js';
 import {
   claimSessionSql, renewClaimSql, failureMarkerUpsertSql, freshClaimPredicate,
-  getExtractionConfig, EXTRACTION_STATE, MAX_INTERNAL_RETRIES,
+  getExtractionConfig, EXTRACTION_STATE, MAX_INTERNAL_RETRIES, ensureSeenExchangesColumn,
 } from './pending-extraction.js';
 
 export const EXTRACTION_SYSTEM_PROMPT = `You are an expert at extracting long-term facts from conversations.
@@ -247,6 +247,8 @@ export async function extractFactsFromExchanges(
     WHERE session_id = ?
     ORDER BY timestamp ASC
   `).all(sessionId) as Array<{ id: string; user_message: string; assistant_message: string }>;
+
+  if (stats) stats.seenExchanges = exchanges.length;
 
   const substantive = exchanges.filter(
     ex => isSubstantiveExchange(ex.user_message, ex.assistant_message),
@@ -534,6 +536,8 @@ export interface ExtractionStats {
   truncatedFacts?: number;
   /** 자격증명 모양 문자열이 들어 있어 버린 사실 수 */
   rejectedSecrets?: number;
+  /** 이번 추출이 읽은 그 세션의 교환 수 — 완료 마커(seen_exchanges)에 남긴다 */
+  seenExchanges?: number;
 }
 
 /** runFactExtraction 의 결과. `skipped` 가 있으면 이 세션은 이번 실행에서 처리되지 않았다. */
@@ -547,7 +551,7 @@ export interface ExtractionRunResult {
   skipped?:
     | 'claim_not_acquired' | 'claim_error'
     | 'excluded_project' | 'excluded_project_unmarked'
-    | 'not_indexed';
+    | 'not_indexed' | 'no_new_exchanges';
 }
 
 export async function runFactExtraction(
@@ -571,6 +575,7 @@ export async function runFactExtraction(
    *
    * `not_indexed`: 이 세션의 교환이 색인 DB 에 하나도 없다. 마커를 쓰지 않으므로
    * 색인된 뒤 backfill 이 다시 집는다.
+   * `no_new_exchanges`: 완료 마커가 이미 있고 그 뒤로 교환이 늘지 않았다(훅 변형).
    */
 ): Promise<ExtractionRunResult> {
   // Skip self-referential repos (memory-bank's own monitoring sessions) — mark
@@ -635,6 +640,31 @@ export async function runFactExtraction(
   if (indexedExchanges === 0) {
     console.error(`extraction: session ${sessionId} — 색인된 교환 0개, 완료 마커를 쓰지 않습니다(not_indexed)`);
     return { extracted: 0, saved: 0, skipped: 'not_indexed' };
+  }
+
+  // 🚨 훅 변형은 확정 마커 위에서도 선점한다(--resume 으로 교환이 늘어난 세션의 재추출).
+  // 그런데 같은 세션의 SessionEnd 가 60초 안에 두 번 오는 일이 잦고(실측 840쌍), 교환이
+  // 그대로인 두 번째 실행은 같은 입력을 통째로 다시 추출해 사실이 두 벌이 된다. 완료
+  // 마커가 기억하는 교환 수(seen_exchanges)와 지금 수가 같으면 할 일이 없다.
+  // 교환 수를 모르는 옛 마커(NULL)·컬럼을 만들지 못한 DB 는 예전 동작(재추출) 그대로다.
+  // 컬럼은 변형과 무관하게 보장한다 — backfill 이 끝낸 세션의 마커도 교환 수를 남겨야
+  // 뒤이은 SessionEnd 가 그것을 다시 추출하지 않는다.
+  const hasSeenColumn = ensureSeenExchangesColumn(db);
+  if ((opts?.claimVariant ?? 'hook') === 'hook' && hasSeenColumn) {
+    let prior: { extracted: number; seen_exchanges: number | null } | undefined;
+    try {
+      prior = db.prepare('SELECT extracted, seen_exchanges FROM extraction_log WHERE session_id = ?')
+        .get(sessionId) as { extracted: number; seen_exchanges: number | null } | undefined;
+    } catch (e) {
+      // 읽지 못하면 판단하지 않는다 — 아래 선점 단계가 같은 DB 오류를 보류로 처리한다.
+      console.error(`extraction: session ${sessionId} — 이전 마커 조회 실패(${e instanceof Error ? e.message : String(e)})`);
+    }
+    if (prior && prior.extracted >= 0 && prior.seen_exchanges === indexedExchanges) {
+      console.error(
+        `extraction: session ${sessionId} — 지난 추출 뒤 새 교환 없음(${indexedExchanges}개 그대로), 다시 추출하지 않습니다`,
+      );
+      return { extracted: 0, saved: 0, skipped: 'no_new_exchanges' };
+    }
   }
 
   // 🚨 LLM 을 부르기 **전에** 세션을 선점한다. SessionEnd 훅과 backfill 워커는
@@ -789,8 +819,15 @@ export async function runFactExtraction(
   function writeCompletionMarker(extracted: number, savedCount: number): number {
     // dropped_batches 컬럼은 마이그레이션이 지연될 수 있다 — 없으면 4-컬럼 폴백으로
     // **마커는 반드시** 남긴다(미기록 = 재추출 = 중복, Codex R5 HIGH-1).
-    const hasDropped = (db.prepare(`SELECT name FROM pragma_table_info('extraction_log')`)
-      .all() as Array<{ name: string }>).some(c => c.name === 'dropped_batches');
+    const logColumns = (db.prepare(`SELECT name FROM pragma_table_info('extraction_log')`)
+      .all() as Array<{ name: string }>).map(c => c.name);
+    const hasDropped = logColumns.includes('dropped_batches');
+    // seen_exchanges(이번 추출이 읽은 교환 수)도 같은 방식 — 컬럼이 있을 때만 싣는다.
+    const hasSeen = logColumns.includes('seen_exchanges');
+    const seenCol = hasSeen ? ', seen_exchanges' : '';
+    const seenVal = hasSeen ? ', ?' : '';
+    const seenSet = hasSeen ? ', seen_exchanges = excluded.seen_exchanges' : '';
+    const seenArgs = hasSeen ? [stats.seenExchanges ?? null] : [];
     // 소유권 가드: 그사이 선점이 넘어갔다면 새 소유자의 상태를 덮지 않는다.
     // (claim 없이 도는 구버전 DB 경로는 가드 없이 기존 동작.)
     const ownGuard = holdsClaim ? ' WHERE extraction_log.claim_owner = ?' : '';
@@ -800,18 +837,18 @@ export async function runFactExtraction(
     try {
       res = hasDropped
       ? db.prepare(`
-          INSERT INTO extraction_log (session_id, processed_at, extracted, saved, dropped_batches, claim_owner)
-          VALUES (?, ?, ?, ?, ?, NULL)
+          INSERT INTO extraction_log (session_id, processed_at, extracted, saved, dropped_batches, claim_owner${seenCol})
+          VALUES (?, ?, ?, ?, ?, NULL${seenVal})
           ON CONFLICT(session_id) DO UPDATE SET processed_at = excluded.processed_at,
             extracted = excluded.extracted, saved = excluded.saved,
-            dropped_batches = excluded.dropped_batches, claim_owner = NULL${ownGuard}
-        `).run(sessionId, now, extracted, savedCount, stats.droppedBatches, ...ownArgs)
+            dropped_batches = excluded.dropped_batches, claim_owner = NULL${seenSet}${ownGuard}
+        `).run(sessionId, now, extracted, savedCount, stats.droppedBatches, ...seenArgs, ...ownArgs)
       : db.prepare(`
-          INSERT INTO extraction_log (session_id, processed_at, extracted, saved)
-          VALUES (?, ?, ?, ?)
+          INSERT INTO extraction_log (session_id, processed_at, extracted, saved${seenCol})
+          VALUES (?, ?, ?, ?${seenVal})
           ON CONFLICT(session_id) DO UPDATE SET processed_at = excluded.processed_at,
-            extracted = excluded.extracted, saved = excluded.saved${ownGuard}
-        `).run(sessionId, now, extracted, savedCount, ...ownArgs);
+            extracted = excluded.extracted, saved = excluded.saved${seenSet}${ownGuard}
+        `).run(sessionId, now, extracted, savedCount, ...seenArgs, ...ownArgs);
     } catch (e) {
       // 아주 오래된 DB 는 extraction_log 자체가 없다. 이 경로는 선점도 없었으므로
       // (holdsClaim=false) '소유권 상실'이 아니다 — 추출 결과를 롤백하면 안 된다.
