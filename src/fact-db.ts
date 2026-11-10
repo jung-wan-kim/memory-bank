@@ -6,6 +6,7 @@ import { EMBEDDING_VERSION } from './embedding-version.js';
 import { getVecQuant, embeddingToVecBlob, vecParamSql, normalizeVecDistance, l2DistanceToSimilarity } from './db.js';
 import { factRejectReason, factTextRejectReason } from './fact-validity.js';
 import { scopeMatcher } from './project-family.js';
+import { VEC0_KNN_K_MAX } from './vec-limits.js';
 
 type FactVecTable = 'vec_facts' | 'vec_facts_kr' | 'vec_categories';
 
@@ -212,7 +213,9 @@ export interface FactSearchOptions {
   visibleId?: (id: string) => boolean;
 }
 
-const VISIBLE_FETCH_CAP = 6400;
+// vec0 refuses a larger k (vec-limits.ts) — at 6400 the replay bench threw once
+// fewer than candidateFetch of the nearest 3,200 rows were visible.
+const VISIBLE_FETCH_CAP = VEC0_KNN_K_MAX;
 
 export function searchSimilarFacts(
   db: Database.Database,
@@ -252,7 +255,7 @@ export function searchSimilarFacts(
   const fetch = (table: FactVecTable) => {
     if (!visibleId) return knn(table, candidateFetch);
     // Grow the fetch until candidateFetch visible rows are in hand (or the index runs out).
-    for (let n = candidateFetch * 4; ; n = Math.min(n * 4, VISIBLE_FETCH_CAP)) {
+    for (let n = Math.min(candidateFetch * 4, VISIBLE_FETCH_CAP); ; n = Math.min(n * 4, VISIBLE_FETCH_CAP)) {
       const rows = knn(table, n);
       const visible = rows.filter((r) => visibleId(r.id));
       if (visible.length >= candidateFetch || rows.length < n || n >= VISIBLE_FETCH_CAP) return visible.slice(0, candidateFetch);
@@ -315,6 +318,15 @@ export function factVectorDistance(db: Database.Database, factId: string, embedd
   return best;
 }
 
+export interface SameScopeSearchOptions {
+  /**
+   * Called when the search stopped at the KNN k limit with fewer than `limit`
+   * results while rows above the threshold were still unread — in-scope
+   * matches farther than the nearest `k` rows were not examined.
+   */
+  onCapReached?: (info: { k: number; found: number }) => void;
+}
+
 /**
  * Nearest active facts restricted to EXACTLY one scope — used by consolidation
  * so a project-private fact and a global fact can never be compared/merged
@@ -326,6 +338,13 @@ export function factVectorDistance(db: Database.Database, factId: string, embedd
  *
  * scope: { type:'global' } → global facts only.
  *        { type:'project', project } → that project's own facts only (no global).
+ *
+ * Paging ends as soon as nothing further can pass: a KNN returns rows nearest
+ * first, so once a table's last returned row is below `threshold` every row
+ * behind it is too. k never exceeds VEC0_KNN_K_MAX — when more rows than that
+ * pass the threshold and fewer than `limit` of the nearest ones are in scope,
+ * the search returns what those nearest rows held (not a throw, not []) and
+ * reports it through `opts.onCapReached`.
  */
 export function searchSimilarFactsSameScope(
   db: Database.Database,
@@ -333,6 +352,7 @@ export function searchSimilarFactsSameScope(
   scope: { type: 'global' } | { type: 'project'; project: string },
   limit: number = 5,
   threshold: number = 0.85,
+  opts: SameScopeSearchOptions = {},
 ): Array<{ fact: Fact; distance: number }> {
   const canonProject = scope.type === 'project' ? canonicalizeProject(db, scope.project) : null;
 
@@ -348,7 +368,9 @@ export function searchSimilarFactsSameScope(
   // ahead of a valid in-scope row and are only rejected later by the
   // embedding_version filter, so bounding by active facts could stop before
   // reaching the match. `exhausted` is the correct, index-size-independent stop.
-  const fetchN = (table: FactVecTable, n: number): { rows: Array<{ id: string; distance: number }>; exhausted: boolean } =>
+  // `done` adds the distance-order stop: the table ran out, OR its farthest
+  // returned row is already below the threshold (nothing behind it can pass).
+  const fetchN = (table: FactVecTable, n: number): { rows: Array<{ id: string; distance: number }>; done: boolean } =>
     factKnn(table, () => {
       const p = vecParamFor(db, table, embedding);
       const rows = db.prepare(`
@@ -357,17 +379,19 @@ export function searchSimilarFactsSameScope(
       `).all(p.blob, n) as Array<{ id: string; distance: number }>;
       // Normalize ×scale int8 distances BEFORE the cross-table merge.
       for (const r of rows) r.distance = normalizeVecDistance(r.distance, p.q);
-      return { rows, exhausted: rows.length < n };
-    }, { rows: [], exhausted: true });
+      const exhausted = rows.length < n;
+      return { rows, done: exhausted || l2DistanceToSimilarity(rows[rows.length - 1].distance) < threshold };
+    }, { rows: [], done: true });
 
-  const HARD_CAP = 100_000; // safety ceiling so a pathological index can't loop unbounded
-  let fetchCount = Math.max(limit * 20, 200);
+  // vec0 refuses k > VEC0_KNN_K_MAX. The old ceiling (100,000) let k grow
+  // 200 → 800 → 3,200 → 12,800 and the fourth page threw on every driver with
+  // fewer than `limit` matches in an index of more than 3,200 rows.
+  let fetchCount = Math.min(Math.max(limit * 20, 200), VEC0_KNN_K_MAX);
   let results: Array<{ fact: Fact; distance: number }> = [];
   for (;;) {
-    const a = fetchN('vec_facts', fetchCount);
-    const b = fetchN('vec_facts_kr', fetchCount);
+    const lookups = [fetchN('vec_facts', fetchCount), fetchN('vec_facts_kr', fetchCount)];
     const best = new Map<string, number>();
-    for (const vr of [...a.rows, ...b.rows]) {
+    for (const vr of lookups.flatMap((l) => l.rows)) {
       const cur = best.get(vr.id);
       if (cur === undefined || vr.distance < cur) best.set(vr.id, vr.distance);
     }
@@ -391,10 +415,16 @@ export function searchSimilarFactsSameScope(
       if (results.length >= limit) break;
     }
 
-    // Stop when we have enough, both indexes are exhausted, or we hit the cap.
-    const bothExhausted = a.exhausted && b.exhausted;
-    if (results.length >= limit || bothExhausted || fetchCount >= HARD_CAP) break;
-    fetchCount = Math.min(fetchCount * 4, HARD_CAP);
+    // Stop when we have enough or no lookup can yield another passing row.
+    if (results.length >= limit || lookups.every((l) => l.done)) break;
+    // At the k limit with rows above the threshold still unread: return what
+    // the nearest rows held and say so — a partial answer the caller can count,
+    // instead of failing the search (and with it the whole drain).
+    if (fetchCount >= VEC0_KNN_K_MAX) {
+      opts.onCapReached?.({ k: fetchCount, found: results.length });
+      break;
+    }
+    fetchCount = Math.min(fetchCount * 4, VEC0_KNN_K_MAX);
   }
 
   return results;
