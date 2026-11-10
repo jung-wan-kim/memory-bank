@@ -34,7 +34,7 @@ async function main() {
     if (result.rejectedJunk > 0) {
       // Not "new": the rows stay in the sync files until the exporting device
       // stops exporting them, so the same count can repeat every session.
-      console.error(`sync-import: skipped ${result.rejectedJunk} template-residue row(s) present in the sync files`);
+      console.error(`sync-import: skipped ${result.rejectedJunk} row(s) in the sync files that the fact validity check refuses (template residue, prompt example, session-environment boilerplate)`);
     }
     if (result.rejectedSecrets > 0) {
       // Kinds and counts only — never the text. Recorded in the log file too: this

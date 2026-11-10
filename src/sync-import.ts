@@ -32,7 +32,8 @@ export async function importFromSync(): Promise<{
   rejectedSecrets: number; rejectedSecretReasons: Record<string, number>;
 }> {
   const syncDir = getSyncDir();
-  // rejectedJunk: template-residue rows found in the sync files (fact-validity.ts),
+  // rejectedJunk: rows in the sync files that fact-validity.ts refuses (template residue,
+  //   a copy of the extraction prompt's example, session-environment boilerplate),
   //   plus categories under a rejected domain. They stay in the files until the
   //   exporting device stops exporting them, so the count repeats per run.
   // detachedCategoryRefs: imported facts whose ontology category does not exist

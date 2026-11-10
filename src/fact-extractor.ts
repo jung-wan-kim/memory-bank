@@ -6,7 +6,7 @@ import { insertFact } from './fact-db.js';
 import { generateEmbedding, initEmbeddings } from './embeddings.js';
 import { classifyAndLinkFact } from './ontology-classifier.js';
 import { randomUUID } from 'node:crypto';
-import { factRejectReason } from './fact-validity.js';
+import { factRejectReason, factKrRejectReason, normalizeCategory } from './fact-validity.js';
 import { secretRejectReason } from './secret-scan.js';
 import {
   claimSessionSql, renewClaimSql, failureMarkerUpsertSql, freshClaimPredicate,
@@ -24,6 +24,8 @@ export const EXTRACTION_SYSTEM_PROMPT = `You are an expert at extracting long-te
 - No duplicate facts within the same batch
 - Prefer durable facts (decisions, conventions, constraints, lessons) over
   session-ephemeral details ("user is currently editing file X" is NOT a fact)
+- The session's environment is NOT a fact: where the project folder is, that it
+  is a git repository, which branch is checked out
 - Capture problem→solution lessons as "pattern"
   (e.g., "X error in this project is caused by Y and fixed by Z")
 
@@ -34,13 +36,14 @@ export const EXTRACTION_SYSTEM_PROMPT = `You are an expert at extracting long-te
 ## Output format (JSON array)
 [
   {
-    "fact": "User uses Riverpod for state management",
-    "fact_kr": "사용자는 상태 관리에 Riverpod을 사용한다",
+    "fact": "<one English sentence stating the fact>",
+    "fact_kr": "<the same sentence in natural Korean>",
     "category": "decision",
     "scope_type": "project",
     "confidence": 0.9
   }
 ]
+(This shows the shape only. Write real sentences in "fact" and "fact_kr" — never copy the bracketed text.)
 
 ## fact_kr rules
 - Natural Korean translation of "fact"
@@ -282,14 +285,17 @@ export async function extractFactsFromExchanges(
       const extracted = parseJsonResponse<ExtractedFact[]>(response, 'array');
 
       if (extracted && Array.isArray(extracted)) {
-        let rejected = 0;
+        const rejectReasons: Record<string, number> = {};
         const secretReasons: Record<string, number> = {};
+        let unknownCategories = 0;
         for (const fact of extracted) {
           if (typeof fact?.fact !== 'string' || fact.fact.trim() === '') continue;
-          // Template residue ('...', 'concise statement', 'a|b|c' category) is
+          // Template residue ('...', 'concise statement', 'a|b|c' category), a copy
+          // of the prompt's example and session-environment boilerplate are
           // dropped here, before the save transaction — insertFact would throw
-          // on it and roll back the whole batch.
-          if (factRejectReason(fact)) { rejected++; continue; }
+          // on them and roll back the whole batch.
+          const rejectReason = factRejectReason(fact);
+          if (rejectReason) { rejectReasons[rejectReason] = (rejectReasons[rejectReason] ?? 0) + 1; continue; }
           // 자격증명이 든 사실은 후보가 되지 않는다(상한 자리도 차지하지 않는다).
           const secretReason = factSecretReason(fact);
           if (secretReason) { secretReasons[secretReason] = (secretReasons[secretReason] ?? 0) + 1; continue; }
@@ -298,9 +304,31 @@ export async function extractFactsFromExchanges(
           const key = normalizeFactText(fact.fact);
           if (seen.has(key)) continue; // cross-batch duplicate within this session
           seen.add(key);
+          // 한글 문장 칸만 자리표시자·예시 문장이면 그 칸만 버리고 사실은 살린다.
+          if (factKrRejectReason(fact.fact_kr)) fact.fact_kr = undefined;
+          // 다섯 분류 밖의 이름('requirement', 'process' …)은 접어서 저장한다 — 그대로 두면
+          // 어떤 category 필터에도 걸리지 않는다. 표에 없는 이름은 knowledge 로 두고 센다.
+          const folded = normalizeCategory(fact.category);
+          if (!folded.known) unknownCategories++;
+          fact.category = folded.category;
           batchFacts.push(fact);
         }
-        if (rejected > 0) console.error(`fact-extractor: dropped ${rejected} template-residue fact(s) from batch ${b + 1}`);
+        const rejected = Object.values(rejectReasons).reduce((n, c) => n + c, 0);
+        if (rejected > 0) {
+          if (stats) {
+            stats.rejectedInvalid ??= {};
+            for (const [reason, n] of Object.entries(rejectReasons)) {
+              stats.rejectedInvalid[reason] = (stats.rejectedInvalid[reason] ?? 0) + n;
+            }
+          }
+          console.error(
+            `fact-extractor: dropped ${rejected} fact(s) refused by fact-validity from batch ${b + 1}`
+            + ` (${describeReasonCounts(rejectReasons)})`,
+          );
+        }
+        if (unknownCategories > 0) {
+          console.error(`fact-extractor: ${unknownCategories} fact(s) in batch ${b + 1} had an unknown category — stored as knowledge`);
+        }
         const secretCount = Object.values(secretReasons).reduce((n, c) => n + c, 0);
         if (secretCount > 0) {
           if (stats) stats.rejectedSecrets = (stats.rejectedSecrets ?? 0) + secretCount;
@@ -536,6 +564,8 @@ export interface ExtractionStats {
   truncatedFacts?: number;
   /** 자격증명 모양 문자열이 들어 있어 버린 사실 수 */
   rejectedSecrets?: number;
+  /** fact-validity 가 거부한 사실 수(사유별) — 템플릿 잔여물·프롬프트 예시·세션 환경 상용구 */
+  rejectedInvalid?: Record<string, number>;
   /** 이번 추출이 읽은 그 세션의 교환 수 — 완료 마커(seen_exchanges)에 남긴다 */
   seenExchanges?: number;
 }
@@ -548,6 +578,8 @@ export interface ExtractionRunResult {
   truncated?: number;
   /** 자격증명 모양 문자열이 들어 있어 저장하지 않은 사실 수(0 이면 없음) */
   rejectedSecrets?: number;
+  /** fact-validity 가 거부한 사실 수(사유별, 없으면 생략) — 프롬프트를 바꾼 뒤 예시 베끼기가 느는지 로그로 본다 */
+  rejectedInvalid?: Record<string, number>;
   skipped?:
     | 'claim_not_acquired' | 'claim_error'
     | 'excluded_project' | 'excluded_project_unmarked'
@@ -892,6 +924,7 @@ export async function runFactExtraction(
     extracted: facts.length, saved,
     ...(stats.truncatedFacts ? { truncated: stats.truncatedFacts } : {}),
     ...(stats.rejectedSecrets ? { rejectedSecrets: stats.rejectedSecrets } : {}),
+    ...(stats.rejectedInvalid ? { rejectedInvalid: stats.rejectedInvalid } : {}),
   };
 }
 
