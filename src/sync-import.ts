@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { initDatabase, getVecQuant, embeddingToVecBlob, vecParamSql } from './db.js';
 import { generateEmbedding, initEmbeddings, EMBEDDING_VERSION } from './embeddings.js';
-import { getSyncDir } from './sync-export.js';
+import { getSyncDir, ownExportStillInDb } from './sync-export.js';
 import { canonicalizeProject } from './project-canon.js';
 import { factRejectReason, ontologyNameRejectReason } from './fact-validity.js';
 
@@ -50,6 +50,10 @@ export async function importFromSync(): Promise<{
   const db = initDatabase();
 
   try {
+    // sync/ is this install's own last export, untouched, and the DB has lost no row since:
+    // nothing to add — do not read the files (sync-export.ts ownExportStillInDb).
+    if (ownExportStillInDb(db, syncDir)) return result;
+
     // Import domains first (facts reference them via categories)
     const domainsPath = path.join(syncDir, 'ontology-domains.jsonl');
     if (fs.existsSync(domainsPath)) {
