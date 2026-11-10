@@ -595,13 +595,21 @@ function createFallbackChatResponse({ message, publication = readReplacementOsPu
 
 async function callClaudeAgent(prompt) {
   const { query } = await import('@anthropic-ai/claude-agent-sdk');
+  // The prompt carries text typed into a web page. Same containment as every other headless
+  // call (src/llm.ts): one turn, no user settings/hooks/plugins, no tools, no user MCP servers,
+  // transcript in the reserved worker directory. A failed load of the compiled core throws —
+  // the chat answers "service stopped" rather than running the session un-isolated.
+  const { ISOLATED_QUERY_OPTIONS, DEFAULT_LLM_MODEL, llmWorkdir } = await import('../dist/llm.js');
   let result = '';
   for await (const message of query({
     prompt,
     options: {
-      model: process.env.REPLACEMENT_OS_CHAT_MODEL || process.env.MEMORY_BANK_FACT_MODEL || 'claude-haiku-5-5',
+      model: process.env.REPLACEMENT_OS_CHAT_MODEL || process.env.MEMORY_BANK_FACT_MODEL || DEFAULT_LLM_MODEL,
       max_tokens: Number(process.env.REPLACEMENT_OS_CHAT_MAX_TOKENS || 1400),
       systemPrompt: 'You are a safe local Hue OS web chat adapter. Answer in Korean unless asked otherwise.',
+      maxTurns: 1,
+      ...ISOLATED_QUERY_OPTIONS,
+      cwd: llmWorkdir(),
     },
   })) {
     if (message && typeof message === 'object' && message.type === 'result') {
