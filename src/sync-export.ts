@@ -226,6 +226,26 @@ export function exportForSync(): { facts: number; domains: number; categories: n
 }
 
 /**
+ * Data files in sync/ whose size is not the one meta.json declares: the folder
+ * was read while an export or a folder-sync tool was still delivering it (a
+ * data file and meta.json from different exports). [] when meta.json is
+ * absent, unreadable, or written by a version that recorded no sizes — there
+ * is nothing to compare against. Sizes only: the content is not re-hashed.
+ */
+export function syncFilesNotMatchingMeta(syncDir: string): string[] {
+  const meta = readJsonOrNull<SyncMeta>(path.join(syncDir, 'meta.json'));
+  if (!meta || !meta.files || typeof meta.files !== 'object') return [];
+  const out: string[] = [];
+  for (const name of SYNC_FILES) {
+    const declared = meta.files[name];
+    if (!declared || typeof declared.bytes !== 'number') continue;
+    const st = statOrNull(path.join(syncDir, name));
+    if (!st || st.size !== declared.bytes) out.push(name);
+  }
+  return out;
+}
+
+/**
  * Whether sync/ still holds exactly what THIS install exported last and the
  * local DB still has every row it had then — in which case an import has
  * nothing to add and need not read the files (it read ~100MB and ran ~80k id
