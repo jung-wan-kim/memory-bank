@@ -101,6 +101,8 @@ Consolidation relations: `DUPLICATE` (merge), `CONTRADICTION` (replace), `EVOLUT
 | `TEST_ARCHIVE_DIR` | Override archive directory for tests |
 | `MEMORY_BANK_TEST_GUARD` | `1` (set by `test/setup.ts`) = `initDatabase()` throws on a database under the real `~/.config/superpowers` (`src/test-guard.ts`) |
 | `MEMORY_BANK_TEST_LLM_BASE_URL` | Test runs only: the `ANTHROPIC_BASE_URL` tests get instead of the closed local port |
+| `MEMORY_BANK_UI_HOST` / `MEMORY_BANK_UI_TOKEN` | Web UI (`ui/server.cjs`) listen address (default `127.0.0.1`) and access token; a non-loopback address without a 16+ character token refuses to start (`ui/server-guards.cjs`) |
+| `HUE_OS_PUBLIC_PORT` / `REPLACEMENT_OS_ACCESS_PASSWORD` | Second loopback listener with the Hue OS chat routes only (the one port a tunnel may point at), and the Hue OS login password — no default; unset = login off |
 | `MEMORY_BANK_MAINTENANCE_INTERVAL_MIN` | Session-start maintenance interval in minutes (default 360, 0 = every start; a partial run retries after 60) |
 | `MEMORY_BANK_NODE` | Node binary for hooks when the default node's ABI does not match better-sqlite3 |
 | `MEMORY_BANK_INJECT_HOOK_BUDGET_MS` | Injection hook time budget that bounds its native-ABI re-run (default 30000 = Claude Code's UserPromptSubmit default) |

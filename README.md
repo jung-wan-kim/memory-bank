@@ -273,6 +273,7 @@ A cinematic dark-theme web interface for browsing and searching your conversatio
 
 ```bash
 node ui/server.cjs
+# Listening on 127.0.0.1:3847 (this machine only)
 # Memory Bank UI: http://localhost:3847
 # Hue OS: http://localhost:3847/hue-os
 ```
@@ -282,14 +283,18 @@ Custom port:
 PORT=8080 node ui/server.cjs
 ```
 
+> **Local only.** The dashboard serves whole conversations, tool inputs and facts with no login, so it listens on `127.0.0.1` and answers only same-origin requests made directly by a browser on this machine: it sends no CORS headers, and a request with another `Host`, another `Origin`, or proxy headers (`X-Forwarded-For`, …) gets 403. `limit` is capped at 200 rows per request and request bodies at 1 MB.
+> To listen on another address set **both** `MEMORY_BANK_UI_HOST` and `MEMORY_BANK_UI_TOKEN` (16+ characters — without the token the server refuses to start). Every page and API then needs the token: `Authorization: Bearer <token>`, or open `/?token=<token>` once per browser (it becomes an HttpOnly cookie).
+> **Never point a tunnel or reverse proxy at this port** — see the Hue OS public listener below.
+
 > **Note:** Requires `memory-bank sync` to have been run at least once to populate the database.
 > The Hue OS publication route (`/hue-os`, with `/replacement-os` kept as a compatibility alias) can still load from local Personal Mirror artifacts when the conversation database is unavailable.
 > Chat defaults to local terminal CLIs instead of API keys: Claude via `claude --print --model sonnet`, GPT via `codex exec --model gpt-5.5`.
 > Override with `REPLACEMENT_OS_CLAUDE_COMMAND`, `REPLACEMENT_OS_CLAUDE_ARGS_JSON`, `REPLACEMENT_OS_GPT_COMMAND`, or `REPLACEMENT_OS_GPT_ARGS_JSON`.
 > If local terminal providers are unavailable, the route falls back to a deterministic safety-preserving response mode.
-> Public sharing guardrails: `/hue-os` requires password login (`REPLACEMENT_OS_ACCESS_PASSWORD`, default `0525`; 4 digits auto-submit in the login UI) and limits each client IP to 200 chat requests per local day (`REPLACEMENT_OS_DAILY_LIMIT`, reset at 00:00). The chat UI hides provider selection, disables Send during responses, shows an in-chat loading bar while Hue OS answers, and uses Esc to cancel an in-flight answer.
+> Public sharing guardrails: `/hue-os` requires password login. Set `REPLACEMENT_OS_ACCESS_PASSWORD` yourself — there is no default; without it the login is off and the page says so. The login UI takes 4 digits and auto-submits; logins are refused after 5 wrong passwords per client address per minute, or 30 overall per 10 minutes (a 4-digit password is still only 10,000 values — the limit slows guessing, it does not make a public deployment strong). Each client IP gets 200 chat requests per local day (`REPLACEMENT_OS_DAILY_LIMIT`, reset at 00:00). The chat UI hides provider selection, disables Send during responses, shows an in-chat loading bar while Hue OS answers, and uses Esc to cancel an in-flight answer.
 > Hue OS answer boundary: it refuses access/security-sensitive questions, including passwords, tokens, cookies, env values, server/tunnel URLs, auth bypasses, quota bypasses, and security-weakening instructions.
-> Vercel sharing bridge: `vercel/hue-os/` is a standalone Vercel project that proxies `/api/hue-os/*` to a public HTTPS tunnel for this local server. Vercel cannot call your private `localhost` directly; keep this server running and set `HUE_OS_LOCAL_ORIGIN` to the tunnel/reverse-proxy origin so Claude/Codex subscription CLI auth stays local.
+> Vercel sharing bridge: `vercel/hue-os/` is a standalone Vercel project that proxies `/api/hue-os/*` to a public HTTPS tunnel for the **Hue OS public listener** of this server. Start the server with `HUE_OS_PUBLIC_PORT=3848` (needs `REPLACEMENT_OS_ACCESS_PASSWORD`): that second loopback port serves the Hue OS chat routes only — no dashboard page and no conversation API exists on it. Point the tunnel at that port, never at the dashboard port, and set `HUE_OS_LOCAL_ORIGIN` to the tunnel origin so Claude/Codex subscription CLI auth stays local.
 
 ## Claude Desktop Integration
 

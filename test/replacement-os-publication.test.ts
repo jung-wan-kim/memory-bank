@@ -105,6 +105,7 @@ describe('Hue OS web publication helpers', () => {
   });
 
   it('renders a password login page for gated access', () => {
+    process.env.REPLACEMENT_OS_ACCESS_PASSWORD = '4821';
     const html = replacementOs.renderReplacementOsLoginPage();
     expect(html).toContain('Hue OS');
     expect(html).toContain('접속 비밀번호');
@@ -115,6 +116,18 @@ describe('Hue OS web publication helpers', () => {
     expect(html).toContain('id="loginBtn"');
     expect(html).toContain("loginBtn.textContent=on?'로그인중...':'Enter'");
     expect(html).toContain('IP별 하루 200회');
+    // A refused login says why: too many attempts (429) and "no password configured" (503) are not "wrong password".
+    expect(html).toContain("res.status===429");
+    expect(html).toContain("res.status===503");
+  });
+
+  it('renders "Hue OS is off" instead of a login form when no access password is configured', () => {
+    delete process.env.REPLACEMENT_OS_ACCESS_PASSWORD;
+    const html = replacementOs.renderReplacementOsLoginPage();
+    expect(html).toContain('id="notConfigured"');
+    expect(html).toContain('REPLACEMENT_OS_ACCESS_PASSWORD');
+    expect(html).not.toContain('id="login"');
+    expect(html).not.toContain('/api/hue-os/login');
   });
 
   it('renders service-stopped handling for local terminal disconnects', () => {
@@ -241,12 +254,62 @@ process.stdin.on('end', () => {
     expect(result.answer).toContain('FAKE_GPT_TERMINAL true');
   });
 
-  it('authenticates with password 0525 by default and tracks sessions', () => {
+  it('has no built-in password: with none configured every login is refused as not configured', () => {
+    delete process.env.REPLACEMENT_OS_ACCESS_PASSWORD;
+    expect(replacementOs.accessPassword()).toBeNull();
     const state = replacementOs.createReplacementOsAccessState();
-    expect(replacementOs.authenticateReplacementOsAccess(state, '0000').ok).toBe(false);
-    const result = replacementOs.authenticateReplacementOsAccess(state, '0525');
+    for (const guess of ['0525', '', 'null', 'undefined']) {
+      expect(replacementOs.authenticateReplacementOsAccess(state, guess)).toEqual({ ok: false, error: 'access_password_not_configured' });
+    }
+    expect(state.sessions.size).toBe(0);
+    // An empty value is "not configured", not "the password is the empty string".
+    process.env.REPLACEMENT_OS_ACCESS_PASSWORD = '';
+    expect(replacementOs.authenticateReplacementOsAccess(state, '')).toEqual({ ok: false, error: 'access_password_not_configured' });
+  });
+
+  it('authenticates with the configured password and tracks sessions', () => {
+    process.env.REPLACEMENT_OS_ACCESS_PASSWORD = '4821';
+    const state = replacementOs.createReplacementOsAccessState();
+    expect(replacementOs.authenticateReplacementOsAccess(state, '0525')).toEqual({ ok: false, error: 'invalid_password' });
+    const result = replacementOs.authenticateReplacementOsAccess(state, '4821');
     expect(result.ok).toBe(true);
     expect(replacementOs.isReplacementOsAuthenticated(state, result.token)).toBe(true);
+    expect(replacementOs.isReplacementOsAuthenticated(state, 'not-a-session')).toBe(false);
+  });
+
+  it('refuses logins from one address after 5 failures in a minute, then accepts again', () => {
+    process.env.REPLACEMENT_OS_ACCESS_PASSWORD = '4821';
+    let now = new Date('2026-05-05T10:00:00Z');
+    const state = replacementOs.createReplacementOsAccessState({ now: () => now });
+    for (let i = 0; i < 5; i++) {
+      expect(replacementOs.authenticateReplacementOsAccess(state, `000${i}`, { ip: '1.2.3.4' }).error).toBe('invalid_password');
+      now = new Date(now.getTime() + 1000);
+    }
+    // Sixth attempt, 5 s after the first failure: refused for the remaining 55 s — even with the right password.
+    const blocked = replacementOs.authenticateReplacementOsAccess(state, '4821', { ip: '1.2.3.4' });
+    expect(blocked).toEqual({ ok: false, error: 'too_many_attempts', retryAfterSec: 55 });
+    // A refused attempt is not counted as another failure, and another address is not affected.
+    expect(replacementOs.authenticateReplacementOsAccess(state, '4821', { ip: '1.2.3.4' }).retryAfterSec).toBe(55);
+    expect(replacementOs.authenticateReplacementOsAccess(state, '4821', { ip: '5.6.7.8' }).ok).toBe(true);
+    // Once the first failure is a minute old the address may try again.
+    now = new Date('2026-05-05T10:01:00Z');
+    expect(replacementOs.authenticateReplacementOsAccess(state, '4821', { ip: '1.2.3.4' }).ok).toBe(true);
+  });
+
+  it('refuses all logins after 30 failures in 10 minutes, whatever addresses they claim', () => {
+    process.env.REPLACEMENT_OS_ACCESS_PASSWORD = '4821';
+    let now = new Date('2026-05-05T10:00:00Z');
+    const state = replacementOs.createReplacementOsAccessState({ now: () => now });
+    // A guesser behind a tunnel writes a new X-Forwarded-For on every request.
+    for (let i = 0; i < 30; i++) {
+      expect(replacementOs.authenticateReplacementOsAccess(state, 'nope', { ip: `10.0.0.${i}` }).error).toBe('invalid_password');
+      now = new Date(now.getTime() + 1000);
+    }
+    const blocked = replacementOs.authenticateReplacementOsAccess(state, '4821', { ip: '10.0.1.1' });
+    expect(blocked.error).toBe('too_many_attempts');
+    expect(blocked.retryAfterSec).toBe(570);
+    now = new Date('2026-05-05T10:10:00Z');
+    expect(replacementOs.authenticateReplacementOsAccess(state, '4821', { ip: '10.0.1.1' }).ok).toBe(true);
   });
 
   it('enforces per-IP daily quota and resets on a new local day', () => {

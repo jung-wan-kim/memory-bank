@@ -59,14 +59,28 @@ function quotaLimit() {
   return Number.isFinite(value) && value > 0 ? Math.min(Math.floor(value), 10000) : 200;
 }
 
+// Failed logins allowed before the next attempt is refused: per client address
+// and — because a client behind a tunnel can type any X-Forwarded-For — overall.
+const LOGIN_FAILURE_LIMITS = {
+  perClient: { max: 5, windowMs: 60 * 1000 },
+  overall: { max: 30, windowMs: 10 * 60 * 1000 },
+};
+
+/**
+ * The access password, or null when none is configured. There is no built-in
+ * default: a password every copy of this file shares is not a password, so
+ * without REPLACEMENT_OS_ACCESS_PASSWORD the login is off.
+ */
 function accessPassword() {
-  return String(process.env.REPLACEMENT_OS_ACCESS_PASSWORD || '0525');
+  const value = process.env.REPLACEMENT_OS_ACCESS_PASSWORD;
+  return value ? String(value) : null;
 }
 
 function createReplacementOsAccessState(options = {}) {
   return {
     sessions: new Map(),
     quotas: new Map(),
+    loginFailures: new Map(),
     now: typeof options.now === 'function' ? options.now : () => new Date(),
     tokenBytes: options.tokenBytes || 24,
   };
@@ -79,8 +93,45 @@ function safeEqualString(a, b) {
   return crypto.timingSafeEqual(aa, bb);
 }
 
-function authenticateReplacementOsAccess(state, password) {
-  if (!safeEqualString(password, accessPassword())) {
+function recentLoginFailures(state, key, windowMs, nowMs) {
+  const kept = (state.loginFailures.get(key) || []).filter((at) => nowMs - at < windowMs);
+  if (kept.length > 0) state.loginFailures.set(key, kept);
+  else state.loginFailures.delete(key);
+  return kept;
+}
+
+/**
+ * Seconds until another login attempt is accepted, or 0. Counts failures only;
+ * while it is non-zero even the right password is refused — otherwise the limit
+ * would not slow a guesser down.
+ */
+function loginRetryAfterSec(state, ip) {
+  const nowMs = state.now().getTime();
+  let waitMs = 0;
+  for (const [key, limit] of [[`ip:${ip || 'unknown'}`, LOGIN_FAILURE_LIMITS.perClient], ['*', LOGIN_FAILURE_LIMITS.overall]]) {
+    const failures = recentLoginFailures(state, key, limit.windowMs, nowMs);
+    if (failures.length >= limit.max) {
+      // Open again when the oldest failure that still counts toward the limit leaves the window.
+      waitMs = Math.max(waitMs, failures[failures.length - limit.max] + limit.windowMs - nowMs);
+    }
+  }
+  return Math.ceil(waitMs / 1000);
+}
+
+function authenticateReplacementOsAccess(state, password, context = {}) {
+  const expected = accessPassword();
+  if (expected === null) {
+    return { ok: false, error: 'access_password_not_configured' };
+  }
+  const retryAfterSec = loginRetryAfterSec(state, context.ip);
+  if (retryAfterSec > 0) {
+    return { ok: false, error: 'too_many_attempts', retryAfterSec };
+  }
+  if (!safeEqualString(password, expected)) {
+    const nowMs = state.now().getTime();
+    for (const key of [`ip:${context.ip || 'unknown'}`, '*']) {
+      state.loginFailures.set(key, [...(state.loginFailures.get(key) || []), nowMs]);
+    }
     return { ok: false, error: 'invalid_password' };
   }
   const token = crypto.randomBytes(state.tokenBytes || 24).toString('hex');
@@ -627,6 +678,25 @@ async function chatWithReplacementOs(body = {}, options = {}) {
 }
 
 function renderReplacementOsLoginPage() {
+  if (accessPassword() === null) {
+    // No password configured: the login is off, and the page says so instead of offering a form that cannot succeed.
+    return `<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hue OS</title>
+<style>body{margin:0;min-height:100vh;background:#05060a;color:#edf0f7;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;place-items:center}.box{width:min(460px,calc(100vw - 32px));border:1px solid rgba(255,255,255,.1);border-radius:28px;padding:28px}h1{font-size:28px;letter-spacing:-.04em;margin:0 0 12px}p{color:#8c93a6;font-size:14px;line-height:1.6;margin:0 0 10px}code{color:#66e6ff}</style>
+</head>
+<body>
+<div class="box" id="notConfigured">
+  <h1>Hue OS</h1>
+  <p>접속 비밀번호가 설정되지 않아 Hue OS가 꺼져 있습니다.</p>
+  <p>서버를 실행하는 쪽에서 <code>REPLACEMENT_OS_ACCESS_PASSWORD</code> 를 정한 뒤 다시 시작해야 로그인할 수 있습니다. 기본 비밀번호는 없습니다.</p>
+</div>
+</body>
+</html>`;
+  }
   return `<!doctype html>
 <html lang="ko">
 <head>
@@ -646,7 +716,7 @@ function renderReplacementOsLoginPage() {
   <div class="foot">접속 후 IP별 하루 200회 대화 제한이 적용됩니다. 매일 00:00에 초기화됩니다.</div>
 </form>
 <script>
-const form=document.getElementById('login');const passwordEl=document.getElementById('password');const loginBtn=document.getElementById('loginBtn');const err=document.getElementById('err');let loginBusy=false;function setLoginBusy(on){loginBusy=on;loginBtn.disabled=on;loginBtn.textContent=on?'로그인중...':'Enter';}async function submitLogin(e){if(e)e.preventDefault();if(loginBusy)return;const password=passwordEl.value.trim();if(password.length<4)return;setLoginBusy(true);err.textContent='로그인 중...';try{const res=await fetch('/api/hue-os/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});const data=await res.json();if(!res.ok||!data.ok){err.textContent='비밀번호가 맞지 않습니다.';passwordEl.select();return;}location.reload();}catch(error){err.textContent='로그인 실패: '+error.message;}finally{setLoginBusy(false);}}form.addEventListener('submit',submitLogin);passwordEl.addEventListener('input',()=>{passwordEl.value=passwordEl.value.replace(/\\D/g,'').slice(0,4);err.textContent='';if(passwordEl.value.length===4)submitLogin();});
+const form=document.getElementById('login');const passwordEl=document.getElementById('password');const loginBtn=document.getElementById('loginBtn');const err=document.getElementById('err');let loginBusy=false;function setLoginBusy(on){loginBusy=on;loginBtn.disabled=on;loginBtn.textContent=on?'로그인중...':'Enter';}async function submitLogin(e){if(e)e.preventDefault();if(loginBusy)return;const password=passwordEl.value.trim();if(password.length<4)return;setLoginBusy(true);err.textContent='로그인 중...';try{const res=await fetch('/api/hue-os/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});const data=await res.json();if(res.status===429){err.textContent='시도가 너무 많습니다. 잠시 후 다시 시도하세요.';passwordEl.select();return;}if(res.status===503){err.textContent='접속 비밀번호가 설정되지 않아 Hue OS가 꺼져 있습니다.';return;}if(!res.ok||!data.ok){err.textContent='비밀번호가 맞지 않습니다.';passwordEl.select();return;}location.reload();}catch(error){err.textContent='로그인 실패: '+error.message;}finally{setLoginBusy(false);}}form.addEventListener('submit',submitLogin);passwordEl.addEventListener('input',()=>{passwordEl.value=passwordEl.value.replace(/\\D/g,'').slice(0,4);err.textContent='';if(passwordEl.value.length===4)submitLogin();});
 </script>
 </body>
 </html>`;
@@ -716,6 +786,8 @@ module.exports = {
   localDayKey,
   quotaLimit,
   accessPassword,
+  LOGIN_FAILURE_LIMITS,
+  loginRetryAfterSec,
   createReplacementOsAccessState,
   authenticateReplacementOsAccess,
   isReplacementOsAuthenticated,
