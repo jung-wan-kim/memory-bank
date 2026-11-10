@@ -5,6 +5,7 @@ import { newBackupPath, writeRowBackup } from './row-backup.js';
 import { getArchiveDir } from './paths.js';
 import { removeAllSummaries } from './archive-io.js';
 import { verifyIndex, repairIndex, listArchiveConversations, RepairOutcome } from './verify.js';
+import { parseGuarded } from './conversation-guard.js';
 
 /**
  * `index --rebuild`: regenerate the CONVERSATION index and nothing else.
@@ -40,12 +41,19 @@ export interface RebuildReach {
   archiveConversations: number;
   /**
    * Indexed exchanges whose file is NOT one of those — in a sub-folder of its
-   * project, in an excluded project, or gone from the archive. Clearing them
-   * is final: no re-index of this code re-creates them.
+   * project, in an excluded project, or gone from the archive — or is one of
+   * them but cannot be read to its end (`unreadable`). Clearing them is final:
+   * no re-index of this code re-creates them.
    */
   unreachable: { exchanges: number; files: number };
   /** The archive paths of those exchanges (what the pre-rebuild backup copies). */
   unreachablePaths: string[];
+  /**
+   * The part of `unreachable` whose file IS among the conversations the
+   * re-index reads but fails to read (a `.zst` cut short, corrupt bytes, over
+   * the decompression cap). Zero until addUnreadableFiles has read the files.
+   */
+  unreadable: { exchanges: number; files: number };
 }
 
 /**
@@ -63,7 +71,46 @@ export function measureRebuildReach(db: Database.Database): RebuildReach {
     unreachable.files++;
     unreachablePaths.push(p);
   }
-  return { archiveConversations: listed.size, unreachable, unreachablePaths };
+  return { archiveConversations: listed.size, unreachable, unreachablePaths, unreadable: { exchanges: 0, files: 0 } };
+}
+
+/**
+ * Read every listed conversation that has indexed rows to its end — the way
+ * the re-index will — and count the rows of the ones that cannot be read as
+ * unreachable. "Its path is in the listing" is not "it can be re-created": a
+ * `.zst` the compressor was interrupted on is listed, and the re-index reports
+ * it unreadable and indexes nothing from it — after the clear that was the
+ * loss of every row of that conversation, with no backup and exit 0.
+ * Reads only. Costs one pass over those files (the re-index reads them again).
+ */
+export async function addUnreadableFiles(
+  db: Database.Database,
+  reach: RebuildReach,
+  opts: { onProgress?: (read: number) => void } = {},
+): Promise<Array<{ path: string; error: string }>> {
+  const rowsOfPath = new Map(
+    (db.prepare('SELECT archive_path AS p, count(*) AS n FROM exchanges GROUP BY archive_path').all() as Array<{ p: string; n: number }>)
+      .map((r) => [r.p, r.n]),
+  );
+  const already = new Set(reach.unreachablePaths);
+  const unreadable: Array<{ path: string; error: string }> = [];
+  let read = 0;
+  for (const { project, path: conversationPath } of listArchiveConversations()) {
+    const rows = rowsOfPath.get(conversationPath);
+    if (rows === undefined || already.has(conversationPath)) continue;
+    try {
+      await parseGuarded(conversationPath, project, conversationPath);
+    } catch (error) {
+      unreadable.push({ path: conversationPath, error: error instanceof Error ? error.message : String(error) });
+      reach.unreadable.exchanges += rows;
+      reach.unreadable.files++;
+      reach.unreachable.exchanges += rows;
+      reach.unreachable.files++;
+      reach.unreachablePaths.push(conversationPath);
+    }
+    opts.onProgress?.(++read);
+  }
+  return unreadable;
 }
 
 /**
@@ -294,8 +341,11 @@ export class RebuildWouldLoseIndexError extends Error {
     super(
       `rebuild refused — nothing was changed. ${reach.unreachable.exchanges} indexed exchange(s) from ${reach.unreachable.files} file(s) ` +
       `cannot be re-created: their file is not among the ${reach.archiveConversations} archive conversation(s) the re-index reads ` +
-      `(it is in a sub-folder of its project, in an excluded project, or gone). ` +
-      `Pass --allow-index-loss to clear them anyway.`);
+      `(it is in a sub-folder of its project, in an excluded project, or gone)` +
+      (reach.unreadable.files > 0
+        ? `, or it cannot be read to the end (${reach.unreadable.exchanges} exchange(s) from ${reach.unreadable.files} damaged file(s))`
+        : '') +
+      `. Pass --allow-index-loss to clear them anyway (they are backed up first).`);
     this.name = 'RebuildWouldLoseIndexError';
   }
 }
@@ -337,6 +387,12 @@ export async function rebuildConversationIndex(opts: RebuildOptions = {}): Promi
     reach = measureRebuildReach(db);
     for (const line of formatRebuildCounts(counts, reach)) console.log(line);
     if (!opts.yes) throw new RebuildNotConfirmedError(counts, reach);
+    // Before anything is cleared: can the files the re-index reads be read?
+    console.log('Reading the indexed conversations of the archive before anything is cleared...');
+    const unreadable = await addUnreadableFiles(db, reach, {
+      onProgress: (read) => { if (read % 5000 === 0) console.log(`  read ${read} conversations...`); },
+    });
+    for (const u of unreadable) console.log(`  cannot be read to the end: ${u.path} (${u.error})`);
     // The conversation index is derived data only as far as the archive this
     // code re-reads goes. Rows from files outside that reach (measured live:
     // 131,380 of 341,817 — sub-agent transcripts in sub-folders, and files no

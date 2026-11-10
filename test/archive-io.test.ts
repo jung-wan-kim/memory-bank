@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync, utimesSync, mkdirSync, readdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { randomBytes } from 'node:crypto';
 import * as zlib from 'node:zlib';
 import readline from 'readline';
 import {
@@ -9,6 +10,8 @@ import {
   resolveArchiveFile,
   archiveFileExists,
   readArchiveFile,
+  readArchiveLineRange,
+  readResolvedArchiveFile,
   createArchiveReadStream,
   statArchiveFile,
   isSummaryFileName,
@@ -204,6 +207,112 @@ describe('archive-io', () => {
       const lines: string[] = [];
       for await (const line of rl) lines.push(line);
       expect(lines).toEqual(['ok-line']);
+    });
+  });
+
+  // Node's zstd decoder does not report an input that ends inside a frame: it returns what it had decoded
+  // (nothing, or the first blocks) as if that were the file. A compressor interrupted while writing leaves
+  // exactly such a file, and every reader then took the head of a conversation for the whole of it.
+  describe.runIf(hasZstd)('a .zst that is not complete zstd frames is a read error, never a shorter file', () => {
+    // 600 lines of hex — incompressible enough to span several zstd blocks (a block holds at most 128KB).
+    const LINES = Array.from({ length: 600 }, (_, i) => `{"line":${i + 1},"text":"${randomBytes(160).toString('hex')}"}`);
+    const CONTENT = LINES.join('\n') + '\n';
+    const whole = () => zstdCompressSync!(Buffer.from(CONTENT, 'utf-8'));
+
+    async function drain(filePath: string): Promise<{ lines: string[]; error: Error | null }> {
+      const lines: string[] = [];
+      try {
+        const rl = readline.createInterface({ input: createArchiveReadStream(filePath), crlfDelay: Infinity });
+        for await (const line of rl) lines.push(line);
+        return { lines, error: null };
+      } catch (error) {
+        return { lines, error: error as Error };
+      }
+    }
+    const put = (name: string, bytes: Buffer): string => {
+      const plain = join(testDir, name);
+      writeFileSync(plain + '.zst', bytes);
+      return plain;
+    };
+
+    it('the control: the complete file reads whole, as a stream and at once', async () => {
+      const plain = put('whole.jsonl', whole());
+      expect(await drain(plain)).toEqual({ lines: LINES, error: null });
+      expect(readArchiveFile(plain)).toBe(CONTENT);
+    });
+
+    for (const [name, cut] of [
+      ['its last 10 bytes missing', (b: Buffer) => b.subarray(0, b.length - 10)],
+      ['its last byte missing', (b: Buffer) => b.subarray(0, b.length - 1)],
+      ['cut at three quarters', (b: Buffer) => b.subarray(0, Math.floor(b.length * 0.75))],
+      ['cut at 60 bytes', (b: Buffer) => b.subarray(0, 60)],
+      ['cut inside the frame header', (b: Buffer) => b.subarray(0, 5)],
+      ['zero bytes long', () => Buffer.alloc(0)],
+    ] as Array<[string, (b: Buffer) => Buffer]>) {
+      it(`a file with ${name}: the stream ends in an error and the whole-file read throws`, async () => {
+        const plain = put('cut.jsonl', cut(whole()));
+        const streamed = await drain(plain);
+        expect(streamed.error?.message).toMatch(/incomplete/);
+        expect(streamed.lines.length).toBeLessThan(LINES.length);
+        expect(() => readArchiveFile(plain)).toThrow(/incomplete/);
+        expect(() => readResolvedArchiveFile(plain + '.zst')).toThrow(/incomplete/);
+      });
+    }
+
+    it('what a cut file still holds is delivered before the error, and a range inside it can be read', async () => {
+      const plain = put('cut.jsonl', whole().subarray(0, Math.floor(whole().length * 0.75)));
+      const streamed = await drain(plain);
+      expect(streamed.error?.message).toMatch(/incomplete/);
+      expect(streamed.lines.length).toBeGreaterThan(10);
+      expect(streamed.lines.slice(0, 10)).toEqual(LINES.slice(0, 10));
+
+      const head = await readArchiveLineRange(plain, { startLine: 2, endLine: 4 });
+      expect(head.lines.map((l) => l.text)).toEqual(LINES.slice(1, 4));
+      // a range that runs to the end of the file is not answered with the part that could be read
+      await expect(readArchiveLineRange(plain, { startLine: 2 })).rejects.toThrow(/incomplete/);
+      await expect(readArchiveLineRange(plain, { startLine: 590, endLine: 600 })).rejects.toThrow(/incomplete/);
+    });
+
+    it('bytes after the last complete frame are an error too (the decoder ignores them)', async () => {
+      const plain = put('junk.jsonl', Buffer.concat([whole(), Buffer.from('not a frame')]));
+      const streamed = await drain(plain);
+      expect(streamed.error?.message).toMatch(/incomplete/);
+      expect(streamed.lines).toEqual(LINES); // everything the complete frame holds, then the error
+      expect(() => readArchiveFile(plain)).toThrow(/incomplete/);
+    });
+
+    it('a file of several frames is read to its last frame, and a cut in its last frame is an error', async () => {
+      const second = ['{"line":"second frame, 1"}', '{"line":"second frame, 2"}'];
+      const secondFrame = zstdCompressSync!(Buffer.from(second.join('\n') + '\n', 'utf-8'));
+      const plain = put('two.jsonl', Buffer.concat([whole(), secondFrame]));
+      expect(await drain(plain)).toEqual({ lines: [...LINES, ...second], error: null });
+      expect(readArchiveFile(plain)).toBe(CONTENT + second.join('\n') + '\n');
+
+      const cut = put('two-cut.jsonl', Buffer.concat([whole(), secondFrame.subarray(0, secondFrame.length - 3)]));
+      const streamed = await drain(cut);
+      expect(streamed.error?.message).toMatch(/incomplete/);
+      expect(streamed.lines.slice(0, LINES.length)).toEqual(LINES);
+      expect(() => readArchiveFile(cut)).toThrow(/incomplete/);
+    });
+
+    it('the decompression cap counts every frame together', async () => {
+      const frame = zstdCompressSync!(Buffer.from('c'.repeat(600), 'utf-8'));
+      const plain = put('frames-over-cap.jsonl', Buffer.concat([frame, frame]));
+      process.env.MEMORY_BANK_MAX_DECOMPRESSED_BYTES = '1000';
+      try {
+        expect((await drain(plain)).error?.message).toMatch(/byte limit/);
+        expect(() => readArchiveFile(plain)).toThrow();
+      } finally {
+        delete process.env.MEMORY_BANK_MAX_DECOMPRESSED_BYTES;
+      }
+    });
+
+    it('corrupt bytes in the middle are still an error', async () => {
+      const bytes = Buffer.from(whole());
+      bytes[Math.floor(bytes.length / 2)] ^= 0xff;
+      const plain = put('flipped.jsonl', bytes);
+      expect((await drain(plain)).error).not.toBeNull();
+      expect(() => readArchiveFile(plain)).toThrow();
     });
   });
 
