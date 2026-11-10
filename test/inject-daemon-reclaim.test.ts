@@ -40,7 +40,8 @@ const ownSock = () => injectSocketPathIn(ci(), VERSION);
 
 const start = (): Handle => { const h = daemonMod.startInjectDaemon(); handles.push(h); return h; };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const inode = (p: string) => fs.lstatSync(p).ino;
+/** 「같은 소켓 파일인가」 — inode 번호는 재사용될 수 있어(ext4) 변경 시각을 함께 본다. utimes 도 변경 시각을 바꾸니 age() 뒤에 잰다. */
+const ident = (p: string) => { const st = fs.lstatSync(p); return `${st.ino}:${st.ctimeMs}`; };
 /** 소켓 파일을 오래된 것으로 만든다 — 「방금 생긴 소켓」 보호(바인드와 리슨 사이의 서버일 수 있다)를 지나가게. */
 const age = (p: string, seconds: number) => { const t = Date.now() / 1000 - seconds; fs.utimesSync(p, t, t); };
 
@@ -103,8 +104,11 @@ describe('소유권 재획득', () => {
     expect(b.owning(), '살아 있는 소유자가 있는 동안에는 잡지 않는다').toBe(false);
     expect(await ask(ownSock())).toEqual({ ok: true, context: '', ledger_keys: [] });
 
+    const aId = ident(ownSock());
     await a.close(); // MCP 서버 종료와 같다 — libuv 가 소켓 파일을 이름으로 지운다
-    expect(fs.existsSync(ownSock())).toBe(false);
+    // close() 가 돌아오기 전에 b 가 이미 새 소켓을 만들었을 수 있다 — a 의 파일이 남아 있지 않다는 것만 본다
+    const stillAs = fs.existsSync(ownSock()) && ident(ownSock()) === aId;
+    expect(stillAs, 'a 의 소켓 파일은 사라졌다').toBe(false);
     expect(await waitFor(() => b.owning(), 3000), '예전에는 여기서 영영 아무도 받지 않았다').toBe(true);
     expect(await ask(ownSock())).toEqual({ ok: true, context: '', ledger_keys: [] });
     expect(fs.statSync(ownSock()).mode & 0o777, '소켓은 본인만').toBe(0o600);
@@ -120,31 +124,31 @@ describe('소유권 재획득', () => {
     const gone = new Promise<void>((r) => owner.on('exit', () => r()));
     owner.kill('SIGKILL');
     await gone;
-    const staleIno = inode(ownSock());
     age(ownSock(), 30);
+    const staleId = ident(ownSock());
     expect(await waitFor(() => b.owning(), 3000)).toBe(true);
-    expect(inode(ownSock()), '죽은 파일이 아니라 새로 만든 소켓이다').not.toBe(staleIno);
+    expect(ident(ownSock()), '죽은 파일이 아니라 새로 만든 소켓이다').not.toBe(staleId);
     expect(await ask(ownSock())).toEqual({ ok: true, context: '', ledger_keys: [] });
   });
 
   it('살아 있는 소유자의 소켓은 몇 주기가 지나도 건드리지 않는다', async () => {
     await fakeDaemon(ownSock(), 'FROM-LIVE-OWNER', servers);
-    const ino = inode(ownSock());
     age(ownSock(), 3600); // 오래됐어도 살아 있으면 소유자다
+    const id = ident(ownSock());
     const b = start();
     await sleep(TICK_MS * 6);
     expect(b.owning()).toBe(false);
-    expect(inode(ownSock())).toBe(ino);
+    expect(ident(ownSock())).toBe(id);
     expect(await ask(ownSock())).toEqual({ ok: true, context: 'FROM-LIVE-OWNER' });
   });
 
   it('방금 생긴 죽은 소켓은 바로 치우지 않는다(바인드와 리슨 사이의 서버일 수 있다) — 나이가 차면 치우고 잡는다', async () => {
     await deadSocket(ownSock());
-    const ino = inode(ownSock());
+    const id = ident(ownSock());
     const b = start();
     await sleep(TICK_MS * 5);
     expect(b.owning(), '2초가 안 된 소켓 파일').toBe(false);
-    expect(inode(ownSock()), '그대로 있다').toBe(ino);
+    expect(ident(ownSock()), '그대로 있다').toBe(id);
     age(ownSock(), 10);
     expect(await waitFor(() => b.owning(), 3000)).toBe(true);
     expect(await ask(ownSock())).toEqual({ ok: true, context: '', ledger_keys: [] });
