@@ -70,10 +70,12 @@ async function main() {
     } else if (result.skipped) {
       log(`worker: SKIPPED (${result.skipped}) session=${sessionId} — 처리하지 않음`);
     } else {
-      // truncated: 세션 상한 때문에 저장 대상에서 빠진 후보 수 — 0 이면 적지 않는다.
+      // truncated: 세션 상한 때문에 저장 대상에서 빠진 후보 수.
+      // rejected_secret: 자격증명 모양 문자열이 들어 있어 버린 사실 수. 0 이면 적지 않는다.
       log(
         `worker: session=${sessionId} extracted=${result.extracted} saved=${result.saved}`
-        + (result.truncated > 0 ? ` truncated=${result.truncated}` : ''),
+        + (result.truncated > 0 ? ` truncated=${result.truncated}` : '')
+        + (result.rejectedSecrets > 0 ? ` rejected_secret=${result.rejectedSecrets}` : ''),
       );
     }
   } catch (error) {

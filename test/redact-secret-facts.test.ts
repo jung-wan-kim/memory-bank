@@ -1,0 +1,194 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import Database from 'better-sqlite3';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+/**
+ * scripts/redact-secret-facts.mjs — 이미 저장된 자격증명 사실의 정리 스크립트.
+ *
+ * 스크립트를 자식 프로세스로 실제 실행한다(dist 를 읽는다). 고정하는 계약:
+ *  - 기본은 dry-run 이고 DB 를 한 바이트도 바꾸지 않는다
+ *  - 모르는 인자는 exit 1 (오타 하나로 다른 모드가 돌지 않게)
+ *  - 출력·되돌리기 파일 어디에도 사실 본문(값)이 없다 — id 와 종류만
+ *  - --apply 는 되돌리기 파일을 먼저 쓰고 활성 행만 비활성화한다
+ *  - --undo 는 그 실행이 남긴 상태 그대로인 행만 되돌린다
+ */
+
+const REPO = path.resolve(__dirname, '..');
+const SCRIPT = path.join(REPO, 'scripts', 'redact-secret-facts.mjs');
+const j = (...parts: string[]) => parts.join('');
+// 지어낸 값. 저장소의 비밀값 검사에 걸리지 않게 조각으로 만든다.
+const BOT_TOKEN = j('1234567890', ':', 'AAF', 'x9Qw'.repeat(8));
+const API_KEY = j('s', 'k-', 'A1b2C3d4E5f6G7h8I9j0K1l2');
+const T0 = '2026-06-12T03:04:05.678Z';
+
+let tmp: string;
+let dbPath: string;
+
+function seed(): void {
+  const db = new Database(dbPath);
+  try {
+    db.pragma('journal_mode = WAL'); // 운영 DB 와 같은 저널 모드
+    db.exec(`CREATE TABLE facts (
+      id TEXT PRIMARY KEY, fact TEXT NOT NULL, fact_kr TEXT, category TEXT, scope_type TEXT, scope_project TEXT,
+      source_exchange_ids TEXT, created_at TEXT, updated_at TEXT, consolidated_count INTEGER DEFAULT 1,
+      is_active INTEGER DEFAULT 1)`);
+    const ins = db.prepare(`INSERT INTO facts (id, fact, fact_kr, category, scope_type, created_at, updated_at, is_active)
+      VALUES (?, ?, ?, 'knowledge', 'global', ?, ?, ?)`);
+    ins.run('fact-token', `User keeps the bot credentials (Token: ${BOT_TOKEN}) in the config file.`, null, T0, T0, 1);
+    ins.run('fact-kr-key', 'The deploy key lives in the vault.', `배포 키는 ${API_KEY} 이다`, T0, T0, 1);
+    ins.run('fact-old-token', `Old bot token was ${BOT_TOKEN}.`, null, T0, T0, 0);
+    ins.run('fact-normal', 'Public APIs use REST and commit 681c9950a1b2c3d4e5f60718293a4b5c6d7e8f90 fixed pagination.', null, T0, T0, 1);
+  } finally {
+    db.close();
+  }
+}
+
+function run(...argv: string[]): { code: number; out: string } {
+  const r = spawnSync(process.execPath, [SCRIPT, ...argv], {
+    cwd: REPO, encoding: 'utf8', timeout: 30_000,
+    env: { ...process.env, MEMORY_BANK_CONFIG_DIR: path.join(tmp, 'cfg'), MEMORY_BANK_DB_PATH: path.join(tmp, 'not-used.sqlite') },
+  });
+  return { code: r.status ?? -1, out: `${r.stdout}${r.stderr}` };
+}
+
+const dbHash = () => createHash('sha256').update(fs.readFileSync(dbPath)).digest('hex');
+
+function rows(): Record<string, { is_active: number; updated_at: string }> {
+  const db = new Database(dbPath, { readonly: true });
+  try {
+    const out: Record<string, { is_active: number; updated_at: string }> = {};
+    for (const r of db.prepare('SELECT id, is_active, updated_at FROM facts').all() as Array<{ id: string; is_active: number; updated_at: string }>) {
+      out[r.id] = { is_active: r.is_active, updated_at: r.updated_at };
+    }
+    return out;
+  } finally {
+    db.close();
+  }
+}
+
+const undoFiles = () => fs.readdirSync(tmp).filter((f) => f.includes('undo'));
+
+beforeEach(() => {
+  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-redact-secret-'));
+  dbPath = path.join(tmp, 'facts.sqlite');
+  seed();
+});
+afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+
+describe('redact-secret-facts.mjs', () => {
+  it('기본 실행은 dry-run: id 와 종류만 출력하고 DB 지문이 변하지 않는다', () => {
+    const before = dbHash();
+    const { code, out } = run('--db', dbPath);
+
+    expect(code).toBe(0);
+    expect(out).toMatch(/fact-token\tsecret-telegram-bot-token\tactive\tfact\n/);
+    expect(out).toMatch(/fact-kr-key\tsecret-api-key\tactive\tfact_kr\n/);
+    expect(out).toMatch(/fact-old-token\tsecret-telegram-bot-token\tinactive\tfact\n/);
+    expect(out).not.toMatch(/fact-normal/);
+    expect(out).toMatch(/scanned 4 fact\(s\): 3 carry a credential-shaped string \(2 active, 1 inactive\)/);
+    expect(out).toMatch(/dry run: nothing changed/);
+    expect(out).not.toContain(BOT_TOKEN);
+    expect(out).not.toContain(API_KEY);
+    expect(out).not.toContain('bot credentials');
+    expect(dbHash()).toBe(before);
+    expect(undoFiles()).toEqual([]);
+  });
+
+  it('모르는 인자·모드와 맞지 않는 인자는 exit 1 이고 아무것도 바꾸지 않는다', () => {
+    const before = dbHash();
+    for (const argv of [
+      ['--db', dbPath, '--aply'],
+      ['--db', dbPath, '--dry-run'],
+      ['--db', dbPath, '--undo-file', path.join(tmp, 'u.jsonl')],
+      ['--db', dbPath, '--apply', '--undo', path.join(tmp, 'u.jsonl')],
+      ['--db'],
+    ]) {
+      const { code } = run(...argv);
+      expect(code, argv.join(' ')).toBe(1);
+    }
+    expect(run('--db', path.join(tmp, 'missing.sqlite')).code).toBe(1);
+    expect(dbHash()).toBe(before);
+    expect(undoFiles()).toEqual([]);
+  });
+
+  it('--apply: 활성 행만 비활성화하고, 값이 없는 되돌리기 파일을 남긴다', () => {
+    const undoPath = path.join(tmp, 'undo.jsonl');
+    const { code, out } = run('--db', dbPath, '--apply', '--undo-file', undoPath);
+
+    expect(code).toBe(0);
+    expect(out).toMatch(/deactivated 2 fact\(s\)/);
+    expect(out).not.toContain(BOT_TOKEN);
+    expect(out).not.toContain(API_KEY);
+
+    const after = rows();
+    expect(after['fact-token'].is_active).toBe(0);
+    expect(after['fact-kr-key'].is_active).toBe(0);
+    expect(after['fact-token'].updated_at).not.toBe(T0);
+    expect(after['fact-old-token']).toEqual({ is_active: 0, updated_at: T0 });
+    expect(after['fact-normal']).toEqual({ is_active: 1, updated_at: T0 });
+
+    const undoText = fs.readFileSync(undoPath, 'utf8');
+    expect(undoText).not.toContain(BOT_TOKEN);
+    expect(undoText).not.toContain(API_KEY);
+    const [header, ...entries] = undoText.trim().split('\n').map((l) => JSON.parse(l));
+    expect(header).toMatchObject({ kind: 'redact-secret-facts-undo', version: 1, count: 2 });
+    expect(header.applied_at).toBe(after['fact-token'].updated_at);
+    expect(entries.map((e) => e.id).sort()).toEqual(['fact-kr-key', 'fact-token']);
+    expect(entries.every((e) => e.is_active === 1 && e.updated_at === T0)).toBe(true);
+  });
+
+  it('--apply 를 다시 돌리면 바꿀 것이 없고 되돌리기 파일도 만들지 않는다', () => {
+    expect(run('--db', dbPath, '--apply').code).toBe(0);
+    const first = undoFiles();
+    expect(first).toHaveLength(1);
+    const before = dbHash();
+
+    const { code, out } = run('--db', dbPath, '--apply');
+    expect(code).toBe(0);
+    expect(out).toMatch(/nothing to deactivate/);
+    expect(undoFiles()).toEqual(first);
+    expect(dbHash()).toBe(before);
+  });
+
+  it('이미 있는 되돌리기 파일은 덮어쓰지 않는다', () => {
+    const undoPath = path.join(tmp, 'undo.jsonl');
+    fs.writeFileSync(undoPath, 'keep me\n');
+    const before = dbHash();
+    expect(run('--db', dbPath, '--apply', '--undo-file', undoPath).code).toBe(1);
+    expect(fs.readFileSync(undoPath, 'utf8')).toBe('keep me\n');
+    expect(dbHash()).toBe(before);
+  });
+
+  it('--undo: 그 실행이 남긴 상태 그대로인 행만 되돌린다', () => {
+    const undoPath = path.join(tmp, 'undo.jsonl');
+    expect(run('--db', dbPath, '--apply', '--undo-file', undoPath).code).toBe(0);
+    // 그 뒤 한 행을 다른 경로가 고쳤다 — 되돌리기가 덮어쓰면 안 된다.
+    const db = new Database(dbPath);
+    try {
+      db.prepare("UPDATE facts SET updated_at = '2026-11-11T00:00:00.000Z' WHERE id = 'fact-kr-key'").run();
+    } finally {
+      db.close();
+    }
+
+    const { code, out } = run('--db', dbPath, '--undo', undoPath);
+    expect(code).toBe(0);
+    expect(out).toMatch(/restored 1 of 2 fact\(s\)/);
+    const after = rows();
+    expect(after['fact-token']).toEqual({ is_active: 1, updated_at: T0 });
+    expect(after['fact-kr-key']).toEqual({ is_active: 0, updated_at: '2026-11-11T00:00:00.000Z' });
+    expect(after['fact-old-token']).toEqual({ is_active: 0, updated_at: T0 });
+  });
+
+  it('--undo 는 이 스크립트의 되돌리기 파일이 아니면 거부한다', () => {
+    const bogus = path.join(tmp, 'bogus.jsonl');
+    fs.writeFileSync(bogus, JSON.stringify({ id: 'fact-normal', is_active: 1, updated_at: T0 }) + '\n');
+    const before = dbHash();
+    expect(run('--db', dbPath, '--undo', bogus).code).toBe(1);
+    expect(run('--db', dbPath, '--undo', path.join(tmp, 'absent.jsonl')).code).toBe(1);
+    expect(dbHash()).toBe(before);
+  });
+});

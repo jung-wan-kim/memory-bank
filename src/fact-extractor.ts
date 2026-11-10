@@ -7,6 +7,7 @@ import { generateEmbedding, initEmbeddings } from './embeddings.js';
 import { classifyAndLinkFact } from './ontology-classifier.js';
 import { randomUUID } from 'node:crypto';
 import { factRejectReason } from './fact-validity.js';
+import { secretRejectReason } from './secret-scan.js';
 import {
   claimSessionSql, renewClaimSql, failureMarkerUpsertSql, freshClaimPredicate,
   getExtractionConfig, EXTRACTION_STATE, MAX_INTERNAL_RETRIES,
@@ -18,6 +19,8 @@ export const EXTRACTION_SYSTEM_PROMPT = `You are an expert at extracting long-te
 - 1 fact = 1 sentence (concise)
 - Ignore trivial exchanges (greetings, "yes", "thanks")
 - Code snippets are NOT facts - extract only decisions/patterns
+- Credentials are NOT facts - never copy an API key, token, password or any other
+  secret value into a fact (that a credential exists, or where it is kept, can be one)
 - No duplicate facts within the same batch
 - Prefer durable facts (decisions, conventions, constraints, lessons) over
   session-ephemeral details ("user is currently editing file X" is NOT a fact)
@@ -199,6 +202,19 @@ function isExcludedProject(project: string | null | undefined): boolean {
   return EXCLUDE_PROJECTS.some((p) => project === p || project.startsWith(`${p}/`));
 }
 
+/**
+ * 자격증명 모양 문자열이 든 사실인가(영문·한글 어느 쪽이든). 사유(종류)만 돌려준다 —
+ * 호출자는 이것을 세고 로그에 남기되 문장 자체는 로그에 쓰지 않는다.
+ */
+function factSecretReason(fact: { fact: unknown; fact_kr?: unknown }): string | null {
+  return secretRejectReason(fact.fact) ?? secretRejectReason(fact.fact_kr);
+}
+
+/** { 'secret-jwt': 2, … } → 'secret-jwt×2, …' (로그용 — 값은 싣지 않는다) */
+function describeReasonCounts(counts: Record<string, number>): string {
+  return Object.entries(counts).map(([reason, n]) => `${reason}×${n}`).join(', ');
+}
+
 export function buildExtractionPrompt(
   exchanges: Array<{ user_message: string; assistant_message: string }>,
 ): string {
@@ -265,12 +281,16 @@ export async function extractFactsFromExchanges(
 
       if (extracted && Array.isArray(extracted)) {
         let rejected = 0;
+        const secretReasons: Record<string, number> = {};
         for (const fact of extracted) {
           if (typeof fact?.fact !== 'string' || fact.fact.trim() === '') continue;
           // Template residue ('...', 'concise statement', 'a|b|c' category) is
           // dropped here, before the save transaction — insertFact would throw
           // on it and roll back the whole batch.
           if (factRejectReason(fact)) { rejected++; continue; }
+          // 자격증명이 든 사실은 후보가 되지 않는다(상한 자리도 차지하지 않는다).
+          const secretReason = factSecretReason(fact);
+          if (secretReason) { secretReasons[secretReason] = (secretReasons[secretReason] ?? 0) + 1; continue; }
           if (!passesConfidenceGate(fact.confidence)) continue;
 
           const key = normalizeFactText(fact.fact);
@@ -279,6 +299,14 @@ export async function extractFactsFromExchanges(
           batchFacts.push(fact);
         }
         if (rejected > 0) console.error(`fact-extractor: dropped ${rejected} template-residue fact(s) from batch ${b + 1}`);
+        const secretCount = Object.values(secretReasons).reduce((n, c) => n + c, 0);
+        if (secretCount > 0) {
+          if (stats) stats.rejectedSecrets = (stats.rejectedSecrets ?? 0) + secretCount;
+          console.error(
+            `fact-extractor: dropped ${secretCount} fact(s) carrying a credential-shaped string from batch ${b + 1}`
+            + ` (${describeReasonCounts(secretReasons)})`,
+          );
+        }
       }
     } catch (error) {
       // 실패를 3분류한다 — 예전에는 전부 삼켜서, 공급자 장애로 한 건도 못 뽑은
@@ -358,6 +386,20 @@ export async function saveExtractedFacts(
    */
   commitMarker?: (extracted: number, saved: number) => number,
 ): Promise<string[]> {
+  // 저장 직전 판정: 자격증명이 든 사실은 어떤 호출자가 넘겼든 여기서 걸러진다.
+  // (추출 루프가 이미 한 번 걸렀으므로 그 경로에서는 0건이다.)
+  const secretReasons: Record<string, number> = {};
+  facts = facts.filter((fact) => {
+    const reason = factSecretReason(fact);
+    if (reason) secretReasons[reason] = (secretReasons[reason] ?? 0) + 1;
+    return !reason;
+  });
+  if (Object.keys(secretReasons).length > 0) {
+    console.error(
+      `fact-extractor: refused to save fact(s) carrying a credential-shaped string (${describeReasonCounts(secretReasons)})`,
+    );
+  }
+
   await initEmbeddings();
 
   // 1단계(비동기): 임베딩만 먼저 계산한다 — 트랜잭션은 동기여야 하므로.
@@ -490,6 +532,8 @@ export interface ExtractionStats {
   droppedBatches: number;
   /** 세션 상한 때문에 저장 대상에서 빠진 후보 수 */
   truncatedFacts?: number;
+  /** 자격증명 모양 문자열이 들어 있어 버린 사실 수 */
+  rejectedSecrets?: number;
 }
 
 /** runFactExtraction 의 결과. `skipped` 가 있으면 이 세션은 이번 실행에서 처리되지 않았다. */
@@ -498,6 +542,8 @@ export interface ExtractionRunResult {
   saved: number;
   /** 세션 상한 때문에 잘린 후보 수(0 이면 없음) — 워커가 로그에 남긴다 */
   truncated?: number;
+  /** 자격증명 모양 문자열이 들어 있어 저장하지 않은 사실 수(0 이면 없음) */
+  rejectedSecrets?: number;
   skipped?:
     | 'claim_not_acquired' | 'claim_error'
     | 'excluded_project' | 'excluded_project_unmarked'
@@ -808,6 +854,7 @@ export async function runFactExtraction(
   return {
     extracted: facts.length, saved,
     ...(stats.truncatedFacts ? { truncated: stats.truncatedFacts } : {}),
+    ...(stats.rejectedSecrets ? { rejectedSecrets: stats.rejectedSecrets } : {}),
   };
 }
 

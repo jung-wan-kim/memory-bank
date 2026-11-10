@@ -269,6 +269,9 @@ async function main() {
           return;
         }
         totalSaved += result.saved;
+        if (result.rejectedSecrets > 0) {
+          log(`session ${next.sid}: dropped ${result.rejectedSecrets} fact(s) carrying a credential-shaped string`);
+        }
         if (result.saved > 0) {
           log(
             `session ${next.sid} (${project ?? '?'}, ${next.n} exch): saved ${result.saved}`

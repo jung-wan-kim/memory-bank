@@ -1,0 +1,184 @@
+#!/usr/bin/env node
+/**
+ * Find stored facts that carry a credential-shaped string (src/secret-scan.ts)
+ * and take them out of circulation.
+ *
+ * New facts are refused at the write path; this is for rows stored before that
+ * check existed. It never prints or writes a fact's text — only its id and the
+ * kind of credential found.
+ *
+ *   node scripts/redact-secret-facts.mjs [--db PATH]
+ *       Dry run (default): list id, kind, active/inactive. Opens the database
+ *       read-only and changes nothing.
+ *   node scripts/redact-secret-facts.mjs [--db PATH] --apply [--undo-file PATH]
+ *       Deactivate the active ones (is_active = 0). Before any row changes, the
+ *       previous is_active / updated_at of every row about to change is written
+ *       to the undo file (default: next to the database).
+ *   node scripts/redact-secret-facts.mjs [--db PATH] --undo FILE
+ *       Put back the rows an --apply run changed, where they are still as that
+ *       run left them.
+ *
+ * Deactivation hides a fact from injection, search and the next sync export
+ * (the export lists active facts only). It does not remove the text from the
+ * row, and it does not un-leak the credential: rotate it.
+ */
+
+import Database from 'better-sqlite3';
+import fs from 'node:fs';
+import path from 'node:path';
+import { getDbPath } from '../dist/paths.js';
+import { secretRejectReason } from '../dist/secret-scan.js';
+import { ensureNativeAbi } from '../dist/node-abi.js';
+import { parseCliArgs, assertOnlyArgs } from '../dist/cli-args.js';
+
+ensureNativeAbi('redact-secret-facts');
+
+const UNDO_KIND = 'redact-secret-facts-undo';
+
+function fail(message) {
+  console.error(`redact-secret-facts: ${message}`);
+  process.exit(1);
+}
+
+let args;
+try {
+  args = parseCliArgs(process.argv.slice(2), { values: ['--db', '--undo-file', '--undo'], flags: ['--apply'] });
+  if (args.values['--undo'] !== undefined) assertOnlyArgs(args, ['--db', '--undo'], '--undo');
+  else if (!args.flags.has('--apply')) assertOnlyArgs(args, ['--db'], 'a dry run (add --apply)');
+} catch (e) {
+  fail(e.message);
+}
+
+const dbPath = args.values['--db'] || getDbPath();
+if (!fs.existsSync(dbPath)) fail(`no database at ${dbPath}`);
+
+/** Facts whose English or Korean text carries a credential-shaped string: id, kind, field, state. */
+function findSecretFacts(db) {
+  const hits = [];
+  let scanned = 0;
+  for (const row of db.prepare('SELECT id, is_active, updated_at, fact, fact_kr FROM facts').iterate()) {
+    scanned++;
+    const inFact = secretRejectReason(row.fact);
+    const reason = inFact ?? secretRejectReason(row.fact_kr);
+    if (!reason) continue;
+    hits.push({ id: row.id, reason, field: inFact ? 'fact' : 'fact_kr', active: row.is_active === 1, updatedAt: row.updated_at });
+  }
+  return { scanned, hits };
+}
+
+function printHits(scanned, hits) {
+  console.log(`db: ${dbPath}`);
+  for (const h of hits) console.log(`${h.id}\t${h.reason}\t${h.active ? 'active' : 'inactive'}\t${h.field}`);
+  const active = hits.filter((h) => h.active).length;
+  console.log(`scanned ${scanned} fact(s): ${hits.length} carry a credential-shaped string (${active} active, ${hits.length - active} inactive)`);
+  return active;
+}
+
+function dryRun() {
+  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  try {
+    const { scanned, hits } = findSecretFacts(db);
+    const active = printHits(scanned, hits);
+    console.log(active > 0
+      ? `dry run: nothing changed. --apply deactivates the ${active} active fact(s) and writes an undo file first.`
+      : 'dry run: nothing changed, and nothing to deactivate.');
+  } finally {
+    db.close();
+  }
+}
+
+function apply() {
+  const appliedAt = new Date().toISOString();
+  const undoPath = args.values['--undo-file']
+    || path.join(path.dirname(dbPath), `redact-secret-facts-undo-${appliedAt.replace(/[-:.]/g, '')}.jsonl`);
+  if (fs.existsSync(undoPath)) fail(`undo file already exists: ${undoPath}`);
+
+  const db = new Database(dbPath, { fileMustExist: true });
+  db.pragma('busy_timeout = 15000');
+  let undoWritten = false;
+  try {
+    // One write transaction from the scan to the last UPDATE: the undo file then
+    // describes exactly the rows this run changed (nothing can deactivate or
+    // rewrite one of them in between).
+    const changed = db.transaction(() => {
+      const { scanned, hits } = findSecretFacts(db);
+      printHits(scanned, hits);
+      const targets = hits.filter((h) => h.active);
+      if (targets.length === 0) return 0;
+
+      // The undo file first — if it cannot be written, no row changes.
+      const lines = [
+        JSON.stringify({ kind: UNDO_KIND, version: 1, db: dbPath, applied_at: appliedAt, count: targets.length }),
+        ...targets.map((h) => JSON.stringify({ id: h.id, is_active: 1, updated_at: h.updatedAt, reason: h.reason })),
+      ];
+      const fd = fs.openSync(undoPath, 'wx', 0o600);
+      try {
+        fs.writeSync(fd, lines.join('\n') + '\n');
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      undoWritten = true;
+
+      const update = db.prepare('UPDATE facts SET is_active = 0, updated_at = ? WHERE id = ? AND is_active = 1');
+      let n = 0;
+      for (const h of targets) n += update.run(appliedAt, h.id).changes;
+      if (n !== targets.length) throw new Error(`expected to deactivate ${targets.length} fact(s), changed ${n}`);
+      return n;
+    }).immediate();
+
+    if (changed === 0) {
+      console.log('nothing to deactivate — no row changed, no undo file written.');
+    } else {
+      console.log(`deactivated ${changed} fact(s). undo file: ${undoPath}`);
+      console.log('The sync export still lists them until the next export rewrites it. Rotate the credential — deactivation does not un-leak it.');
+    }
+  } catch (e) {
+    // The transaction rolled back: an undo file left behind would describe a change that did not happen.
+    if (undoWritten) { try { fs.unlinkSync(undoPath); } catch { /* reported below */ } }
+    fail(`apply failed, no row changed: ${e instanceof Error ? e.message : e}`);
+  } finally {
+    db.close();
+  }
+}
+
+function undo() {
+  const undoPath = args.values['--undo'];
+  let header, rows;
+  try {
+    const lines = fs.readFileSync(undoPath, 'utf8').split('\n').filter((l) => l.trim());
+    header = JSON.parse(lines[0] ?? 'null');
+    rows = lines.slice(1).map((l) => JSON.parse(l));
+  } catch (e) {
+    fail(`cannot read undo file ${undoPath}: ${e instanceof Error ? e.message : e}`);
+  }
+  if (!header || header.kind !== UNDO_KIND || header.version !== 1 || typeof header.applied_at !== 'string') {
+    fail(`${undoPath} is not an undo file of this script`);
+  }
+  if (rows.length !== header.count || rows.some((r) => typeof r.id !== 'string' || r.is_active !== 1 || typeof r.updated_at !== 'string')) {
+    fail(`${undoPath} is incomplete or malformed (${rows.length} row(s), header says ${header.count})`);
+  }
+
+  const db = new Database(dbPath, { fileMustExist: true });
+  db.pragma('busy_timeout = 15000');
+  try {
+    // Only rows still exactly as the apply run left them: a fact changed since
+    // (reactivated, edited, consolidated) is not overwritten.
+    const restore = db.prepare('UPDATE facts SET is_active = 1, updated_at = ? WHERE id = ? AND is_active = 0 AND updated_at = ?');
+    const restored = db.transaction(() => {
+      let n = 0;
+      for (const r of rows) n += restore.run(r.updated_at, r.id, header.applied_at).changes;
+      return n;
+    }).immediate();
+    console.log(`db: ${dbPath}`);
+    console.log(`restored ${restored} of ${rows.length} fact(s)${restored < rows.length ? ` — ${rows.length - restored} changed since the apply run and were left as they are` : ''}`);
+  } catch (e) {
+    fail(`undo failed, no row changed: ${e instanceof Error ? e.message : e}`);
+  } finally {
+    db.close();
+  }
+}
+
+if (args.values['--undo'] !== undefined) undo();
+else if (args.flags.has('--apply')) apply();
+else dryRun();
