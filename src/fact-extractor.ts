@@ -8,6 +8,7 @@ import { classifyAndLinkFact } from './ontology-classifier.js';
 import { randomUUID } from 'node:crypto';
 import { factRejectReason, factKrRejectReason, normalizeCategory } from './fact-validity.js';
 import { secretRejectReason } from './secret-scan.js';
+import { resolveRepoRoots } from './project-family.js';
 import {
   claimSessionSql, renewClaimSql, failureMarkerUpsertSql, freshClaimPredicate,
   getExtractionConfig, EXTRACTION_STATE, MAX_INTERNAL_RETRIES, ensureSeenExchangesColumn,
@@ -203,6 +204,35 @@ function isExcludedProject(project: string | null | undefined): boolean {
   // 영구 0/0 마커를 받고 fact 가 영원히 추출되지 않았다(실측: 적격 8세션 전건 손실).
   // pending SQL 필터는 exact 매칭이라 선정은 되고 여기서만 걸러져 무음이었다.
   return EXCLUDE_PROJECTS.some((p) => project === p || project.startsWith(`${p}/`));
+}
+
+/**
+ * 이 세션의 project 사실을 묶을 범위. linked worktree(그 하위 폴더 포함)에서 끝난 세션은
+ * 본 저장소 루트로 읽고, 그 밖에는 받은 경로 그대로다.
+ *
+ * scope_project 는 세션이 끝난 순간의 cwd 였다. worktree 는 일이 끝나면 지워지고, 지워진
+ * 경로의 사실은 어느 저장소에서도 보이지 않는다(읽는 쪽의 저장소 묶음 판정 —
+ * project-family.ts — 은 디스크에 없는 경로를 어느 저장소의 것으로도 보지 않는다. 저장소
+ * 밖에 둔 worktree 의 사실은 폴더가 있는 동안에도 저장소에서 안 보인다). 추출 시점에는
+ * 폴더가 있어 본 저장소를 확인할 수 있으므로 그때 옮겨 적는다.
+ *
+ * 판정은 resolveRepoRoots 하나다 — `.git` 파일이 가리키는 관리 폴더의 역참조까지 맞아야
+ * 본 저장소로 인정한다. 그래서 아래는 전부 받은 경로 그대로다: 저장소 루트와 그 하위 폴더
+ * (예전부터 정확한 경로가 범위였다), 저장소가 아닌 폴더, 디스크에 없는 경로(어느
+ * 저장소였는지 알 수 없다 — 추측하지 않는다), 홈 폴더가 본 저장소인 경우, 슬러그 꼴 이름.
+ *
+ * 본 저장소가 추출 제외 목록에 있으면 옮기지 않는다 — 제외된 범위에 사실을 넣지 않는다
+ * (그 세션을 추출할지는 예전 판정 그대로다: 저장소 밖의 worktree 는 예전에도 추출됐다).
+ *
+ * 원래 폴더는 사실의 source_exchange_ids → exchanges.cwd 로 되짚을 수 있다.
+ */
+export function extractionScopeProject(project: string): string {
+  if (typeof project !== 'string' || project === '') return project;
+  const roots = resolveRepoRoots(project);
+  // [worktree 자기 루트, 본 저장소 루트] 일 때만 linked worktree 다(project-family.ts 의 계약).
+  if (roots.length !== 2) return project;
+  const main = roots[1];
+  return isExcludedProject(main) ? project : main;
 }
 
 /**
@@ -580,6 +610,8 @@ export interface ExtractionRunResult {
   rejectedSecrets?: number;
   /** fact-validity 가 거부한 사실 수(사유별, 없으면 생략) — 프롬프트를 바꾼 뒤 예시 베끼기가 느는지 로그로 본다 */
   rejectedInvalid?: Record<string, number>;
+  /** project 사실을 받은 경로가 아닌 본 저장소 루트에 묶었을 때만 — 그 루트(worktree 세션) */
+  scopeProject?: string;
   skipped?:
     | 'claim_not_acquired' | 'claim_error'
     | 'excluded_project' | 'excluded_project_unmarked'
@@ -810,6 +842,8 @@ export async function runFactExtraction(
   const stats: ExtractionStats = { droppedBatches: 0 };
   let facts: ExtractedFact[];
   let saved = 0;
+  // worktree 에서 끝난 세션의 project 사실은 본 저장소 루트에 묶는다(extractionScopeProject).
+  let scopeProject = project;
   try {
     facts = await extractFactsFromExchanges(db, sessionId, stats, renewLease);
 
@@ -823,8 +857,9 @@ export async function runFactExtraction(
       const exchangeIds = (db.prepare(
         'SELECT id FROM exchanges WHERE session_id = ?'
       ).all(sessionId) as Array<{ id: string }>).map(r => r.id);
+      scopeProject = extractionScopeProject(project);
       saved = (await saveExtractedFacts(
-        db, facts, project, exchangeIds, agent, renewLease, writeCompletionMarker,
+        db, facts, scopeProject, exchangeIds, agent, renewLease, writeCompletionMarker,
       )).length;
     }
   } catch (e) {
@@ -925,6 +960,7 @@ export async function runFactExtraction(
     ...(stats.truncatedFacts ? { truncated: stats.truncatedFacts } : {}),
     ...(stats.rejectedSecrets ? { rejectedSecrets: stats.rejectedSecrets } : {}),
     ...(stats.rejectedInvalid ? { rejectedInvalid: stats.rejectedInvalid } : {}),
+    ...(scopeProject !== project ? { scopeProject } : {}),
   };
 }
 

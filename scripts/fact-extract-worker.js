@@ -205,13 +205,15 @@ async function main() {
       // truncated: 세션 상한 때문에 저장 대상에서 빠진 후보 수.
       // rejected_secret: 자격증명 모양 문자열이 들어 있어 버린 사실 수.
       // rejected_invalid: 저장 검사가 거부한 사실(사유×건수 — 템플릿 잔여물·프롬프트 예시·환경 상용구).
-      // 셋 다 없으면 적지 않는다.
+      // scope_project: worktree 에서 끝난 세션이라 project 사실을 본 저장소 루트에 묶었을 때 그 루트.
+      // 넷 다 없으면 적지 않는다(scope_project 는 경로에 공백이 있을 수 있어 줄 끝에 둔다).
       const invalid = Object.entries(result.rejectedInvalid ?? {}).map(([reason, n]) => `${reason}×${n}`).join(',');
       log(
         `worker: session=${sessionId} extracted=${result.extracted} saved=${result.saved}`
         + (result.truncated > 0 ? ` truncated=${result.truncated}` : '')
         + (result.rejectedSecrets > 0 ? ` rejected_secret=${result.rejectedSecrets}` : '')
-        + (invalid ? ` rejected_invalid=${invalid}` : ''),
+        + (invalid ? ` rejected_invalid=${invalid}` : '')
+        + (result.scopeProject ? ` scope_project=${result.scopeProject}` : ''),
       );
     }
   } catch (error) {

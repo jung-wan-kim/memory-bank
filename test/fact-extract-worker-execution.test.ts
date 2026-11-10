@@ -155,16 +155,17 @@ describe('훅 워커: 추출 전에 그 세션을 색인한다', () => {
     writeStubs({ result: {
       extracted: 60, saved: 60, truncated: 36, rejectedSecrets: 2,
       rejectedInvalid: { 'fact-session-environment': 3, 'fact-bracket-placeholder': 1 },
+      scopeProject: '/repos/app main',
     } });
     expect(runWorker().log).toMatch(
-      /extracted=60 saved=60 truncated=36 rejected_secret=2 rejected_invalid=fact-session-environment×3,fact-bracket-placeholder×1/,
+      /extracted=60 saved=60 truncated=36 rejected_secret=2 rejected_invalid=fact-session-environment×3,fact-bracket-placeholder×1 scope_project=\/repos\/app main$/m,
     );
 
     fs.rmSync(path.join(sandbox, 'index', 'fact-extract.log'));
     writeStubs({ result: { extracted: 3, saved: 3 } });
     const { log } = runWorker();
     expect(log).toMatch(/extracted=3 saved=3/);
-    expect(log).not.toMatch(/truncated|rejected_secret|rejected_invalid/);
+    expect(log).not.toMatch(/truncated|rejected_secret|rejected_invalid|scope_project/);
   });
 
   it('색인 0건으로 건너뛴 추출은 사유와 색인 단계 결과를 로그에 남긴다', () => {

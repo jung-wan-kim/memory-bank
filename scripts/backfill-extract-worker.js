@@ -278,7 +278,9 @@ async function main() {
         if (result.saved > 0) {
           log(
             `session ${next.sid} (${project ?? '?'}, ${next.n} exch): saved ${result.saved}`
-            + (result.truncated > 0 ? ` (truncated ${result.truncated} by the session cap)` : ''),
+            + (result.truncated > 0 ? ` (truncated ${result.truncated} by the session cap)` : '')
+            // worktree 세션: project 사실을 본 저장소 루트에 묶었다.
+            + (result.scopeProject ? ` (project facts scoped to ${result.scopeProject})` : ''),
           );
         }
       } catch (error) {
