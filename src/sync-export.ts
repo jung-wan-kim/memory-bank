@@ -5,7 +5,7 @@ import { createHash } from 'crypto';
 import type Database from 'better-sqlite3';
 import { initDatabase } from './db.js';
 import { getSuperpowersDir } from './paths.js';
-import { syncFactRefusal } from './import-guard.js';
+import { syncFactRefusal, syncJudgmentFingerprint } from './import-guard.js';
 import { OWNER_ONLY_DIR_MODE, OWNER_ONLY_FILE_MODE } from './file-perms.js';
 
 const SYNC_DIR_NAME = 'sync';
@@ -58,6 +58,77 @@ interface OwnExportState {
 }
 
 const DB_ROW_TABLES = ['facts', 'ontology_domains', 'ontology_categories', 'ontology_relations'] as const;
+
+/**
+ * What judging the active facts gave last time (syncFactRefusal over every one
+ * of them), kept beside OwnExportState — local, never in sync/. Counts and
+ * fingerprints only: no id, no text.
+ *
+ * The judgment of a fact depends on the fact's row and on the judgment code,
+ * nothing else. So while the serialized active facts hash the same (`input`)
+ * and the code is the same (`judged_by`), the result is the same: which facts
+ * are left out, and so what facts.jsonl holds (`output`). The export then does
+ * not judge again — it did at every session end, 0.55s of CPU over 30,584
+ * facts to find the same 877 (measured 2026-11-11).
+ */
+interface JudgedFacts {
+  /** syncJudgmentFingerprint() of the code that judged. */
+  judged_by: string;
+  /** Every active fact as serialized, left out or not: what was judged. */
+  input: { sha256: string; rows: number };
+  /** facts.jsonl as that judgment leaves it. */
+  output: { sha256: string; bytes: number; rows: number };
+  withheld: WithheldFacts;
+}
+
+/** Where the last judgment is recorded (see JudgedFacts). */
+function judgedFactsPath(): string {
+  return path.join(getSuperpowersDir(), 'conversation-index', 'state', 'sync-export-judged.json');
+}
+
+const isCount = (n: unknown): n is number => typeof n === 'number' && Number.isInteger(n) && n >= 0;
+
+/**
+ * The recorded judgment, or null when there is none or the record does not
+ * hold together (not the expected shape, or its counts do not add up) — a
+ * record that is not used costs one judgment; one used wrongly would say what
+ * the export holds.
+ */
+function readJudgedFacts(): JudgedFacts | null {
+  const v = readJsonOrNull<JudgedFacts>(judgedFactsPath());
+  if (!v) return null;
+  const { judged_by, input, output, withheld } = v;
+  if (typeof judged_by !== 'string' || !input || typeof input.sha256 !== 'string' || !isCount(input.rows)) return null;
+  if (!output || typeof output.sha256 !== 'string' || !isCount(output.bytes) || !isCount(output.rows)) return null;
+  if (!withheld || !isCount(withheld.count) || !withheld.by_reason || typeof withheld.by_reason !== 'object' || Array.isArray(withheld.by_reason)) return null;
+  const counts: unknown[] = Object.values(withheld.by_reason);
+  if (!counts.every(isCount) || counts.reduce((sum, n) => sum + n, 0) !== withheld.count) return null;
+  if (output.rows + withheld.count !== input.rows) return null;
+  return v;
+}
+
+function sameJudged(a: JudgedFacts | null, b: JudgedFacts): boolean {
+  return a !== null && a.judged_by === b.judged_by
+    && a.input.sha256 === b.input.sha256 && a.input.rows === b.input.rows
+    && a.output.sha256 === b.output.sha256 && a.output.bytes === b.output.bytes && a.output.rows === b.output.rows
+    && sameWithheld(a.withheld, b.withheld);
+}
+
+/** The text of a .jsonl file: one line per row and a newline after the last (a lone newline when there is none). */
+const jsonlBody = (lines: string[]): string => lines.join('\n') + '\n';
+
+/** sha256 and byte count of jsonlBody(lines), taken line by line — the text itself is built only when it is written. */
+function digestJsonl(lines: string[]): SyncFileMeta {
+  const hash = createHash('sha256');
+  let bytes = 1; // the closing newline
+  for (let i = 0; i < lines.length; i++) {
+    if (i > 0) { hash.update('\n'); bytes += 1; }
+    hash.update(lines[i], 'utf8');
+    bytes += Buffer.byteLength(lines[i], 'utf8');
+  }
+  hash.update('\n');
+  return { sha256: hash.digest('hex'), bytes };
+}
 
 export function getSyncDir(): string {
   const dir = path.join(getSuperpowersDir(), 'conversation-index', SYNC_DIR_NAME);
@@ -161,6 +232,13 @@ function countRows(db: Database.Database): Record<string, number> {
  * were left out and why (counts only). Relations are exported as before: one
  * that names a fact the receiving device does not have is counted there.
  *
+ * The facts are judged when something the judgment depends on changed — a row
+ * of an active fact, or the judgment code — and otherwise the last judgment
+ * stands (JudgedFacts): the counts above and the fingerprint of facts.jsonl
+ * come from the record, and the file, being up to date, is not touched. When
+ * facts.jsonl has to be written, it is written from a judgment made in that
+ * call, never from the record.
+ *
  * `written` names the files this call rewrote ([] = nothing changed).
  */
 export function exportForSync(): {
@@ -179,47 +257,91 @@ export function exportForSync(): {
              created_at, updated_at, consolidated_count, ontology_category_id
       FROM facts WHERE is_active = 1
     `).all() as Array<Record<string, unknown>>;
-    // Only what an import accepts goes into the file.
-    const withheldByReason: Record<string, number> = {};
-    const facts = activeFacts.filter((f) => {
-      const refusal = syncFactRefusal(f as { fact: unknown; fact_kr?: unknown; category: unknown; scope_type: unknown });
-      if (!refusal) return true;
-      withheldByReason[refusal.reason] = (withheldByReason[refusal.reason] ?? 0) + 1;
-      return false;
-    });
-    const withheld: WithheldFacts = { count: activeFacts.length - facts.length, by_reason: withheldByReason };
+    const factLines = activeFacts.map((f) => JSON.stringify(f));
+
+    // Only what an import accepts goes into the file: every active fact is judged, and the
+    // lines of the accepted ones are what facts.jsonl holds.
+    const judgeFacts = () => {
+      const byReason: Record<string, number> = {};
+      const lines: string[] = [];
+      activeFacts.forEach((f, i) => {
+        const refusal = syncFactRefusal(f as { fact: unknown; fact_kr?: unknown; category: unknown; scope_type: unknown });
+        if (!refusal) { lines.push(factLines[i]); return; }
+        byReason[refusal.reason] = (byReason[refusal.reason] ?? 0) + 1;
+      });
+      const withheld: WithheldFacts = { count: activeFacts.length - lines.length, by_reason: byReason };
+      return { lines, fp: digestJsonl(lines), rows: lines.length, withheld };
+    };
+
+    // The same facts under the same judgment code were judged by an earlier run: its result
+    // stands (JudgedFacts). Anything else — a changed row, changed code, no usable record — is judged now.
+    const judgedBy = syncJudgmentFingerprint();
+    const input = { sha256: digestJsonl(factLines).sha256, rows: factLines.length };
+    const recorded = judgedBy === null ? null : readJudgedFacts();
+    const remembered = recorded !== null && recorded.judged_by === judgedBy
+      && recorded.input.sha256 === input.sha256 && recorded.input.rows === input.rows ? recorded : null;
+    let fresh: ReturnType<typeof judgeFacts> | null = null; // set once the facts were judged in this call
+    let facts: { fp: SyncFileMeta; rows: number; withheld: WithheldFacts };
+    if (remembered) {
+      const { output, withheld } = remembered;
+      facts = { fp: { sha256: output.sha256, bytes: output.bytes }, rows: output.rows, withheld };
+    } else {
+      fresh = judgeFacts();
+      facts = fresh;
+    }
+
     const domains = db.prepare('SELECT * FROM ontology_domains').all();
     const categories = db.prepare('SELECT * FROM ontology_categories').all();
     const relations = db.prepare('SELECT * FROM ontology_relations').all();
     const dbRows = countRows(db);
 
-    const jsonl = (rows: unknown[]) => rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
-    const bodies: Record<SyncFileName, string> = {
-      'facts.jsonl': jsonl(facts),
+    const metaPath = path.join(syncDir, 'meta.json');
+    const prevMeta = readJsonOrNull<SyncMeta>(metaPath);
+    // Unchanged: same content as the meta on disk describes, and the file is still there at that size.
+    const upToDate = (name: SyncFileName, fp: SyncFileMeta): boolean => {
+      const prev = prevMeta?.files?.[name];
+      const onDisk = statOrNull(path.join(syncDir, name));
+      return !!prev && prev.sha256 === fp.sha256 && prev.bytes === fp.bytes && !!onDisk && onDisk.size === fp.bytes;
+    };
+
+    // facts.jsonl has to be written: a remembered judgment says what the file holds, not its
+    // text — the facts are judged now, and that result is the one used from here on.
+    let factsBody: string | null = null;
+    if (!upToDate('facts.jsonl', facts.fp)) {
+      if (fresh === null) { fresh = judgeFacts(); facts = fresh; }
+      if (!upToDate('facts.jsonl', facts.fp)) factsBody = jsonlBody(fresh.lines);
+    }
+
+    const jsonl = (rows: unknown[]) => jsonlBody(rows.map((r) => JSON.stringify(r)));
+    const otherBodies: Record<Exclude<SyncFileName, 'facts.jsonl'>, string> = {
       'ontology-domains.jsonl': jsonl(domains),
       'ontology-categories.jsonl': jsonl(categories),
       'ontology-relations.jsonl': jsonl(relations),
     };
 
-    const metaPath = path.join(syncDir, 'meta.json');
-    const prevMeta = readJsonOrNull<SyncMeta>(metaPath);
     const files: Record<string, SyncFileMeta> = {};
     const written: string[] = [];
     for (const name of SYNC_FILES) {
-      const body = bodies[name];
+      const file = path.join(syncDir, name);
+      if (name === 'facts.jsonl') {
+        files[name] = facts.fp;
+        if (factsBody === null) continue;
+        writeAtomic(file, factsBody);
+        written.push(name);
+        continue;
+      }
+      const body = otherBodies[name];
       const fp: SyncFileMeta = {
         sha256: createHash('sha256').update(body, 'utf8').digest('hex'),
         bytes: Buffer.byteLength(body, 'utf8'),
       };
       files[name] = fp;
-      const file = path.join(syncDir, name);
-      const prev = prevMeta?.files?.[name];
-      const onDisk = statOrNull(file);
-      // Unchanged: same content as the meta on disk describes, and the file is still there at that size.
-      if (prev && prev.sha256 === fp.sha256 && prev.bytes === fp.bytes && onDisk && onDisk.size === fp.bytes) continue;
+      if (upToDate(name, fp)) continue;
       writeAtomic(file, body);
       written.push(name);
     }
+    const withheld = facts.withheld;
+    const withheldByReason = withheld.by_reason;
 
     const metaDescribesThis = prevMeta !== null && sameWithheld(prevMeta.withheld_facts, withheld) && SYNC_FILES.every((name) => {
       const prev = prevMeta.files?.[name];
@@ -230,7 +352,7 @@ export function exportForSync(): {
       const meta: SyncMeta = {
         exported_at: new Date().toISOString(),
         hostname: os.hostname(),
-        facts_count: facts.length,
+        facts_count: facts.rows,
         domains_count: domains.length,
         categories_count: categories.length,
         relations_count: relations.length,
@@ -270,8 +392,25 @@ export function exportForSync(): {
       }
     }
 
+    // Record the judgment this call made, for the next run to stand on — whether or not a file
+    // was written (a change to a fact that is left out changes no file, and would otherwise be
+    // judged again at every session end). Without a fingerprint of the code there is nothing to
+    // key it by; a record that cannot be written costs the next run one judgment, no more.
+    if (fresh !== null && judgedBy !== null) {
+      const record: JudgedFacts = { judged_by: judgedBy, input, output: { ...fresh.fp, rows: fresh.rows }, withheld: fresh.withheld };
+      if (!sameJudged(recorded, record)) {
+        try {
+          const judgedPath = judgedFactsPath();
+          fs.mkdirSync(path.dirname(judgedPath), { recursive: true, mode: OWNER_ONLY_DIR_MODE });
+          writeAtomic(judgedPath, JSON.stringify(record));
+        } catch (e) {
+          console.error('sync-export: could not record the judgment of the active facts (the next export will judge them again):', e instanceof Error ? e.message : e);
+        }
+      }
+    }
+
     return {
-      facts: facts.length,
+      facts: facts.rows,
       domains: domains.length,
       categories: categories.length,
       relations: relations.length,
