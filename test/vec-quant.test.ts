@@ -91,7 +91,10 @@ describe('per-table int8 scale', () => {
       expect(storedBlob(db, 'vec_facts_kr', id).equals(embeddingToVecBlob(b, q600))).toBe(true);
 
       const c = unitVector(13);
-      updateFact(db, id, { fact: 'Scale-aware writes everywhere (updated)', embedding: c });
+      // Same sentence, new vector: a CHANGED sentence also drops the Korean vector
+      // (its translation is of the old sentence — consolidate-apply.test.ts), and
+      // this test reads that vector back below.
+      updateFact(db, id, { fact: 'Scale-aware writes everywhere', embedding: c });
       expect(storedBlob(db, 'vec_facts', id).equals(embeddingToVecBlob(c, q600))).toBe(true);
 
       const sim = (d: number) => l2DistanceToSimilarity(d);

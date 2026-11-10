@@ -66,9 +66,20 @@ interface InsertFactParams {
 }
 
 interface UpdateFactParams {
+  /**
+   * New sentence. When it differs from the stored one, the row's fact_kr — a
+   * translation of the OLD sentence — is cleared together with its
+   * vec_facts_kr row (scripts/translate-facts.mjs fills empty fact_kr rows and
+   * the re-embed worker then builds the Korean vector). Pass `embedding` with
+   * it: this function does not embed, and a row keeps whatever vector it has.
+   */
   fact?: string;
   embedding?: number[] | null;
   consolidated_count_increment?: boolean;
+  /** Confirmations to add — the consolidated_count of a fact merged into this one. */
+  consolidated_count_add?: number;
+  /** Sources to add (set union, order kept) — the sources of a fact merged into this one. */
+  add_source_exchange_ids?: string[];
 }
 
 interface InsertRevisionParams {
@@ -159,13 +170,35 @@ export function updateFact(db: Database.Database, id: string, params: UpdateFact
   if (params.consolidated_count_increment) {
     updates.push('consolidated_count = consolidated_count + 1');
   }
+  if (params.consolidated_count_add !== undefined) {
+    if (!Number.isInteger(params.consolidated_count_add) || params.consolidated_count_add < 1) {
+      throw new Error(`updateFact refused (consolidated_count_add must be a positive integer): ${params.consolidated_count_add}`);
+    }
+    updates.push('consolidated_count = consolidated_count + ?');
+    values.push(params.consolidated_count_add);
+  }
 
-  values.push(id);
   // Row + vector together (see insertFact): the stored embedding and the
   // index must not disagree after a failed vector write.
   db.transaction(() => {
-    db.prepare(`UPDATE facts SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    // Read inside the write transaction: the comparison and the union below
+    // must see the row this UPDATE is about to change.
+    const current = db.prepare('SELECT fact, source_exchange_ids FROM facts WHERE id = ?')
+      .get(id) as { fact: string; source_exchange_ids: string | null } | undefined;
+    const rowUpdates = [...updates];
+    const rowValues = [...values];
+    const sentenceChanges = current !== undefined && params.fact !== undefined && params.fact !== current.fact;
+    // The Korean sentence translates the stored one; after a rewrite it would
+    // describe a sentence the row no longer holds.
+    if (sentenceChanges) rowUpdates.push('fact_kr = NULL');
+    if (current && params.add_source_exchange_ids?.length) {
+      const merged = [...new Set([...(JSON.parse(current.source_exchange_ids || '[]') as string[]), ...params.add_source_exchange_ids])];
+      rowUpdates.push('source_exchange_ids = ?');
+      rowValues.push(JSON.stringify(merged));
+    }
+    db.prepare(`UPDATE facts SET ${rowUpdates.join(', ')} WHERE id = ?`).run(...rowValues, id);
     if (params.embedding) upsertFactVector(db, 'vec_facts', id, params.embedding);
+    if (sentenceChanges) db.prepare('DELETE FROM vec_facts_kr WHERE id = ?').run(id);
   }).immediate();
 }
 

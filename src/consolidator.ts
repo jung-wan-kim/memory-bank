@@ -50,42 +50,75 @@ export function buildConsolidationPrompt(existingFact: string, newFact: string):
 export type { LlmErrorClass } from './llm-error-class.js';
 export { LlmCallError, EmptyLlmResponseError, classifyLlmError, isTransientLlmError } from './llm-error-class.js';
 
+type Verdict = 'DUPLICATE' | 'CONTRADICTION' | 'EVOLUTION' | 'INDEPENDENT' | 'none';
+
+/**
+ * What one driver's comparison did, filled in as it happens so the caller can
+ * read it after a throw too: a throw BEFORE the LLM (candidate search) spent no
+ * call, a throw after it (parse, embedding, DB write) did.
+ */
+interface ComparisonTally {
+  /** The comparison LLM call was made (whether it resolved, rejected or returned garbage). */
+  llmCalled: boolean;
+  /** The candidate search stopped at the KNN k limit with matches possibly unread. */
+  searchCapped: boolean;
+}
+
+/**
+ * The pair in creation order `(created_at, id)` — the same key the drain
+ * cursor walks. Which fact is "existing" and which is "new" is a property of
+ * the pair, not of which one is the driver: a backlog is driven oldest first,
+ * so the nearest neighbour is often the LATER fact (measured on the 2,256-fact
+ * backlog of 2026-11: 388 of 849 comparisons). Reading that pair driver-as-new
+ * told the LLM the older sentence was the newer one — CONTRADICTION then
+ * switched off the latest decision and EVOLUTION overwrote it.
+ */
+function inCreationOrder(a: Fact, b: Fact): [older: Fact, newer: Fact] {
+  const aFirst = a.created_at < b.created_at || (a.created_at === b.created_at && a.id < b.id);
+  return aFirst ? [a, b] : [b, a];
+}
+
 /**
  * Consolidate ONE driver fact against a same-scope neighbour (if any).
  * Shared by consolidateAllPending and the back-compat consolidateFacts wrapper.
  *
- * `called` reports whether an LLM call was actually made — the caller MUST use
- * this (not the verdict) for budget accounting, because a call that returns
- * malformed/unparseable text still consumed the budget even though its verdict
- * is 'none'. Throws only on a transient LLM failure the caller should retry.
+ * `tally.llmCalled` reports whether an LLM call was actually made — the caller
+ * MUST use this (not the verdict, and not "it threw") for budget accounting: a
+ * call that returns malformed/unparseable text still consumed the budget even
+ * though its verdict is 'none', and a candidate search that throws consumed
+ * none. A provider rejection is thrown as LlmCallError; any other throw is an
+ * internal failure.
  */
 async function consolidateOne(
   db: Database.Database,
-  newFact: Fact,
-): Promise<{ called: boolean; verdict: 'DUPLICATE' | 'CONTRADICTION' | 'EVOLUTION' | 'INDEPENDENT' | 'none' }> {
-  if (!newFact.embedding) return { called: false, verdict: 'none' };
-  const embeddingArray = Array.from(newFact.embedding);
+  driver: Fact,
+  tally: ComparisonTally,
+): Promise<Verdict> {
+  if (!driver.embedding) return 'none';
+  const embeddingArray = Array.from(driver.embedding);
   // SAME-SCOPE only (no cross-scope leak): project fact → its own project,
   // global fact → global. The scope gate is inside the search, before its
   // limit, so an in-scope match isn't starved by closer out-of-scope rows.
-  const scope = newFact.scope_type === 'global'
+  const scope = driver.scope_type === 'global'
     ? ({ type: 'global' } as const)
-    : newFact.scope_project
-      ? ({ type: 'project', project: newFact.scope_project } as const)
+    : driver.scope_project
+      ? ({ type: 'project', project: driver.scope_project } as const)
       : null;
-  if (!scope) return { called: false, verdict: 'none' };
-  const candidates = searchSimilarFactsSameScope(db, embeddingArray, scope, 5, SIMILARITY_THRESHOLD)
-    .filter((s) => s.fact.id !== newFact.id);
-  if (candidates.length === 0) return { called: false, verdict: 'none' };
+  if (!scope) return 'none';
+  const candidates = searchSimilarFactsSameScope(db, embeddingArray, scope, 5, SIMILARITY_THRESHOLD, {
+    onCapReached: () => { tally.searchCapped = true; },
+  }).filter((s) => s.fact.id !== driver.id);
+  if (candidates.length === 0) return 'none';
 
-  const closest = candidates[0];
+  const [existingFact, newFact] = inCreationOrder(candidates[0].fact, driver);
   // Tag ONLY the provider call's rejection as an LlmCallError. Anything after
-  // this (parseJsonResponse, applyConsolidationResult DB writes) throws as a
-  // plain error, so the drain loop can hold on an internal bug instead of
-  // treating it as a skippable "bad fact".
+  // this (parseJsonResponse, the rewrite's embedding, applyConsolidationResult
+  // DB writes) throws as a plain error, so the drain loop can hold on an
+  // internal bug instead of treating it as a skippable "bad fact".
   let response: string;
+  tally.llmCalled = true;
   try {
-    response = await callHaiku(CONSOLIDATION_SYSTEM_PROMPT, buildConsolidationPrompt(closest.fact.fact, newFact.fact));
+    response = await callHaiku(CONSOLIDATION_SYSTEM_PROMPT, buildConsolidationPrompt(existingFact.fact, newFact.fact));
   } catch (e) {
     throw new LlmCallError(e);
   }
@@ -97,9 +130,22 @@ async function consolidateOne(
   // comparison re-triggers whenever either is a driver/candidate for a future
   // fact. This also means no single fact (a transiently non-JSON response, or a
   // deliberately "poison" candidate) can hold the cursor and starve the backlog.
-  if (!result) return { called: true, verdict: 'none' };
-  applyConsolidationResult(db, closest.fact, newFact, result);
-  return { called: true, verdict: result.relation };
+  if (!result) return 'none';
+  const plan = planConsolidation(existingFact, newFact, result);
+  // A rewritten sentence needs its own vector: without it the row keeps the
+  // OLD sentence's embedding and index entry (measured 2026-11: 72 of 80
+  // rewritten facts), so search, injection and later comparisons match the old
+  // meaning. The embedding module is loaded only here — a run that rewrites
+  // nothing (most of them) never pays the model load.
+  const embedding = plan.rewrite ? await embedSentence(plan.rewrite.text) : undefined;
+  applyConsolidationPlan(db, existingFact, newFact, plan, result.reason, embedding);
+  return result.relation;
+}
+
+/** Vector of a stored fact sentence ('passage' mode, as the extractor embeds facts). Loads the model on first use. */
+async function embedSentence(text: string): Promise<number[]> {
+  const { generateEmbedding } = await import('./embeddings.js');
+  return generateEmbedding(text);
 }
 
 /**
@@ -113,24 +159,25 @@ export async function consolidateFacts(
   project: string,
   lastConsolidatedAt: string,
 ): Promise<{ processed: number; merged: number; contradictions: number; evolutions: number }> {
-  // No initEmbeddings() — consolidation uses stored vectors + the LLM, never the
-  // local embedding model (see consolidateAllPending).
+  // No initEmbeddings() — candidates come from stored vectors; the embedding
+  // model is loaded only when a verdict rewrites a sentence (see consolidateOne).
   const newFacts = getNewFactsSince(db, project, lastConsolidatedAt);
   let haikuCalls = 0, merged = 0, contradictions = 0, evolutions = 0;
   for (const newFact of newFacts) {
     if (haikuCalls >= MAX_HAIKU_CALLS) break;
     const stillActive = db.prepare('SELECT 1 FROM facts WHERE id = ? AND is_active = 1').get(newFact.id);
     if (!stillActive) continue;
+    const tally: ComparisonTally = { llmCalled: false, searchCapped: false };
     try {
-      const { called, verdict } = await consolidateOne(db, newFact);
-      if (called) haikuCalls++; // count the CALL, not the verdict (malformed output still spent budget)
+      const verdict = await consolidateOne(db, newFact, tally);
+      if (tally.llmCalled) haikuCalls++; // count the CALL, not the verdict (malformed output still spent budget)
       if (verdict === 'DUPLICATE') merged++;
       else if (verdict === 'CONTRADICTION') contradictions++;
       else if (verdict === 'EVOLUTION') evolutions++;
     } catch (error) {
-      // A throw means callHaiku was reached and failed — that attempt still
-      // counts against the budget, otherwise a persistently-failing LLM would
-      // let this loop attempt a call for every one of N similar facts.
+      // This loop has no hold: every failure — a rejected call or an internal
+      // one — counts against the budget, otherwise a persistently failing step
+      // would be attempted once for every one of N similar facts.
       haikuCalls++;
       console.error(`Consolidation failed for fact ${newFact.id}:`, error);
     }
@@ -153,21 +200,57 @@ export async function consolidateFacts(
  * by an earlier comparison is deactivated, it neither reappears in this list
  * nor as a later candidate.
  */
+/**
+ * Why a fact's comparison failed. 'internal' is everything that is not a
+ * provider rejection (candidate search, parsing, embedding, DB write); the
+ * other three are classifyLlmError's reading of a provider rejection.
+ */
+export type ConsolidationErrorKind = 'internal' | 'transient' | 'deterministic' | 'unknown';
+
+export interface ConsolidationError {
+  factId: string;
+  kind: ConsolidationErrorKind;
+  message: string;
+  /** true = the cursor stays in front of this fact (the next run retries it); false = it was skipped past. */
+  held: boolean;
+}
+
+export interface ConsolidationRunResult {
+  processed: number;
+  merged: number;
+  contradictions: number;
+  evolutions: number;
+  /** Comparison LLM calls actually made — an error before the call is not one. */
+  haikuCalls: number;
+  cursor: { createdAt: string; id: string } | null;
+  /**
+   * The last failure of this run, null when none. A held failure is always the
+   * last one (the run stops there). The caller must surface it: the worker runs
+   * detached with stdio ignored, so console.error reaches no one.
+   */
+  lastError: ConsolidationError | null;
+  /** Drivers whose candidate search stopped at the KNN k limit (possibly unread matches). */
+  cappedSearches: number;
+}
+
 export async function consolidateAllPending(
   db: Database.Database,
   since: { createdAt: string; id: string } | null,
-): Promise<{ processed: number; merged: number; contradictions: number; evolutions: number; haikuCalls: number; cursor: { createdAt: string; id: string } | null }> {
-  // NOTE: no initEmbeddings() here — consolidation never generates an embedding.
-  // It compares facts using their ALREADY-STORED vectors (searchSimilarFactsSameScope
-  // does a vec MATCH on the stored blob) and an LLM (callHaiku). Loading the local
-  // embedding model was a ~1s no-op on every run, wasteful because the consolidate
-  // worker is spawned on every SessionStart — most runs have an empty backlog.
+): Promise<ConsolidationRunResult> {
+  // NOTE: no initEmbeddings() here. Candidates are found with the facts'
+  // ALREADY-STORED vectors (searchSimilarFactsSameScope does a vec MATCH on the
+  // stored blob) and judged by an LLM (callHaiku). Loading the local embedding
+  // model was a ~1s no-op on every run, wasteful because the consolidate worker
+  // is spawned on SessionStart — most runs have an empty backlog. The model is
+  // loaded only when a verdict rewrites a sentence (consolidateOne).
   const newFacts = getAllNewFactsSince(db, since);
   let haikuCalls = 0;
   let merged = 0;
   let contradictions = 0;
   let evolutions = 0;
   let processed = 0;
+  let cappedSearches = 0;
+  let lastError: ConsolidationError | null = null;
   // KEYSET progress cursor `(created_at, id)`: the last fact FULLY examined this
   // run. Persisted by the caller so the next run resumes strictly after it.
   // Because (created_at, id) is unique, we can always advance to the last
@@ -183,10 +266,12 @@ export async function consolidateAllPending(
     // Re-read: an earlier comparison this run may have deactivated this fact.
     const stillActive = db.prepare('SELECT 1 FROM facts WHERE id = ? AND is_active = 1').get(newFact.id);
     if (stillActive) {
+      const tally: ComparisonTally = { llmCalled: false, searchCapped: false };
       try {
         // Same-scope isolation + budget accounting via the shared helper.
-        const { called, verdict } = await consolidateOne(db, newFact);
-        if (called) haikuCalls++; // count the CALL, not the verdict
+        const verdict = await consolidateOne(db, newFact, tally);
+        if (tally.llmCalled) haikuCalls++; // count the CALL, not the verdict
+        if (tally.searchCapped) cappedSearches++;
         if (verdict === 'DUPLICATE') merged++;
         else if (verdict === 'CONTRADICTION') contradictions++;
         else if (verdict === 'EVOLUTION') evolutions++;
@@ -194,13 +279,27 @@ export async function consolidateAllPending(
         // (the guard keeps this a no-op write for the common zero case).
         db.prepare('UPDATE facts SET consolidation_attempts = 0 WHERE id = ? AND consolidation_attempts > 0').run(newFact.id);
       } catch (error) {
-        haikuCalls++;
+        // Count the call only when it was made. "A throw = one call" stopped
+        // being true once the candidate search could throw: 2,552 runs logged
+        // `haiku=1` for a search failure that never reached the LLM.
+        if (tally.llmCalled) haikuCalls++;
+        if (tally.searchCapped) cappedSearches++;
         console.error(`Consolidation call failed for fact ${newFact.id}:`, error);
+        const kind: ConsolidationErrorKind = error instanceof LlmCallError ? classifyLlmError(error) : 'internal';
+        lastError = {
+          factId: newFact.id,
+          kind,
+          message: error instanceof Error ? error.message : String(error),
+          held: true,
+        };
 
         // A non-LLM error (parser/DB/internal bug, NOT an LlmCallError) must NEVER
         // advance the cursor — hold so the bug surfaces instead of silently
-        // marking the fact processed and draining the backlog.
-        if (!(error instanceof LlmCallError)) {
+        // marking the fact processed and draining the backlog. (Skipping after N
+        // failures would hide the bug behind per-fact skips; the worker instead
+        // logs the error, counts consecutive failures and backs off — see
+        // consolidate-health.ts.)
+        if (kind === 'internal') {
           break;
         }
 
@@ -213,7 +312,7 @@ export async function consolidateAllPending(
         // that never presents as a recognized deterministic error holds — but the
         // global lock + budget mean it just stops, no flood, and the repeated
         // fact id in the log makes it diagnosable.)
-        if (classifyLlmError(error) !== 'deterministic') {
+        if (kind !== 'deterministic') {
           break;
         }
 
@@ -227,6 +326,7 @@ export async function consolidateAllPending(
         ).get(newFact.id) as { consolidation_attempts: number } | undefined)?.consolidation_attempts ?? 0;
         if (attempts >= MAX_CONSOLIDATION_ATTEMPTS) {
           console.error(`Consolidation skip fact ${newFact.id} after ${attempts} deterministic failures`);
+          lastError.held = false;
           processed++;
           cursor = { createdAt: newFact.created_at, id: newFact.id };
           continue;
@@ -240,15 +340,19 @@ export async function consolidateAllPending(
     cursor = { createdAt: newFact.created_at, id: newFact.id };
   }
 
-  return { processed, merged, contradictions, evolutions, haikuCalls, cursor };
+  return { processed, merged, contradictions, evolutions, haikuCalls, cursor, lastError, cappedSearches };
 }
 
-export function applyConsolidationResult(
-  db: Database.Database,
-  existingFact: Fact,
-  newFact: Fact,
-  result: ConsolidationResult,
-): void {
+/** A verdict resolved against its pair: which stored sentence (if any) it rewrites. */
+interface ConsolidationPlan {
+  relation: ConsolidationResult['relation'];
+  /** merged_fact after normalization — null when absent, blank or template residue. */
+  mergedFact: string | null;
+  /** The fact whose stored sentence changes and its new sentence; null when no sentence changes. */
+  rewrite: { factId: string; text: string } | null;
+}
+
+function planConsolidation(existingFact: Fact, newFact: Fact, result: ConsolidationResult): ConsolidationPlan {
   // Normalize merged_fact: empty/whitespace-only is absent, and so is a copy of
   // the prompt's example value (fact-validity.ts) — the new fact's own text is
   // used instead, exactly as for an empty one. Logged so it stays countable.
@@ -259,43 +363,109 @@ export function applyConsolidationResult(
     mergedFact = null;
   }
 
-  switch (result.relation) {
-    case 'DUPLICATE':
-      updateFact(db, existingFact.id, { consolidated_count_increment: true });
-      deactivateFact(db, newFact.id);
-      break;
-
-    case 'CONTRADICTION':
-      deactivateFact(db, existingFact.id);
-      insertRevision(db, {
-        fact_id: existingFact.id,
-        previous_fact: existingFact.fact,
-        new_fact: mergedFact || newFact.fact,
-        reason: result.reason,
-        source_exchange_id: null,
-      });
-      if (mergedFact) {
-        updateFact(db, newFact.id, { fact: mergedFact });
-      }
-      break;
-
-    case 'EVOLUTION':
-      insertRevision(db, {
-        fact_id: existingFact.id,
-        previous_fact: existingFact.fact,
-        new_fact: mergedFact || newFact.fact,
-        reason: result.reason,
-        source_exchange_id: null,
-      });
-      updateFact(db, existingFact.id, {
-        fact: mergedFact || newFact.fact,
-        consolidated_count_increment: true,
-      });
-      deactivateFact(db, newFact.id);
-      break;
-
-    case 'INDEPENDENT':
-      // Keep both, do nothing
-      break;
+  let rewrite: ConsolidationPlan['rewrite'] = null;
+  if (result.relation === 'CONTRADICTION') {
+    // The new fact stays; it takes the merged sentence when there is one.
+    if (mergedFact && mergedFact !== newFact.fact) rewrite = { factId: newFact.id, text: mergedFact };
+  } else if (result.relation === 'EVOLUTION') {
+    // The existing fact stays and takes the merged (or the new fact's) sentence.
+    const text = mergedFact || newFact.fact;
+    if (text !== existingFact.fact) rewrite = { factId: existingFact.id, text };
   }
+  return { relation: result.relation, mergedFact, rewrite };
+}
+
+/**
+ * Apply a verdict to its pair. `existingFact` is the OLDER fact and `newFact`
+ * the later one (consolidateOne orders them; see inCreationOrder).
+ *
+ * `opts.embedding` is the vector of the sentence the verdict writes. It is
+ * required when the rewritten fact has a stored vector: writing the sentence
+ * alone would leave that vector describing the old sentence.
+ */
+export function applyConsolidationResult(
+  db: Database.Database,
+  existingFact: Fact,
+  newFact: Fact,
+  result: ConsolidationResult,
+  opts: { embedding?: number[] } = {},
+): void {
+  applyConsolidationPlan(db, existingFact, newFact, planConsolidation(existingFact, newFact, result), result.reason, opts.embedding);
+}
+
+function applyConsolidationPlan(
+  db: Database.Database,
+  existingFact: Fact,
+  newFact: Fact,
+  plan: ConsolidationPlan,
+  reason: string,
+  embedding: number[] | undefined,
+): void {
+  const { mergedFact, rewrite } = plan;
+  if (rewrite && !embedding) {
+    const target = rewrite.factId === existingFact.id ? existingFact : newFact;
+    if (target.embedding) {
+      throw new Error(`Consolidation: the sentence of ${target.id} changes but no embedding of the new sentence was given`);
+    }
+  }
+  // Nothing to write — and no reason to wait for the write lock.
+  if (plan.relation === 'INDEPENDENT') return;
+  const rewriteOf = (factId: string) => (rewrite?.factId === factId ? { fact: rewrite.text, ...(embedding ? { embedding } : {}) } : {});
+
+  // One write transaction per verdict: a failure between the steps used to
+  // leave a count raised or a revision written for a merge that did not
+  // happen, and the retry on the next run raised the count again.
+  db.transaction(() => {
+    // The fact that vanishes in a merge hands its confirmations and sources to
+    // the one that stays — read here, inside the transaction, not from the
+    // snapshot taken before the LLM call. (Its ontology relations are not
+    // re-pointed here.)
+    const absorbed = () => {
+      const gone = db.prepare('SELECT consolidated_count, source_exchange_ids FROM facts WHERE id = ?')
+        .get(newFact.id) as { consolidated_count: number | null; source_exchange_ids: string | null } | undefined;
+      return {
+        // at least 1: the merge itself is one more confirmation of the surviving fact
+        consolidated_count_add: Math.max(1, gone?.consolidated_count ?? 1),
+        add_source_exchange_ids: JSON.parse(gone?.source_exchange_ids || '[]') as string[],
+      };
+    };
+
+    switch (plan.relation) {
+      case 'DUPLICATE':
+        updateFact(db, existingFact.id, absorbed());
+        deactivateFact(db, newFact.id);
+        break;
+
+      case 'CONTRADICTION':
+        deactivateFact(db, existingFact.id);
+        insertRevision(db, {
+          fact_id: existingFact.id,
+          previous_fact: existingFact.fact,
+          new_fact: mergedFact || newFact.fact,
+          reason,
+          source_exchange_id: null,
+        });
+        if (mergedFact) {
+          updateFact(db, newFact.id, { fact: mergedFact, ...rewriteOf(newFact.id) });
+        }
+        break;
+
+      case 'EVOLUTION':
+        insertRevision(db, {
+          fact_id: existingFact.id,
+          previous_fact: existingFact.fact,
+          new_fact: mergedFact || newFact.fact,
+          reason,
+          source_exchange_id: null,
+        });
+        updateFact(db, existingFact.id, {
+          fact: mergedFact || newFact.fact,
+          ...rewriteOf(existingFact.id),
+          ...absorbed(),
+        });
+        deactivateFact(db, newFact.id);
+        break;
+
+    }
+  }).immediate();
 }
