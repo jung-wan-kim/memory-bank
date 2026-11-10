@@ -48,6 +48,15 @@ The build is two-step: `tsc` compiles `src/` → `dist/`, then `esbuild` bundles
 | `cli-args.ts` | Strict argument parsing for scripts that write the live DB |
 | `paths.ts` | Config/data directory resolution (supports `MEMORY_BANK_CONFIG_DIR` override) |
 | `sync.ts` | File sync + incremental indexing + summary generation |
+| `index-exchanges.ts` | The one place a parsed exchange enters the index (`indexExchanges`): guards → skip if already indexed → `insertExchange`. sync, the three indexer entry points and repair all call it — the call sites are pinned in `test/noise.test.ts` |
+| `noise.ts` | `isNoiseExchange` (agent warm-up turns, another plugin's observer prompts) and `shouldIndexExchange`; its SQL twin for the purge is in `pollution-predicate.ts` |
+| `conversation-guard.ts` | Exclusion markers and `parseGuarded` — parse + marker check in one pass, user-message text only; an unreadable file rejects (never "not excluded") |
+| `verify.ts` | `--verify` / `--repair`: orphan = file gone on disk (per path), report-only unless `pruneMissing`, plan + 5% threshold before anything runs |
+| `rebuild.ts` | `--rebuild`: empties the conversation tables in place (never the DB file), backs up the fact layer first, refuses when indexed exchanges could not be re-created |
+| `row-backup.ts` | Row backups written and counted before a maintenance command deletes (`<indexDir>/backups/`) |
+| `db-maintenance.ts` | Session-start housekeeping on the fact side: `ANALYZE` of fact/ontology tables, fact-vector reconcile |
+| `snapshot-dedupe.ts` | One-time cleanup of duplicate snapshots of a turn (`scripts/dedupe-exchange-snapshots.mjs`, dry-run by default) |
+| `sync-log.ts` | One line per sync run in `<indexDir>/logs/sync.jsonl` (the hook runs sync detached, stdio ignored) |
 
 ### Injection replay bench
 
@@ -81,6 +90,10 @@ Single SQLite database at `~/.config/superpowers/conversation-index/db.sqlite` w
 - `vec_facts` — 384-dim vector index for fact search
 
 Schema migrations are handled inline in `db.ts` via `migrateSchema()` — idempotent column additions.
+
+What each maintenance command (`--verify`, `--repair`, `--rebuild`, the purge and dedupe scripts, session-start
+maintenance) reads, changes and refuses to do: `docs/index-maintenance.md`. Rule: nothing is deleted without its own
+flag, and a backup is written and counted before any delete.
 
 ### Fact System
 
@@ -142,6 +155,9 @@ Automatic classification of facts into domain/category hierarchy:
 - Use `db.pragma('busy_timeout = 5000')` for concurrent access
 - Schema migrations are idempotent — check column existence before ALTER
 - Vector tables (sqlite-vec) require DELETE before INSERT (no REPLACE support)
+- `tool_calls.exchange_id` has no `ON DELETE CASCADE` in the schema this code creates (some older DBs carry one) — delete children first: `deleteExchange` / `deleteExchanges` do tool_calls → vector → exchange in one transaction
+- One turn of one file is one row: `insertExchange` removes older snapshots of the same `(archive_path, line_start)` and re-points facts that named them
+- A check added to `initDatabase()` runs on every open, next to 1.7.x processes sharing the DB: it must be a no-op once applied and must not fight what older code re-creates. Known exception: `DROP INDEX IF EXISTS idx_facts_active` — a 1.7.x process re-creates that index on its next open, so it comes and goes until every process runs newer code
 - Escape LIKE metacharacters (`%`, `_`) with `ESCAPE '\\'`
 - Use parameterized queries — never interpolate user input into SQL
 
