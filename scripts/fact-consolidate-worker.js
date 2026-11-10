@@ -9,7 +9,12 @@
  *   LAST_CONSOLIDATED_AT - last consolidation time (default: 24h ago)
  *
  * This process is started with stdio ignored, so the file log is the only
- * place a failure can be seen. Whenever a run fails on a fact it appends
+ * place a run can be seen. A run that made a comparison call appends
+ *   worker: processed=<n> haiku=<calls> merged=<n> contradictions=<n> evolutions=<n> rewritten=<n> kr_missing=<n> cursor=<json>
+ * (rewritten = facts whose sentence changed; kr_missing = of those, facts left
+ * without a Korean sentence because none existed for the new sentence — they
+ * answer Korean queries through the main vector only until fact_kr is filled).
+ * Whenever a run fails on a fact it appends
  *   worker: ERROR fact=<id> kind=<internal|transient|deterministic|unknown> msg=<message>
  * whether or not an LLM call was made, and a run that ends held on a fact is
  * counted in state/fact-consolidate-health.json (first failure time,
@@ -25,6 +30,7 @@ import { initDatabase } from '../dist/db.js';
 import { consolidateAllPending } from '../dist/consolidator.js';
 import { getIndexDir } from '../dist/paths.js';
 import { pluginVersion } from '../dist/inject-log.js';
+import { restoreKoreanOncePerVersion } from '../dist/fact-kr-restore.js';
 import {
   consolidateCursorPath,
   consolidateStartCursor,
@@ -126,6 +132,26 @@ function recordHealth(previous, progressed, failure, version) {
   }
 }
 
+/**
+ * Facts that an earlier rewrite left without a Korean sentence get it back from
+ * the fact that was merged into them (fact-kr-restore.ts) — no LLM call, once
+ * per plugin version. A failure is logged here and is not a failed run: the
+ * drain's own outcome is what the health record counts.
+ */
+async function restoreKoreanSentences(db, version) {
+  try {
+    const r = await restoreKoreanOncePerVersion(db, version, async (text) => {
+      const { generateEmbedding } = await import('../dist/embeddings.js');
+      return generateEmbedding(text);
+    });
+    if (r && r.candidates > 0) {
+      log(`worker: fact_kr restored=${r.restored} of ${r.candidates} rewritten facts without a Korean sentence${r.remaining > 0 ? ` (${r.remaining} more on the next run)` : ''}`);
+    }
+  } catch (error) {
+    log(`worker: fact_kr restore failed (${oneLine(error instanceof Error ? error.message : error)}) — not repeated for this version`);
+  }
+}
+
 async function main() {
   if (!acquireLock()) {
     // Another consolidate worker already holds the GLOBAL lock — exit cleanly.
@@ -169,7 +195,7 @@ async function main() {
     writeCursor(result.cursor);
     progressed = result.processed > 0;
     if (result.haikuCalls > 0) {
-      log(`worker: processed=${result.processed} haiku=${result.haikuCalls} merged=${result.merged} contradictions=${result.contradictions} evolutions=${result.evolutions} cursor=${JSON.stringify(result.cursor)}`);
+      log(`worker: processed=${result.processed} haiku=${result.haikuCalls} merged=${result.merged} contradictions=${result.contradictions} evolutions=${result.evolutions} rewritten=${result.rewrites} kr_missing=${result.rewritesWithoutKorean} cursor=${JSON.stringify(result.cursor)}`);
     }
     if (result.cappedSearches > 0) {
       log(`worker: WARN knn_cap_reached=${result.cappedSearches} — that many candidate searches stopped at the KNN limit with matches possibly unread`);
@@ -181,6 +207,8 @@ async function main() {
       log(`worker: ERROR fact=${e.factId} kind=${e.kind} msg=${oneLine(e.message)}${e.held ? '' : ' (skipped past after repeated rejections)'}`);
       if (e.held) failure = { factId: e.factId, kind: e.kind, message: e.message };
     }
+    // Only after a drain that did not end stuck — a store that just failed is not the place for a repair.
+    if (!failure) await restoreKoreanSentences(db, version);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     log(`worker: FATAL ${message}`);

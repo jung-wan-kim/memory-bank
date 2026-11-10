@@ -10,8 +10,10 @@ import {
   updateFact,
   deactivateFact,
   insertRevision,
+  getFactKorean,
 } from './fact-db.js';
-import { factTextRejectReason } from './fact-validity.js';
+import { factTextRejectReason, factKrRejectReason } from './fact-validity.js';
+import { secretRejectReason } from './secret-scan.js';
 
 export const CONSOLIDATION_SYSTEM_PROMPT = `Compare two facts and determine their relationship.
 
@@ -25,8 +27,17 @@ export const CONSOLIDATION_SYSTEM_PROMPT = `Compare two facts and determine thei
 {
   "relation": "DUPLICATE|CONTRADICTION|EVOLUTION|INDEPENDENT",
   "merged_fact": "<the final fact sentence for DUPLICATE/CONTRADICTION/EVOLUTION, written out>",
+  "merged_fact_kr": "<merged_fact in natural Korean>",
   "reason": "one-line justification"
-}`;
+}
+(merged_fact_kr: the same sentence as merged_fact, in natural Korean — API/tool/framework names, file paths and commands stay in English.)`;
+
+/**
+ * The verdict as the LLM returns it: the Korean sentence of merged_fact comes
+ * in the same response, so a rewritten fact keeps a Korean sentence without a
+ * second call.
+ */
+export type ConsolidationVerdict = ConsolidationResult & { merged_fact_kr?: unknown };
 
 const MAX_HAIKU_CALLS = 10;
 // Cross-run retries for a driver fact whose comparison CALL keeps failing before
@@ -62,6 +73,10 @@ interface ComparisonTally {
   llmCalled: boolean;
   /** The candidate search stopped at the KNN k limit with matches possibly unread. */
   searchCapped: boolean;
+  /** The verdict changed a stored sentence. */
+  rewrote?: boolean;
+  /** …and no Korean sentence of the new one existed (the fact now has none). */
+  rewroteWithoutKorean?: boolean;
 }
 
 /**
@@ -126,7 +141,7 @@ async function consolidateOne(
   } catch (e) {
     throw new LlmCallError(e);
   }
-  const result = parseJsonResponse<ConsolidationResult>(response);
+  const result = parseJsonResponse<ConsolidationVerdict>(response);
   // Unparseable output = the call happened (budget spent) but produced no usable
   // verdict. Treated as a no-op ('none'), NOT an error: consolidation is a
   // best-effort background dedup, so we advance past this comparison rather than
@@ -142,7 +157,13 @@ async function consolidateOne(
   // meaning. The embedding module is loaded only here — a run that rewrites
   // nothing (most of them) never pays the model load.
   const embedding = plan.rewrite ? await embedSentence(plan.rewrite.text) : undefined;
-  applyConsolidationPlan(db, existingFact, newFact, plan, result.reason, embedding);
+  // Its Korean sentence, when one exists: moved with its stored vector from the
+  // fact whose sentence is taken over, or the verdict's own (embedded here).
+  let korean = plan.rewrite ? rewriteKorean(db, plan.rewrite) : null;
+  if (korean && !korean.vector) korean = { text: korean.text, vector: await embedSentence(korean.text) };
+  const applied = applyConsolidationPlan(db, existingFact, newFact, plan, result.reason, embedding, korean);
+  tally.rewrote = applied.rewritten;
+  tally.rewroteWithoutKorean = applied.withoutKorean;
   return result.relation;
 }
 
@@ -235,6 +256,15 @@ export interface ConsolidationRunResult {
   lastError: ConsolidationError | null;
   /** Drivers whose candidate search stopped at the KNN k limit (possibly unread matches). */
   cappedSearches: number;
+  /** Verdicts that changed a stored sentence. */
+  rewrites: number;
+  /**
+   * Of those, rewrites that left the fact with no Korean sentence: the new
+   * sentence was not another fact's and the verdict carried no usable
+   * merged_fact_kr. Such a fact answers Korean queries through its main vector
+   * only, until scripts/translate-facts.mjs fills fact_kr.
+   */
+  rewritesWithoutKorean: number;
 }
 
 export async function consolidateAllPending(
@@ -254,6 +284,8 @@ export async function consolidateAllPending(
   let evolutions = 0;
   let processed = 0;
   let cappedSearches = 0;
+  let rewrites = 0;
+  let rewritesWithoutKorean = 0;
   let lastError: ConsolidationError | null = null;
   // KEYSET progress cursor `(created_at, id)`: the last fact FULLY examined this
   // run. Persisted by the caller so the next run resumes strictly after it.
@@ -276,6 +308,8 @@ export async function consolidateAllPending(
         const verdict = await consolidateOne(db, newFact, tally);
         if (tally.llmCalled) haikuCalls++; // count the CALL, not the verdict
         if (tally.searchCapped) cappedSearches++;
+        if (tally.rewrote) rewrites++;
+        if (tally.rewroteWithoutKorean) rewritesWithoutKorean++;
         if (verdict === 'DUPLICATE') merged++;
         else if (verdict === 'CONTRADICTION') contradictions++;
         else if (verdict === 'EVOLUTION') evolutions++;
@@ -344,7 +378,7 @@ export async function consolidateAllPending(
     cursor = { createdAt: newFact.created_at, id: newFact.id };
   }
 
-  return { processed, merged, contradictions, evolutions, haikuCalls, cursor, lastError, cappedSearches };
+  return { processed, merged, contradictions, evolutions, haikuCalls, cursor, lastError, cappedSearches, rewrites, rewritesWithoutKorean };
 }
 
 /** A verdict resolved against its pair: which stored sentence (if any) it rewrites. */
@@ -353,10 +387,52 @@ interface ConsolidationPlan {
   /** merged_fact after normalization — null when absent, blank or template residue. */
   mergedFact: string | null;
   /** The fact whose stored sentence changes and its new sentence; null when no sentence changes. */
-  rewrite: { factId: string; text: string } | null;
+  rewrite: PlannedRewrite | null;
 }
 
-function planConsolidation(existingFact: Fact, newFact: Fact, result: ConsolidationResult): ConsolidationPlan {
+interface PlannedRewrite {
+  factId: string;
+  text: string;
+  /**
+   * The other fact of the pair, when `text` is its sentence word for word: its
+   * Korean sentence is then this text's (EVOLUTION with no merged sentence is
+   * the usual case — 92 of 92 such rewrites on real pairs).
+   */
+  verbatimFrom: string | null;
+  /** The verdict's merged_fact_kr for a sentence the verdict wrote; null when absent or unusable. */
+  verdictKr: string | null;
+}
+
+/** A Korean sentence and its vector (null = not stored anywhere yet). */
+interface KoreanSentence { text: string; vector: number[] | null }
+
+/** merged_fact_kr as a storable Korean sentence, or null. */
+function usableKorean(value: unknown, forFactId: string): string | null {
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  const text = value.trim();
+  const reject = factKrRejectReason(text) ?? secretRejectReason(text);
+  if (reject) {
+    console.error(`Consolidation: merged_fact_kr rejected (${reject}) for ${forFactId} — the fact keeps no Korean sentence`);
+    return null;
+  }
+  return text;
+}
+
+/**
+ * The Korean sentence of the sentence a rewrite stores:
+ *  - taken over word for word from the other fact → that fact's Korean
+ *    sentence, with its stored vector while the fact is still active;
+ *  - else the verdict's merged_fact_kr (no vector yet);
+ *  - else none. The rewritten fact's OWN Korean sentence is never an answer:
+ *    it translates the sentence being replaced.
+ */
+function rewriteKorean(db: Database.Database, rewrite: PlannedRewrite): KoreanSentence | null {
+  const carried = rewrite.verbatimFrom ? getFactKorean(db, rewrite.verbatimFrom) : null;
+  if (carried) return carried;
+  return rewrite.verdictKr ? { text: rewrite.verdictKr, vector: null } : null;
+}
+
+function planConsolidation(existingFact: Fact, newFact: Fact, result: ConsolidationVerdict): ConsolidationPlan {
   // Normalize merged_fact: empty/whitespace-only is absent, and so is a copy of
   // the prompt's example value (fact-validity.ts) — the new fact's own text is
   // used instead, exactly as for an empty one. Logged so it stays countable.
@@ -370,14 +446,37 @@ function planConsolidation(existingFact: Fact, newFact: Fact, result: Consolidat
   let rewrite: ConsolidationPlan['rewrite'] = null;
   if (result.relation === 'CONTRADICTION') {
     // The new fact stays; it takes the merged sentence when there is one.
-    if (mergedFact && mergedFact !== newFact.fact) rewrite = { factId: newFact.id, text: mergedFact };
+    if (mergedFact && mergedFact !== newFact.fact) {
+      rewrite = {
+        factId: newFact.id, text: mergedFact,
+        verbatimFrom: mergedFact === existingFact.fact ? existingFact.id : null,
+        verdictKr: usableKorean(result.merged_fact_kr, newFact.id),
+      };
+    }
   } else if (result.relation === 'EVOLUTION') {
     // The existing fact stays and takes the merged (or the new fact's) sentence.
     const text = mergedFact || newFact.fact;
-    if (text !== existingFact.fact) rewrite = { factId: existingFact.id, text };
+    if (text !== existingFact.fact) {
+      rewrite = {
+        factId: existingFact.id, text,
+        verbatimFrom: text === newFact.fact ? newFact.id : null,
+        // merged_fact_kr translates merged_fact — without one there is nothing it could translate.
+        verdictKr: mergedFact ? usableKorean(result.merged_fact_kr, existingFact.id) : null,
+      };
+    }
   }
   return { relation: result.relation, mergedFact, rewrite };
 }
+
+/** What applying a verdict did to the stored sentences. */
+interface AppliedPlan {
+  /** A stored sentence changed. */
+  rewritten: boolean;
+  /** …and the fact was left without a Korean sentence (none exists for the new one, and the sentence itself is not Korean). */
+  withoutKorean: boolean;
+}
+
+const HANGUL = /[\uAC00-\uD7A3]/;
 
 /**
  * Apply a verdict to its pair. `existingFact` is the OLDER fact and `newFact`
@@ -386,15 +485,24 @@ function planConsolidation(existingFact: Fact, newFact: Fact, result: Consolidat
  * `opts.embedding` is the vector of the sentence the verdict writes. It is
  * required when the rewritten fact has a stored vector: writing the sentence
  * alone would leave that vector describing the old sentence.
+ *
+ * The rewritten fact's Korean sentence follows the new sentence (see
+ * rewriteKorean): a sentence taken over from the other fact brings that fact's
+ * Korean sentence and stored vector; a sentence the verdict wrote takes
+ * `result.merged_fact_kr`, with `opts.embeddingKr` as its vector (without one
+ * the sentence is stored and the re-embed worker builds the vector); otherwise
+ * the fact is left with none.
  */
 export function applyConsolidationResult(
   db: Database.Database,
   existingFact: Fact,
   newFact: Fact,
-  result: ConsolidationResult,
-  opts: { embedding?: number[] } = {},
+  result: ConsolidationVerdict,
+  opts: { embedding?: number[]; embeddingKr?: number[] } = {},
 ): void {
-  applyConsolidationPlan(db, existingFact, newFact, planConsolidation(existingFact, newFact, result), result.reason, opts.embedding);
+  const plan = planConsolidation(existingFact, newFact, result);
+  const korean = plan.rewrite?.verdictKr && opts.embeddingKr ? { text: plan.rewrite.verdictKr, vector: opts.embeddingKr } : null;
+  applyConsolidationPlan(db, existingFact, newFact, plan, result.reason, opts.embedding, korean);
 }
 
 function applyConsolidationPlan(
@@ -404,7 +512,9 @@ function applyConsolidationPlan(
   plan: ConsolidationPlan,
   reason: string,
   embedding: number[] | undefined,
-): void {
+  /** The rewrite's Korean sentence as resolved (and embedded) before this call; used when it still holds inside the transaction. */
+  preparedKorean: KoreanSentence | null = null,
+): AppliedPlan {
   const { mergedFact, rewrite } = plan;
   if (rewrite && !embedding) {
     const target = rewrite.factId === existingFact.id ? existingFact : newFact;
@@ -413,13 +523,31 @@ function applyConsolidationPlan(
     }
   }
   // Nothing to write — and no reason to wait for the write lock.
-  if (plan.relation === 'INDEPENDENT') return;
-  const rewriteOf = (factId: string) => (rewrite?.factId === factId ? { fact: rewrite.text, ...(embedding ? { embedding } : {}) } : {});
+  if (plan.relation === 'INDEPENDENT') return { rewritten: false, withoutKorean: false };
+  // Filled inside the transaction (a holder, so the value set there is the one read after it).
+  const korean: { sentence: KoreanSentence | null } = { sentence: null };
+  const rewriteOf = (factId: string) => (rewrite?.factId === factId
+    ? {
+        fact: rewrite.text,
+        ...(embedding ? { embedding } : {}),
+        // Always stated: the row's old Korean sentence translates the sentence being replaced.
+        fact_kr: korean.sentence?.text ?? null,
+        ...(korean.sentence?.vector ? { embedding_kr: korean.sentence.vector } : {}),
+      }
+    : {});
 
   // One write transaction per verdict: a failure between the steps used to
   // leave a count raised or a revision written for a merge that did not
   // happen, and the retry on the next run raised the count again.
   db.transaction(() => {
+    // The Korean sentence is read here, inside the transaction and before any
+    // write: deactivating the other fact removes its Korean vector row. A
+    // vector prepared before the transaction is used when the sentence it
+    // belongs to is still the one read here.
+    if (rewrite) {
+      const now = rewriteKorean(db, rewrite);
+      korean.sentence = now && !now.vector && preparedKorean?.vector && preparedKorean.text === now.text ? preparedKorean : now;
+    }
     // The fact that vanishes in a merge hands its confirmations and sources to
     // the one that stays — read here, inside the transaction, not from the
     // snapshot taken before the LLM call. (Its ontology relations are not
@@ -472,4 +600,5 @@ function applyConsolidationPlan(
 
     }
   }).immediate();
+  return { rewritten: rewrite !== null, withoutKorean: rewrite !== null && korean.sentence === null && !HANGUL.test(rewrite.text) };
 }

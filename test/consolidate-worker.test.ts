@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { initDatabase } from '../src/db.js';
-import { insertFact } from '../src/fact-db.js';
+import { insertFact, deactivateFact, insertRevision } from '../src/fact-db.js';
 
 /**
  * scripts/fact-consolidate-worker.js run as the hook runs it: a child process
@@ -174,6 +174,53 @@ describe('fact-consolidate-worker.js', () => {
     expect(logLines()).toEqual([expect.stringMatching(/^worker: cursor not written \(.+\) — the next run repeats this one$/)]);
     expect(fs.existsSync(healthFile()), 'the run itself did not fail').toBe(false);
   }, 40_000);
+
+  it('facts an earlier rewrite left without a Korean sentence get it back once, and the run says so', () => {
+    // What a rewrite did before it carried the Korean sentence along: the surviving fact holds the
+    // merged-away fact's sentence, with fact_kr NULL and no Korean vector.
+    let survivor = '';
+    const prev = process.env.TEST_DB_PATH; // initDatabase: the vector tables need sqlite-vec loaded
+    process.env.TEST_DB_PATH = dbPath;
+    try {
+      const db = initDatabase();
+      try {
+        const seed = (fact: string, factKr: string, seedNo: number, at: string) => {
+          const id = insertFact(db, {
+            fact, category: 'decision', scope_type: 'project', scope_project: '/restore-fixture',
+            source_exchange_ids: [], embedding: vec(seedNo), fact_kr: factKr, embedding_kr: vec(seedNo + 100),
+          });
+          db.prepare('UPDATE facts SET created_at = ? WHERE id = ?').run(at, id);
+          return id;
+        };
+        survivor = seed('The fixture service listens on port 80', '픽스처 서비스는 80 포트를 쓴다', 11, '2026-05-01T00:00:00.000Z');
+        const gone = seed('The fixture service listens on port 8080', '픽스처 서비스는 8080 포트를 쓴다', 15, '2026-05-02T00:00:00.000Z');
+        insertRevision(db, {
+          fact_id: survivor, previous_fact: 'The fixture service listens on port 80',
+          new_fact: 'The fixture service listens on port 8080', reason: 'evolved', source_exchange_id: null,
+        });
+        db.prepare('UPDATE facts SET fact = ?, fact_kr = NULL WHERE id = ?').run('The fixture service listens on port 8080', survivor);
+        db.prepare('DELETE FROM vec_facts_kr WHERE id = ?').run(survivor);
+        deactivateFact(db, gone);
+      } finally {
+        db.close();
+      }
+    } finally {
+      if (prev === undefined) delete process.env.TEST_DB_PATH; else process.env.TEST_DB_PATH = prev;
+    }
+
+    runWorker();
+
+    expect(logLines()).toEqual(['worker: fact_kr restored=1 of 1 rewritten facts without a Korean sentence']);
+    withDb((db) => {
+      expect((db.prepare('SELECT fact_kr FROM facts WHERE id = ?').get(survivor) as { fact_kr: string }).fact_kr).toBe('픽스처 서비스는 8080 포트를 쓴다');
+      expect(db.prepare('SELECT 1 AS present FROM vec_facts_kr_rowids WHERE id = ?').get(survivor)).toEqual({ present: 1 });
+    });
+    expect(fs.existsSync(path.join(indexDir(), 'state', 'fact-kr-restore.json'))).toBe(true);
+
+    // The same version again: the pass does not run (nothing new in the log).
+    runWorker();
+    expect(logLines()).toHaveLength(1);
+  }, 90_000);
 
   it('an unusable health record is reported in the log and the count starts over', () => {
     breakIndex();

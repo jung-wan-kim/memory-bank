@@ -4,7 +4,7 @@ import type { Fact, FactRevision } from './types.js';
 import { canonicalizeProject } from './project-canon.js';
 import { EMBEDDING_VERSION } from './embedding-version.js';
 import { getVecQuant, embeddingToVecBlob, vecParamSql, normalizeVecDistance, l2DistanceToSimilarity } from './db.js';
-import { factRejectReason, factTextRejectReason } from './fact-validity.js';
+import { factRejectReason, factTextRejectReason, factKrRejectReason } from './fact-validity.js';
 import { scopeMatcher } from './project-family.js';
 import { VEC0_KNN_K_MAX } from './vec-limits.js';
 
@@ -68,13 +68,23 @@ interface InsertFactParams {
 interface UpdateFactParams {
   /**
    * New sentence. When it differs from the stored one, the row's fact_kr — a
-   * translation of the OLD sentence — is cleared together with its
-   * vec_facts_kr row (scripts/translate-facts.mjs fills empty fact_kr rows and
-   * the re-embed worker then builds the Korean vector). Pass `embedding` with
-   * it: this function does not embed, and a row keeps whatever vector it has.
+   * translation of the OLD sentence — does not stay: it becomes `fact_kr` when
+   * that is given, and is cleared otherwise, together with its vec_facts_kr
+   * row. Pass `embedding` with it: this function does not embed, and a row
+   * keeps whatever vector it has.
    */
   fact?: string;
   embedding?: number[] | null;
+  /**
+   * Korean sentence of the sentence the row holds after this update (null =
+   * none). A caller that rewrites `fact` and has the new sentence's Korean one
+   * passes it here — a rewritten fact left without one is out of reach of
+   * Korean queries (measured: top-10 for 92 of 92 queries before a rewrite, 26
+   * after). `embedding_kr` is its vector; given without one, the row's old
+   * Korean vector is removed and the re-embed worker builds the new one.
+   */
+  fact_kr?: string | null;
+  embedding_kr?: number[] | null;
   consolidated_count_increment?: boolean;
   /** Confirmations to add — the consolidated_count of a fact merged into this one. */
   consolidated_count_add?: number;
@@ -155,6 +165,10 @@ export function updateFact(db: Database.Database, id: string, params: UpdateFact
     const reason = factTextRejectReason(params.fact);
     if (reason) throw new Error(`updateFact refused (${reason}): ${JSON.stringify(String(params.fact)).slice(0, 80)}`);
   }
+  if (params.fact_kr !== undefined && params.fact_kr !== null) {
+    const reason = factKrRejectReason(params.fact_kr);
+    if (reason) throw new Error(`updateFact refused (fact_kr: ${reason}): ${JSON.stringify(String(params.fact_kr)).slice(0, 80)}`);
+  }
   const now = new Date().toISOString();
   const updates: string[] = ['updated_at = ?'];
   const values: unknown[] = [now];
@@ -183,14 +197,20 @@ export function updateFact(db: Database.Database, id: string, params: UpdateFact
   db.transaction(() => {
     // Read inside the write transaction: the comparison and the union below
     // must see the row this UPDATE is about to change.
-    const current = db.prepare('SELECT fact, source_exchange_ids FROM facts WHERE id = ?')
-      .get(id) as { fact: string; source_exchange_ids: string | null } | undefined;
+    const current = db.prepare('SELECT fact, fact_kr, source_exchange_ids FROM facts WHERE id = ?')
+      .get(id) as { fact: string; fact_kr: string | null; source_exchange_ids: string | null } | undefined;
     const rowUpdates = [...updates];
     const rowValues = [...values];
     const sentenceChanges = current !== undefined && params.fact !== undefined && params.fact !== current.fact;
-    // The Korean sentence translates the stored one; after a rewrite it would
-    // describe a sentence the row no longer holds.
-    if (sentenceChanges) rowUpdates.push('fact_kr = NULL');
+    // The Korean sentence translates the stored one; after a rewrite the old
+    // one would describe a sentence the row no longer holds — it is replaced
+    // by the one given, or cleared.
+    const nextKr = params.fact_kr !== undefined ? params.fact_kr : sentenceChanges ? null : undefined;
+    const krChanges = current !== undefined && nextKr !== undefined && nextKr !== (current.fact_kr ?? null);
+    if (krChanges) {
+      rowUpdates.push('fact_kr = ?');
+      rowValues.push(nextKr);
+    }
     if (current && params.add_source_exchange_ids?.length) {
       const merged = [...new Set([...(JSON.parse(current.source_exchange_ids || '[]') as string[]), ...params.add_source_exchange_ids])];
       rowUpdates.push('source_exchange_ids = ?');
@@ -198,7 +218,39 @@ export function updateFact(db: Database.Database, id: string, params: UpdateFact
     }
     db.prepare(`UPDATE facts SET ${rowUpdates.join(', ')} WHERE id = ?`).run(...rowValues, id);
     if (params.embedding) upsertFactVector(db, 'vec_facts', id, params.embedding);
-    if (sentenceChanges) db.prepare('DELETE FROM vec_facts_kr WHERE id = ?').run(id);
+    // The Korean vector follows the Korean sentence: gone with the old one
+    // (and never left behind a sentence that has none), written when the new
+    // one came with its vector.
+    if (krChanges || (sentenceChanges && !nextKr)) db.prepare('DELETE FROM vec_facts_kr WHERE id = ?').run(id);
+    if (current && nextKr && params.embedding_kr) upsertFactVector(db, 'vec_facts_kr', id, params.embedding_kr);
+  }).immediate();
+}
+
+/**
+ * A fact's Korean sentence with its stored Korean vector (decoded, see
+ * storedFactVector), or null when the fact has no Korean sentence. `vector` is
+ * null when the sentence has no vec_facts_kr row — always the case for an
+ * inactive fact (deactivateFact removes it).
+ */
+export function getFactKorean(db: Database.Database, id: string): { text: string; vector: number[] | null } | null {
+  const row = db.prepare('SELECT fact_kr FROM facts WHERE id = ?').get(id) as { fact_kr: string | null } | undefined;
+  const text = row?.fact_kr;
+  if (!text || text.trim() === '') return null;
+  return { text, vector: storedFactVector(db, 'vec_facts_kr', id) };
+}
+
+/**
+ * Write a fact's Korean sentence and its vector, leaving the fact itself as it
+ * is — `updated_at` included (a translation filled in later is not a change of
+ * the fact; getTopFacts ranks by how recently a fact changed).
+ */
+export function setFactKorean(db: Database.Database, id: string, text: string, vector: number[]): void {
+  const reason = factKrRejectReason(text);
+  if (reason) throw new Error(`setFactKorean refused (${reason}): ${JSON.stringify(String(text)).slice(0, 80)}`);
+  db.transaction(() => {
+    const changed = db.prepare('UPDATE facts SET fact_kr = ? WHERE id = ?').run(text, id).changes;
+    if (changed === 0) throw new Error(`setFactKorean: fact not found: ${id}`);
+    upsertFactVector(db, 'vec_facts_kr', id, vector);
   }).immediate();
 }
 
