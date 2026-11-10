@@ -18,10 +18,10 @@
  * Kept narrow on purpose. A provider prefix or a fixed layout decides most
  * rules, and the value behind it must read as generated — a placeholder
  * ("sk_live_xxxxxxxx", "postgres://user:password@host", "Bearer <token>")
- * passes. The keyword rules ("api_key = …", "the token is …") also need a long
- * value with a random-looking run, so env-var names and hyphenated wording
- * pass, and so does a commit hash or a UUID with no credential keyword in
- * front of it.
+ * passes. The keyword rules ("api_key = …", "API_KEY_PROD=…", "the token is …")
+ * also need a long value with a random-looking run, so env-var names and
+ * hyphenated wording pass, and so does a commit hash or a UUID with no
+ * credential keyword in front of it.
  *
  * With a keyword in front, a UUID or a 40-/64-digit hex digest passes only
  * where the keyword names it — the value follows the keyword directly, nothing
@@ -36,7 +36,10 @@
  * punctuation outside "_-+=" (it is cut there); a provider whose token has no
  * fixed prefix and that is written with no credential keyword next to it; a
  * credential that is itself a UUID or a 40-/64-digit hex string, written
- * right after the keyword with no "is" / ":" / "=" ("deploy token <hex>").
+ * right after the keyword with no "is" / ":" / "=" ("deploy token <hex>"); an
+ * assignment to a lower- or mixed-case name whose keyword is followed by more
+ * of the name ("api_key_prod = …", "apiKeyProd: …") — only upper-case,
+ * env-var-style names are read word by word.
  */
 
 /** Characters a credential value is made of (what the keyword rules capture). */
@@ -82,6 +85,24 @@ function hasStatedCredential(text: string): boolean {
   return false;
 }
 
+/**
+ * "<ENV_STYLE_NAME> = <value>": an upper-case name (letters, digits, '_'), then ':' or '=', then
+ * 16+ value characters. ASSIGNED_VALUE needs the keyword right before the ':' / '=', so a name
+ * with a suffix after it (…_KEY_PROD, …_TOKEN_DEV, SECRET_KEY_BASE) or one that ends in a bare
+ * KEY (SERVICE_ROLE_KEY, ENCRYPTION_KEY) passed it. Group 1 is the name, group 2 the value.
+ *
+ * The value is looked at without being consumed, and at most 200 characters of it: '=' and '_'
+ * are value characters, so in "ARGS=API_KEY_PROD=<value>" the first name would otherwise swallow
+ * the second, and a line of "A=A=A=…" would be read again from every '='.
+ */
+const ENV_ASSIGNED_VALUE = new RegExp(
+  `(?<![A-Za-z0-9_])([A-Z][A-Z0-9_]{2,63})["'\`]?\\s{0,4}[:=]\\s{0,4}["'\`]?(?=([${VALUE_CHARS}]{16,200}))`,
+  'g',
+);
+
+/** The words that make such a name a credential's — whole words between '_', so MONKEY_PATCH and TOKENIZER_ID are not. */
+const ENV_NAME_WORDS: ReadonlySet<string> = new Set(['KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'PASSWD', 'PWD']);
+
 /** Keys that are public by design: a keyword next to one of these is not a secret. */
 const PUBLIC_VALUE = /^(?:sb_publishable_|pk_(?:live|test)_)/;
 
@@ -99,6 +120,15 @@ function looksGenerated(value: string): boolean {
   const distinct = new Set(value).size;
   if (/[0-9]/.test(value) && /[A-Za-z]/.test(value)) return distinct >= 6;
   return /[a-z]/.test(value) && /[A-Z]/.test(value) && distinct >= 10;
+}
+
+/** Whether the text assigns a generated-looking value to an env-var-style name that has a credential word in it. */
+function hasEnvStyleAssignment(text: string): boolean {
+  for (const m of text.matchAll(ENV_ASSIGNED_VALUE)) {
+    if (!m[1].split('_').some((word) => ENV_NAME_WORDS.has(word))) continue;
+    if (!PUBLIC_VALUE.test(m[2]) && hasRandomRun(m[2], 12)) return true;
+  }
+  return false;
 }
 
 /** Whether any match of `re` has a first group that `accept` takes for a real value. */
@@ -201,6 +231,8 @@ const RULES: ReadonlyArray<{ reason: string; test: (text: string) => boolean }> 
     reason: 'secret-credential-assignment',
     test: (t) => anyValue(t, ASSIGNED_VALUE, (v) => !PUBLIC_VALUE.test(v) && hasRandomRun(v, 12)),
   },
+  // "<ENV_NAME_WITH_A_CREDENTIAL_WORD> = <value>"
+  { reason: 'secret-credential-assignment', test: hasEnvStyleAssignment },
   // "<keyword> is <value>" / "<keyword>는 <value>" / "<keyword> <value>"
   { reason: 'secret-credential-in-prose', test: hasStatedCredential },
 ];

@@ -206,6 +206,69 @@ describe('secretRejectReason', () => {
     });
   });
 
+  // 2차 검수 R2-SEC-1: 대입 규칙은 키워드 바로 뒤에 ':' 나 '=' 가 와야 했다. 환경변수 이름은
+  // 키워드 뒤에 접미가 붙거나(…_KEY_PROD) 목록에 없는 낱말 뒤의 KEY 로 끝난다(SERVICE_ROLE_KEY).
+  describe('환경변수 이름 꼴 대입 (대문자 이름 속의 KEY·TOKEN·SECRET·PASSWORD 낱말)', () => {
+    const VALUE = j(BODY, 'h1J2k3L4'); // 영문 대소문자·숫자 32자
+
+    it('키워드 뒤에 접미가 붙은 이름, KEY 로만 끝나는 이름의 대입을 잡는다', () => {
+      for (const text of [
+        `${j('API', '_KEY', '_PROD')}=${VALUE}`,
+        `${j('BOT', '_TOKEN', '_DEV')}=${VALUE}`,
+        `${j('SECRET', '_KEY', '_BASE')}=${HEX32.repeat(2)}`,
+        `${j('SERVICE_ROLE', '_KEY')}=${VALUE}`,
+        `${j('ENCRYPTION', '_KEY')}: ${VALUE}`,
+        `${j('DB', '_PASSWD', '_STAGING')} = "${VALUE}"`,
+        `export ${j('WEBHOOK', '_SECRET', '_V2')}='${VALUE}'`,
+        `{"${j('SERVICE_ROLE', '_KEY')}": "${VALUE}"}`,
+        `The staging env file sets ${j('API', '_KEY', '_PROD')}=${VALUE} for the deploy job.`,
+        `스테이징 환경 파일에 ${j('SERVICE_ROLE', '_KEY')}=${VALUE} 가 있다`,
+        // 낱말이 없는 이름의 값 자리에 들어 있어도 지나치지 않는다
+        `BUILD_ARGS=${j('API', '_KEY', '_PROD')}=${VALUE}`,
+      ]) {
+        const reason = secretRejectReason(text);
+        expect(reason, text.slice(0, 24)).toBe('secret-credential-assignment');
+        expect(reason).not.toContain(VALUE);
+      }
+    });
+
+    it('값이 아닌 것, 자리표시자, 낱말이 없는 이름, 공개 키는 통과한다', () => {
+      for (const text of [
+        `${j('API', '_KEY', '_PROD')}=<your-key-here>`,
+        `${j('API', '_KEY', '_PROD')}=YOUR_API_KEY_GOES_HERE_PLEASE`,
+        `${j('SERVICE_ROLE', '_KEY')}=change-me-before-deploying-to-prod-2026`,
+        `${j('BOT', '_TOKEN', '_DEV')} is read from the keychain at startup.`,
+        `${j('API', '_KEY', '_PROD')}=$(op read op://vault/item/field)`,
+        'MAX_TOKENS=2048 for the extraction call.',
+        // 이름에 낱말이 없다: KEY·TOKEN 이 다른 낱말의 일부일 뿐이다
+        `MONKEY_PATCH_VERSION=${VALUE}`,
+        `KEYBOARD_LAYOUT_ID=${VALUE}`,
+        `TOKENIZER_CACHE_ID=${VALUE}`,
+        `BUILD_ID=${HEX32}`,
+        // 공개하도록 만든 키
+        `${j('NEXT_PUBLIC_SUPABASE_ANON', '_KEY')}=${j('sb', '_publishable_', BODY)}`,
+      ]) {
+        expect(secretRejectReason(text), text.slice(0, 40)).toBeNull();
+      }
+    });
+
+    it('긴 입력에서도 선형으로 끝난다', () => {
+      for (const long of [
+        'ABC=ABC='.repeat(5_000),
+        `${j('API', '_KEY', '_PROD')}=`.repeat(3_000),
+        'A'.repeat(60_000),
+        'A_'.repeat(30_000),
+        `${'AB_'.repeat(20)}=`.repeat(1_000),
+        `${j('API', '_KEY', '_PROD')}=${'ab-'.repeat(20_000)}`,
+        `${j('API', '_KEY', '_PROD')}${' '.repeat(60_000)}=x`,
+      ]) {
+        const started = Date.now();
+        expect(secretRejectReason(long)).toBeNull();
+        expect(Date.now() - started, `${long.slice(0, 12)}… (${long.length}자)`).toBeLessThan(1000);
+      }
+    });
+  });
+
   it('문자열이 아니면 판정하지 않는다 (없는 fact_kr 등)', () => {
     expect(secretRejectReason(undefined)).toBeNull();
     expect(secretRejectReason(null)).toBeNull();
