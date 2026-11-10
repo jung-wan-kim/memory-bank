@@ -19,8 +19,17 @@
  *     the id map and the affected facts' original source_exchange_ids are
  *     written to <index dir>/backups/dedupe-snapshots-<timestamp>.sqlite and
  *     counted before anything is changed.
- *   - Facts are re-pointed before the rows are deleted; rows go in batches of
- *     2,000. An interrupted run is finished by running it again.
+ *   - Facts are re-pointed before the rows are deleted; rows go in batches
+ *     (2,000 rows or 400ms, whichever comes first, with a pause in between —
+ *     deleteExchanges, src/db.ts). An interrupted run is finished by running
+ *     it again.
+ *   - CLOSE THE OTHER CLAUDE CODE SESSIONS before --apply. The backup reads a
+ *     snapshot and the deletes leave gaps, so another process still gets the
+ *     write lock (measured on a copy of a live DB, 11,982 rows removed: no
+ *     failed lock wait, the longest 1.4s) — but a session that indexes while
+ *     this runs can write duplicate rows the run did not see: it then ends
+ *     with "duplicate rows remain … run again" and exit 1. (The dry run only
+ *     reads.)
  *
  * --create-index (with --apply) also builds the (archive_path, line_start)
  * index that new databases get at creation. On a large index this reads the
@@ -47,6 +56,7 @@ try {
 } catch (e) {
   console.error(`dedupe-exchange-snapshots: ${e.message}`);
   console.error('usage: dedupe-exchange-snapshots.mjs [--apply [--create-index]]');
+  console.error('       (no --apply = dry run; close the other Claude Code sessions before --apply)');
   process.exit(1);
 }
 const apply = args.flags.has('--apply');
@@ -77,6 +87,7 @@ function main() {
       printPlan(planSnapshotDedupe(db));
       console.log(`${EXCHANGE_TURN_INDEX}: ${hasIndex() ? 'present' : 'absent (--apply --create-index builds it)'}`);
       console.log('\nDRY-RUN (no changes made). Re-run with --apply to backup + re-point facts + delete.');
+      console.log('Close the other Claude Code sessions before --apply: a session that indexes meanwhile can leave duplicate rows this run does not see (it then asks to be run again).');
       return;
     }
 
