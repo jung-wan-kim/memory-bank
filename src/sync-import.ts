@@ -5,6 +5,7 @@ import { generateEmbedding, initEmbeddings, EMBEDDING_VERSION } from './embeddin
 import { getSyncDir } from './sync-export.js';
 import { canonicalizeProject } from './project-canon.js';
 import { factRejectReason, ontologyNameRejectReason } from './fact-validity.js';
+import { secretRejectReason } from './secret-scan.js';
 
 interface SyncFact {
   id: string;
@@ -28,9 +29,11 @@ interface SyncFact {
 export async function importFromSync(): Promise<{
   newFacts: number; newDomains: number; newCategories: number; newRelations: number;
   rejectedJunk: number; detachedCategoryRefs: number; failedFacts: number; failedFactErrors: string[];
+  rejectedSecrets: number; rejectedSecretReasons: Record<string, number>;
 }> {
   const syncDir = getSyncDir();
-  // rejectedJunk: template-residue rows found in the sync files (fact-validity.ts),
+  // rejectedJunk: rows in the sync files that fact-validity.ts refuses (template residue,
+  //   a copy of the extraction prompt's example, session-environment boilerplate),
   //   plus categories under a rejected domain. They stay in the files until the
   //   exporting device stops exporting them, so the count repeats per run.
   // detachedCategoryRefs: imported facts whose ontology category does not exist
@@ -38,7 +41,14 @@ export async function importFromSync(): Promise<{
   //   ontology backfill classifies them, instead of pointing at a missing row.
   // failedFacts: facts whose embedding or write failed — retried by the next import (nothing was committed for them).
   // failedFactErrors: the first few causes, so the hook's log says why, not only how many.
-  const result = { newFacts: 0, newDomains: 0, newCategories: 0, newRelations: 0, rejectedJunk: 0, detachedCategoryRefs: 0, failedFacts: 0, failedFactErrors: [] as string[] };
+  // rejectedSecrets: facts whose text carries a credential-shaped string (secret-scan.ts) —
+  //   never imported; like rejectedJunk the rows stay in the sync files until the exporting
+  //   device stops exporting them. rejectedSecretReasons counts them by kind (no text).
+  const result = {
+    newFacts: 0, newDomains: 0, newCategories: 0, newRelations: 0, rejectedJunk: 0, detachedCategoryRefs: 0,
+    failedFacts: 0, failedFactErrors: [] as string[],
+    rejectedSecrets: 0, rejectedSecretReasons: {} as Record<string, number>,
+  };
   const rejectedDomainIds = new Set<string>();
 
   // Check if sync files exist
@@ -99,6 +109,12 @@ export async function importFromSync(): Promise<{
         const existingById = db.prepare('SELECT id FROM facts WHERE id = ?').get(f.id);
         if (existingById) continue;
         if (factRejectReason(f)) { result.rejectedJunk++; continue; }
+        const secretReason = secretRejectReason(f.fact) ?? secretRejectReason(f.fact_kr);
+        if (secretReason) {
+          result.rejectedSecrets++;
+          result.rejectedSecretReasons[secretReason] = (result.rejectedSecretReasons[secretReason] ?? 0) + 1;
+          continue;
+        }
 
         // Canonicalize scope before dedup/insert — other devices may still
         // export slug-format project names.

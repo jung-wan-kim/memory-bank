@@ -6,10 +6,12 @@ import { insertFact } from './fact-db.js';
 import { generateEmbedding, initEmbeddings } from './embeddings.js';
 import { classifyAndLinkFact } from './ontology-classifier.js';
 import { randomUUID } from 'node:crypto';
-import { factRejectReason } from './fact-validity.js';
+import { factRejectReason, factKrRejectReason, normalizeCategory } from './fact-validity.js';
+import { secretRejectReason } from './secret-scan.js';
+import { resolveRepoRoots } from './project-family.js';
 import {
   claimSessionSql, renewClaimSql, failureMarkerUpsertSql, freshClaimPredicate,
-  getExtractionConfig, EXTRACTION_STATE, MAX_INTERNAL_RETRIES,
+  isExcludedProjectPath, EXTRACTION_STATE, MAX_INTERNAL_RETRIES, ensureSeenExchangesColumn,
 } from './pending-extraction.js';
 
 export const EXTRACTION_SYSTEM_PROMPT = `You are an expert at extracting long-term facts from conversations.
@@ -18,9 +20,13 @@ export const EXTRACTION_SYSTEM_PROMPT = `You are an expert at extracting long-te
 - 1 fact = 1 sentence (concise)
 - Ignore trivial exchanges (greetings, "yes", "thanks")
 - Code snippets are NOT facts - extract only decisions/patterns
+- Credentials are NOT facts - never copy an API key, token, password or any other
+  secret value into a fact (that a credential exists, or where it is kept, can be one)
 - No duplicate facts within the same batch
 - Prefer durable facts (decisions, conventions, constraints, lessons) over
   session-ephemeral details ("user is currently editing file X" is NOT a fact)
+- The session's environment is NOT a fact: where the project folder is, that it
+  is a git repository, which branch is checked out
 - Capture problem→solution lessons as "pattern"
   (e.g., "X error in this project is caused by Y and fixed by Z")
 
@@ -31,13 +37,14 @@ export const EXTRACTION_SYSTEM_PROMPT = `You are an expert at extracting long-te
 ## Output format (JSON array)
 [
   {
-    "fact": "User uses Riverpod for state management",
-    "fact_kr": "사용자는 상태 관리에 Riverpod을 사용한다",
+    "fact": "<one English sentence stating the fact>",
+    "fact_kr": "<the same sentence in natural Korean>",
     "category": "decision",
     "scope_type": "project",
     "confidence": 0.9
   }
 ]
+(This shows the shape only. Write real sentences in "fact" and "fact_kr" — never copy the bracketed text.)
 
 ## fact_kr rules
 - Natural Korean translation of "fact"
@@ -62,7 +69,12 @@ export class ClaimLostError extends Error {
 }
 
 const BATCH_SIZE = 5; // configurable-ok
+// 세션당 저장 상한 = min(절대 상한, max(바닥, 배치당 몫 × 선택 배치 수)).
+// 바닥 20 은 예전 고정 상한이다 — 배치 4개 이하인 세션은 결과가 달라지지 않는다.
 const MAX_FACTS_PER_SESSION = 20; // configurable-ok
+const FACTS_PER_SELECTED_BATCH = 5; // configurable-ok — 단일 배치 세션의 배치당 사실 중앙값(실측 5)
+// MEMORY_BANK_MAX_EXTRACT_CALLS 로 배치 수를 올려도 넘지 않는 상한(저장 뒤 사실마다 분류 LLM 1회).
+const ABSOLUTE_MAX_FACTS_PER_SESSION = 60; // configurable-ok
 const CONFIDENCE_THRESHOLD = 0.7; // configurable-ok
 const DEFAULT_MAX_LLM_CALLS = 12; // configurable-ok — per-session LLM call budget
 
@@ -132,6 +144,45 @@ export function selectSpreadBatches<T>(batches: T[], maxBatches: number): T[] {
   return selected;
 }
 
+/** 세션당 저장 상한 — 선택된 배치 수에 비례하고, 바닥과 절대 상한 사이에 든다. */
+export function sessionFactCap(selectedBatches: number): number {
+  return Math.min(
+    ABSOLUTE_MAX_FACTS_PER_SESSION,
+    Math.max(MAX_FACTS_PER_SESSION, FACTS_PER_SELECTED_BATCH * selectedBatches),
+  );
+}
+
+/**
+ * 배치별 후보에서 `cap` 건을 고른다. 합이 상한 이하면 전부(순서 그대로).
+ * 넘으면 배치마다 신뢰도 높은 것부터 한 건씩 돌아가며 뽑는다 — 어느 배치도 다른
+ * 배치의 후보 때문에 통째로 밀려나지 않는다. 마지막 바퀴에 자리가 모자라면 그 바퀴
+ * 후보 중 신뢰도 높은 것, 같으면 뒤쪽 배치 것을 고른다(긴 세션의 결론은 뒤에 있다).
+ * 결과는 원래 순서(배치 순, 배치 안에서는 LLM 이 낸 순)다.
+ */
+export function selectFactsAcrossBatches<T extends { confidence: number }>(perBatch: T[][], cap: number): T[] {
+  const total = perBatch.reduce((n, batch) => n + batch.length, 0);
+  if (total <= cap) return perBatch.flat();
+
+  const ranked = perBatch.map((batch) =>
+    batch.map((_, i) => i).sort((x, y) => batch[y].confidence - batch[x].confidence || x - y));
+  const keep = perBatch.map(() => new Set<number>());
+  let kept = 0;
+  for (let rank = 0; kept < cap; rank++) {
+    const round: number[] = [];
+    for (let b = 0; b < perBatch.length; b++) if (rank < ranked[b].length) round.push(b);
+    if (round.length === 0) break;
+    const room = cap - kept;
+    const chosen = round.length <= room
+      ? round
+      : [...round]
+        .sort((x, y) => perBatch[y][ranked[y][rank]].confidence - perBatch[x][ranked[x][rank]].confidence || y - x)
+        .slice(0, room);
+    for (const b of chosen) keep[b].add(ranked[b][rank]);
+    kept += chosen.length;
+  }
+  return perBatch.flatMap((batch, b) => batch.filter((_, i) => keep[b].has(i)));
+}
+
 function maxLlmCallsPerSession(): number {
   const parsed = parseInt(process.env.MEMORY_BANK_MAX_EXTRACT_CALLS || '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_LLM_CALLS;
@@ -146,13 +197,50 @@ function maxLlmCallsPerSession(): number {
 // 파일 헤더가 명시한 "두 소비자는 동일 술어" 계약이 그것이다.
 
 function isExcludedProject(project: string | null | undefined): boolean {
-  if (!project) return false;
-  const EXCLUDE_PROJECTS = getExtractionConfig().excludeProjects;
-  // 🚨 경로 **경계**로 비교한다. raw prefix 면 형제 프로젝트가 함께 배제된다 —
-  // '/…/memory-bank' 가 '/…/memory-bank-x' 같은 별개 프로젝트를 삼켜, 그 세션이
-  // 영구 0/0 마커를 받고 fact 가 영원히 추출되지 않았다(실측: 적격 8세션 전건 손실).
-  // pending SQL 필터는 exact 매칭이라 선정은 되고 여기서만 걸러져 무음이었다.
-  return EXCLUDE_PROJECTS.some((p) => project === p || project.startsWith(`${p}/`));
+  // 판정(경로 경계 비교)은 pending-extraction.ts 의 isExcludedProjectPath 하나다.
+  return isExcludedProjectPath(project);
+}
+
+/**
+ * 이 세션의 project 사실을 묶을 범위. linked worktree(그 하위 폴더 포함)에서 끝난 세션은
+ * 본 저장소 루트로 읽고, 그 밖에는 받은 경로 그대로다.
+ *
+ * scope_project 는 세션이 끝난 순간의 cwd 였다. worktree 는 일이 끝나면 지워지고, 지워진
+ * 경로의 사실은 어느 저장소에서도 보이지 않는다(읽는 쪽의 저장소 묶음 판정 —
+ * project-family.ts — 은 디스크에 없는 경로를 어느 저장소의 것으로도 보지 않는다. 저장소
+ * 밖에 둔 worktree 의 사실은 폴더가 있는 동안에도 저장소에서 안 보인다). 추출 시점에는
+ * 폴더가 있어 본 저장소를 확인할 수 있으므로 그때 옮겨 적는다.
+ *
+ * 판정은 resolveRepoRoots 하나다 — `.git` 파일이 가리키는 관리 폴더의 역참조까지 맞아야
+ * 본 저장소로 인정한다. 그래서 아래는 전부 받은 경로 그대로다: 저장소 루트와 그 하위 폴더
+ * (예전부터 정확한 경로가 범위였다), 저장소가 아닌 폴더, 디스크에 없는 경로(어느
+ * 저장소였는지 알 수 없다 — 추측하지 않는다), 홈 폴더가 본 저장소인 경우, 슬러그 꼴 이름.
+ *
+ * 본 저장소가 추출 제외 목록에 있으면 옮기지 않는다 — 제외된 범위에 사실을 넣지 않는다
+ * (그 세션을 추출할지는 예전 판정 그대로다: 저장소 밖의 worktree 는 예전에도 추출됐다).
+ *
+ * 원래 폴더는 사실의 source_exchange_ids → exchanges.cwd 로 되짚을 수 있다.
+ */
+export function extractionScopeProject(project: string): string {
+  if (typeof project !== 'string' || project === '') return project;
+  const roots = resolveRepoRoots(project);
+  // [worktree 자기 루트, 본 저장소 루트] 일 때만 linked worktree 다(project-family.ts 의 계약).
+  if (roots.length !== 2) return project;
+  const main = roots[1];
+  return isExcludedProject(main) ? project : main;
+}
+
+/**
+ * 자격증명 모양 문자열이 든 사실인가(영문·한글 어느 쪽이든). 사유(종류)만 돌려준다 —
+ * 호출자는 이것을 세고 로그에 남기되 문장 자체는 로그에 쓰지 않는다.
+ */
+function factSecretReason(fact: { fact: unknown; fact_kr?: unknown }): string | null {
+  return secretRejectReason(fact.fact) ?? secretRejectReason(fact.fact_kr);
+}
+
+/** { 'secret-jwt': 2, … } → 'secret-jwt×2, …' (로그용 — 값은 싣지 않는다) */
+function describeReasonCounts(counts: Record<string, number>): string {
+  return Object.entries(counts).map(([reason, n]) => `${reason}×${n}`).join(', ');
 }
 
 export function buildExtractionPrompt(
@@ -168,11 +256,12 @@ export function buildExtractionPrompt(
 /**
  * @param stats 선택적 out-param. deterministic 실패로 **폐기된 배치 수**를 돌려준다
  *   (dead-letter 회계). 선택적이라 기존 호출자는 그대로 동작한다.
+ *   `truncatedFacts` 는 세션 상한 때문에 저장 대상에서 빠진 후보 수다.
  */
 export async function extractFactsFromExchanges(
   db: Database.Database,
   sessionId: string,
-  stats?: { droppedBatches: number },
+  stats?: ExtractionStats,
   /**
    * 배치마다 호출되는 리스 갱신 훅. 리스보다 오래 걸리는 정상 추출이 회수 대상이
    * 되어 다른 워커가 선점하는 것을 막는다(R7 HIGH-1). throw 하면 즉시 중단한다 —
@@ -187,6 +276,8 @@ export async function extractFactsFromExchanges(
     ORDER BY timestamp ASC
   `).all(sessionId) as Array<{ id: string; user_message: string; assistant_message: string }>;
 
+  if (stats) stats.seenExchanges = exchanges.length;
+
   const substantive = exchanges.filter(
     ex => isSubstantiveExchange(ex.user_message, ex.assistant_message),
   );
@@ -198,13 +289,18 @@ export async function extractFactsFromExchanges(
   }
   const selectedBatches = selectSpreadBatches(batches, maxLlmCallsPerSession());
 
-  const allFacts: ExtractedFact[] = [];
+  // 🚨 세션 상한은 배치 루프를 **다 돈 뒤에** 적용한다. 예전에는 루프 맨 위에서
+  // "20건이 찼으면 중단"이라, 긴 세션은 앞쪽 2~3개 배치에서 상한이 차고 뒤쪽 배치는
+  // LLM 에 가지도 않았다(실측 2026-11-10: 20건에서 끊긴 74회의 대조된 사실 82.5% 가
+  // 앞 1/5 구간, 뒤 1/5 는 1.7%). selectSpreadBatches 가 고르게 골라도 무효였다.
+  const candidatesPerBatch: ExtractedFact[][] = [];
   const seen = new Set<string>();
   // transient(공급자 장애·빈 응답)로 실패한 배치. >0 이면 이 세션은 "처리 완료"가 아니다.
   const transientFailures: unknown[] = [];
 
   for (let b = 0; b < selectedBatches.length; b++) {
-    if (allFacts.length >= MAX_FACTS_PER_SESSION) break;
+    const batchFacts: ExtractedFact[] = [];
+    candidatesPerBatch.push(batchFacts);
 
     const prompt = buildExtractionPrompt(selectedBatches[b]);
     renewLease?.(); // 배치 직전 갱신 — LLM 왕복이 리스를 넘겨도 회수되지 않는다
@@ -214,22 +310,58 @@ export async function extractFactsFromExchanges(
       const extracted = parseJsonResponse<ExtractedFact[]>(response, 'array');
 
       if (extracted && Array.isArray(extracted)) {
-        let rejected = 0;
+        const rejectReasons: Record<string, number> = {};
+        const secretReasons: Record<string, number> = {};
+        let unknownCategories = 0;
         for (const fact of extracted) {
           if (typeof fact?.fact !== 'string' || fact.fact.trim() === '') continue;
-          // Template residue ('...', 'concise statement', 'a|b|c' category) is
+          // Template residue ('...', 'concise statement', 'a|b|c' category), a copy
+          // of the prompt's example and session-environment boilerplate are
           // dropped here, before the save transaction — insertFact would throw
-          // on it and roll back the whole batch.
-          if (factRejectReason(fact)) { rejected++; continue; }
+          // on them and roll back the whole batch.
+          const rejectReason = factRejectReason(fact);
+          if (rejectReason) { rejectReasons[rejectReason] = (rejectReasons[rejectReason] ?? 0) + 1; continue; }
+          // 자격증명이 든 사실은 후보가 되지 않는다(상한 자리도 차지하지 않는다).
+          const secretReason = factSecretReason(fact);
+          if (secretReason) { secretReasons[secretReason] = (secretReasons[secretReason] ?? 0) + 1; continue; }
           if (!passesConfidenceGate(fact.confidence)) continue;
-          if (allFacts.length >= MAX_FACTS_PER_SESSION) break;
 
           const key = normalizeFactText(fact.fact);
           if (seen.has(key)) continue; // cross-batch duplicate within this session
           seen.add(key);
-          allFacts.push(fact);
+          // 한글 문장 칸만 자리표시자·예시 문장이면 그 칸만 버리고 사실은 살린다.
+          if (factKrRejectReason(fact.fact_kr)) fact.fact_kr = undefined;
+          // 다섯 분류 밖의 이름('requirement', 'process' …)은 접어서 저장한다 — 그대로 두면
+          // 어떤 category 필터에도 걸리지 않는다. 표에 없는 이름은 knowledge 로 두고 센다.
+          const folded = normalizeCategory(fact.category);
+          if (!folded.known) unknownCategories++;
+          fact.category = folded.category;
+          batchFacts.push(fact);
         }
-        if (rejected > 0) console.error(`fact-extractor: dropped ${rejected} template-residue fact(s) from batch ${b + 1}`);
+        const rejected = Object.values(rejectReasons).reduce((n, c) => n + c, 0);
+        if (rejected > 0) {
+          if (stats) {
+            stats.rejectedInvalid ??= {};
+            for (const [reason, n] of Object.entries(rejectReasons)) {
+              stats.rejectedInvalid[reason] = (stats.rejectedInvalid[reason] ?? 0) + n;
+            }
+          }
+          console.error(
+            `fact-extractor: dropped ${rejected} fact(s) refused by fact-validity from batch ${b + 1}`
+            + ` (${describeReasonCounts(rejectReasons)})`,
+          );
+        }
+        if (unknownCategories > 0) {
+          console.error(`fact-extractor: ${unknownCategories} fact(s) in batch ${b + 1} had an unknown category — stored as knowledge`);
+        }
+        const secretCount = Object.values(secretReasons).reduce((n, c) => n + c, 0);
+        if (secretCount > 0) {
+          if (stats) stats.rejectedSecrets = (stats.rejectedSecrets ?? 0) + secretCount;
+          console.error(
+            `fact-extractor: dropped ${secretCount} fact(s) carrying a credential-shaped string from batch ${b + 1}`
+            + ` (${describeReasonCounts(secretReasons)})`,
+          );
+        }
       }
     } catch (error) {
       // 실패를 3분류한다 — 예전에는 전부 삼켜서, 공급자 장애로 한 건도 못 뽑은
@@ -269,6 +401,18 @@ export async function extractFactsFromExchanges(
     throw new LlmCallError(transientFailures[0]);
   }
 
+  const candidates = candidatesPerBatch.reduce((n, batch) => n + batch.length, 0);
+  const cap = sessionFactCap(selectedBatches.length);
+  const allFacts = selectFactsAcrossBatches(candidatesPerBatch, cap);
+  const truncated = candidates - allFacts.length;
+  if (stats) stats.truncatedFacts = truncated;
+  if (truncated > 0) {
+    console.error(
+      `fact-extractor: session ${sessionId} — 후보 ${candidates}건 중 ${allFacts.length}건만 저장 대상`
+      + `(상한 ${cap}, 배치 ${selectedBatches.length}개), ${truncated}건은 신뢰도순으로 잘림`,
+    );
+  }
+
   return allFacts;
 }
 
@@ -280,7 +424,7 @@ export async function saveExtractedFacts(
   codingAgent?: string,
   /**
    * 🚨 저장 구간은 파이프라인에서 **가장 긴** 단계다 — fact 당 임베딩 2회 +
-   * classifyAndLinkFact(내부에서 callHaiku = 헤드리스 세션 1회)를 최대 20 fact 반복.
+   * classifyAndLinkFact(내부에서 callHaiku = 헤드리스 세션 1회)를 세션 상한(sessionFactCap)까지 반복.
    * 여기가 리스 밖이면 정상 작업이 회수돼 다른 워커가 같은 세션을 저장한다
    * (Codex R8 HIGH: R7 HIGH-1 의 잔존 구간). fact 마다 갱신·소유권 확인한다.
    */
@@ -297,6 +441,20 @@ export async function saveExtractedFacts(
    */
   commitMarker?: (extracted: number, saved: number) => number,
 ): Promise<string[]> {
+  // 저장 직전 판정: 자격증명이 든 사실은 어떤 호출자가 넘겼든 여기서 걸러진다.
+  // (추출 루프가 이미 한 번 걸렀으므로 그 경로에서는 0건이다.)
+  const secretReasons: Record<string, number> = {};
+  facts = facts.filter((fact) => {
+    const reason = factSecretReason(fact);
+    if (reason) secretReasons[reason] = (secretReasons[reason] ?? 0) + 1;
+    return !reason;
+  });
+  if (Object.keys(secretReasons).length > 0) {
+    console.error(
+      `fact-extractor: refused to save fact(s) carrying a credential-shaped string (${describeReasonCounts(secretReasons)})`,
+    );
+  }
+
   await initEmbeddings();
 
   // 1단계(비동기): 임베딩만 먼저 계산한다 — 트랜잭션은 동기여야 하므로.
@@ -424,6 +582,36 @@ export function failureConsumesBudget(kind: ExtractionFailureKind): boolean {
   return FAILURE_REPORT[kind].consumesBudget;
 }
 
+/** extractFactsFromExchanges 의 out-param (dead-letter·상한 회계). */
+export interface ExtractionStats {
+  droppedBatches: number;
+  /** 세션 상한 때문에 저장 대상에서 빠진 후보 수 */
+  truncatedFacts?: number;
+  /** 자격증명 모양 문자열이 들어 있어 버린 사실 수 */
+  rejectedSecrets?: number;
+  /** fact-validity 가 거부한 사실 수(사유별) — 템플릿 잔여물·프롬프트 예시·세션 환경 상용구 */
+  rejectedInvalid?: Record<string, number>;
+  /** 이번 추출이 읽은 그 세션의 교환 수 — 완료 마커(seen_exchanges)에 남긴다 */
+  seenExchanges?: number;
+}
+
+/** runFactExtraction 의 결과. `skipped` 가 있으면 이 세션은 이번 실행에서 처리되지 않았다. */
+export interface ExtractionRunResult {
+  extracted: number;
+  saved: number;
+  /** 세션 상한 때문에 잘린 후보 수(0 이면 없음) — 워커가 로그에 남긴다 */
+  truncated?: number;
+  /** 자격증명 모양 문자열이 들어 있어 저장하지 않은 사실 수(0 이면 없음) */
+  rejectedSecrets?: number;
+  /** fact-validity 가 거부한 사실 수(사유별, 없으면 생략) — 프롬프트를 바꾼 뒤 예시 베끼기가 느는지 로그로 본다 */
+  rejectedInvalid?: Record<string, number>;
+  /** project 사실을 받은 경로가 아닌 본 저장소 루트에 묶었을 때만 — 그 루트(worktree 세션) */
+  scopeProject?: string;
+  skipped?:
+    | 'claim_not_acquired' | 'claim_error'
+    | 'excluded_project' | 'excluded_project_unmarked'
+    | 'not_indexed' | 'no_new_exchanges';
+}
 
 export async function runFactExtraction(
   db: Database.Database,
@@ -443,8 +631,12 @@ export async function runFactExtraction(
    * "fact 0건 처리 완료"와 구분하지 못해 정상 세션으로 계상하고, 유일한 흔적인
    * console.error 는 detached 워커의 stdio:'ignore' 로 폐기된다 — 무경보 기아
    * (Codex R18 독립 발견).
+   *
+   * `not_indexed`: 이 세션의 교환이 색인 DB 에 하나도 없다. 마커를 쓰지 않으므로
+   * 색인된 뒤 backfill 이 다시 집는다.
+   * `no_new_exchanges`: 완료 마커가 이미 있고 그 뒤로 교환이 늘지 않았다(훅 변형).
    */
-): Promise<{ extracted: number; saved: number; skipped?: 'claim_not_acquired' | 'claim_error' | 'excluded_project' | 'excluded_project_unmarked' }> {
+): Promise<ExtractionRunResult> {
   // Skip self-referential repos (memory-bank's own monitoring sessions) — mark
   // as processed with zero facts so they are never re-attempted, no LLM calls.
   if (isExcludedProject(project)) {
@@ -486,6 +678,52 @@ export async function runFactExtraction(
       extracted: 0, saved: 0,
       skipped: markerWritten ? 'excluded_project' : 'excluded_project_unmarked',
     };
+  }
+
+  // 🚨 색인된 교환이 0개인 세션은 "0건 처리 완료"가 아니다 — 아직 입력이 없는 것이다.
+  // 색인은 SessionStart 의 sync 에서만 일어나고 이 함수는 SessionEnd 에 불리므로,
+  // 여기서 0/0 완료 마커를 쓰면 정상 종료한 세션이 pending 에서 영구 제외된다
+  // (실측 2026-11-10: 7월 이후 0건 마커 15,833개 중 6,548개가 지금은 실질 교환이 있다).
+  // 마커도 claim 도 남기지 않고 사유만 돌려준다 — 색인된 뒤 backfill 이 다시 집는다.
+  let indexedExchanges: number;
+  try {
+    indexedExchanges = (db.prepare('SELECT COUNT(*) AS n FROM exchanges WHERE session_id = ?')
+      .get(sessionId) as { n: number }).n;
+  } catch (e) {
+    // 선점 전의 DB 오류 — 마커·예산에 아무 변화가 없으므로 실패 분류기에 넘기지 않는다.
+    console.error(
+      `extraction: session ${sessionId} — 색인 교환 수 조회 실패(${e instanceof Error ? e.message : String(e)}), 이번 실행은 보류합니다`,
+    );
+    return { extracted: 0, saved: 0, skipped: 'claim_error' };
+  }
+  if (indexedExchanges === 0) {
+    console.error(`extraction: session ${sessionId} — 색인된 교환 0개, 완료 마커를 쓰지 않습니다(not_indexed)`);
+    return { extracted: 0, saved: 0, skipped: 'not_indexed' };
+  }
+
+  // 🚨 훅 변형은 확정 마커 위에서도 선점한다(--resume 으로 교환이 늘어난 세션의 재추출).
+  // 그런데 같은 세션의 SessionEnd 가 60초 안에 두 번 오는 일이 잦고(실측 840쌍), 교환이
+  // 그대로인 두 번째 실행은 같은 입력을 통째로 다시 추출해 사실이 두 벌이 된다. 완료
+  // 마커가 기억하는 교환 수(seen_exchanges)와 지금 수가 같으면 할 일이 없다.
+  // 교환 수를 모르는 옛 마커(NULL)·컬럼을 만들지 못한 DB 는 예전 동작(재추출) 그대로다.
+  // 컬럼은 변형과 무관하게 보장한다 — backfill 이 끝낸 세션의 마커도 교환 수를 남겨야
+  // 뒤이은 SessionEnd 가 그것을 다시 추출하지 않는다.
+  const hasSeenColumn = ensureSeenExchangesColumn(db);
+  if ((opts?.claimVariant ?? 'hook') === 'hook' && hasSeenColumn) {
+    let prior: { extracted: number; seen_exchanges: number | null } | undefined;
+    try {
+      prior = db.prepare('SELECT extracted, seen_exchanges FROM extraction_log WHERE session_id = ?')
+        .get(sessionId) as { extracted: number; seen_exchanges: number | null } | undefined;
+    } catch (e) {
+      // 읽지 못하면 판단하지 않는다 — 아래 선점 단계가 같은 DB 오류를 보류로 처리한다.
+      console.error(`extraction: session ${sessionId} — 이전 마커 조회 실패(${e instanceof Error ? e.message : String(e)})`);
+    }
+    if (prior && prior.extracted >= 0 && prior.seen_exchanges === indexedExchanges) {
+      console.error(
+        `extraction: session ${sessionId} — 지난 추출 뒤 새 교환 없음(${indexedExchanges}개 그대로), 다시 추출하지 않습니다`,
+      );
+      return { extracted: 0, saved: 0, skipped: 'no_new_exchanges' };
+    }
   }
 
   // 🚨 LLM 을 부르기 **전에** 세션을 선점한다. SessionEnd 훅과 backfill 워커는
@@ -596,9 +834,11 @@ export async function runFactExtraction(
     } catch { /* best-effort */ }
   };
 
-  const stats = { droppedBatches: 0 };
+  const stats: ExtractionStats = { droppedBatches: 0 };
   let facts: ExtractedFact[];
   let saved = 0;
+  // worktree 에서 끝난 세션의 project 사실은 본 저장소 루트에 묶는다(extractionScopeProject).
+  let scopeProject = project;
   try {
     facts = await extractFactsFromExchanges(db, sessionId, stats, renewLease);
 
@@ -612,8 +852,9 @@ export async function runFactExtraction(
       const exchangeIds = (db.prepare(
         'SELECT id FROM exchanges WHERE session_id = ?'
       ).all(sessionId) as Array<{ id: string }>).map(r => r.id);
+      scopeProject = extractionScopeProject(project);
       saved = (await saveExtractedFacts(
-        db, facts, project, exchangeIds, agent, renewLease, writeCompletionMarker,
+        db, facts, scopeProject, exchangeIds, agent, renewLease, writeCompletionMarker,
       )).length;
     }
   } catch (e) {
@@ -640,8 +881,15 @@ export async function runFactExtraction(
   function writeCompletionMarker(extracted: number, savedCount: number): number {
     // dropped_batches 컬럼은 마이그레이션이 지연될 수 있다 — 없으면 4-컬럼 폴백으로
     // **마커는 반드시** 남긴다(미기록 = 재추출 = 중복, Codex R5 HIGH-1).
-    const hasDropped = (db.prepare(`SELECT name FROM pragma_table_info('extraction_log')`)
-      .all() as Array<{ name: string }>).some(c => c.name === 'dropped_batches');
+    const logColumns = (db.prepare(`SELECT name FROM pragma_table_info('extraction_log')`)
+      .all() as Array<{ name: string }>).map(c => c.name);
+    const hasDropped = logColumns.includes('dropped_batches');
+    // seen_exchanges(이번 추출이 읽은 교환 수)도 같은 방식 — 컬럼이 있을 때만 싣는다.
+    const hasSeen = logColumns.includes('seen_exchanges');
+    const seenCol = hasSeen ? ', seen_exchanges' : '';
+    const seenVal = hasSeen ? ', ?' : '';
+    const seenSet = hasSeen ? ', seen_exchanges = excluded.seen_exchanges' : '';
+    const seenArgs = hasSeen ? [stats.seenExchanges ?? null] : [];
     // 소유권 가드: 그사이 선점이 넘어갔다면 새 소유자의 상태를 덮지 않는다.
     // (claim 없이 도는 구버전 DB 경로는 가드 없이 기존 동작.)
     const ownGuard = holdsClaim ? ' WHERE extraction_log.claim_owner = ?' : '';
@@ -651,18 +899,18 @@ export async function runFactExtraction(
     try {
       res = hasDropped
       ? db.prepare(`
-          INSERT INTO extraction_log (session_id, processed_at, extracted, saved, dropped_batches, claim_owner)
-          VALUES (?, ?, ?, ?, ?, NULL)
+          INSERT INTO extraction_log (session_id, processed_at, extracted, saved, dropped_batches, claim_owner${seenCol})
+          VALUES (?, ?, ?, ?, ?, NULL${seenVal})
           ON CONFLICT(session_id) DO UPDATE SET processed_at = excluded.processed_at,
             extracted = excluded.extracted, saved = excluded.saved,
-            dropped_batches = excluded.dropped_batches, claim_owner = NULL${ownGuard}
-        `).run(sessionId, now, extracted, savedCount, stats.droppedBatches, ...ownArgs)
+            dropped_batches = excluded.dropped_batches, claim_owner = NULL${seenSet}${ownGuard}
+        `).run(sessionId, now, extracted, savedCount, stats.droppedBatches, ...seenArgs, ...ownArgs)
       : db.prepare(`
-          INSERT INTO extraction_log (session_id, processed_at, extracted, saved)
-          VALUES (?, ?, ?, ?)
+          INSERT INTO extraction_log (session_id, processed_at, extracted, saved${seenCol})
+          VALUES (?, ?, ?, ?${seenVal})
           ON CONFLICT(session_id) DO UPDATE SET processed_at = excluded.processed_at,
-            extracted = excluded.extracted, saved = excluded.saved${ownGuard}
-        `).run(sessionId, now, extracted, savedCount, ...ownArgs);
+            extracted = excluded.extracted, saved = excluded.saved${seenSet}${ownGuard}
+        `).run(sessionId, now, extracted, savedCount, ...seenArgs, ...ownArgs);
     } catch (e) {
       // 아주 오래된 DB 는 extraction_log 자체가 없다. 이 경로는 선점도 없었으므로
       // (holdsClaim=false) '소유권 상실'이 아니다 — 추출 결과를 롤백하면 안 된다.
@@ -702,7 +950,13 @@ export async function runFactExtraction(
     }
   }
 
-  return { extracted: facts.length, saved };
+  return {
+    extracted: facts.length, saved,
+    ...(stats.truncatedFacts ? { truncated: stats.truncatedFacts } : {}),
+    ...(stats.rejectedSecrets ? { rejectedSecrets: stats.rejectedSecrets } : {}),
+    ...(stats.rejectedInvalid ? { rejectedInvalid: stats.rejectedInvalid } : {}),
+    ...(scopeProject !== project ? { scopeProject } : {}),
+  };
 }
 
 /**

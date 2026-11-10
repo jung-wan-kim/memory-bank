@@ -11,15 +11,28 @@
  * session start forever, for nothing.
  */
 
-function boundedInt(raw: string | undefined, def: number, cap: number): number {
+function boundedInt(raw: string | undefined, def: number, cap: number, min = 1): number {
   if (raw === undefined || !/^\d+$/.test(raw.trim())) return def;
   const n = parseInt(raw.trim(), 10);
-  return Number.isFinite(n) && n >= 1 && n <= cap ? n : def;
+  return Number.isFinite(n) && n >= min && n <= cap ? n : def;
 }
+
+/**
+ * 마지막 교환 뒤 이만큼(분) 조용해야 backfill 대상이다 (BACKFILL_QUIET_MINUTES, 0 = 끔).
+ *
+ * 이 조건이 없을 때 backfill 은 가장 최근 세션부터 집으므로 **진행 중인** 세션을 교환
+ * 2~4개 시점에 추출하고 완료 마커를 썼다(실측 2026-11-10: 8월 이후 backfill 저장
+ * 423세션 중 355개는 마지막 교환이 저장 10분 이내, 296개는 저장 뒤 30분 안에 다음
+ * 교환). 대가는 SessionEnd 훅이 돌지 못한 세션(강제 종료)의 추출이 그만큼 늦어지는 것.
+ */
+export const DEFAULT_QUIET_MINUTES = 60;
+const MAX_QUIET_MINUTES = 7 * 24 * 60;
 
 export interface ExtractionConfig {
   minExchanges: number;
   excludeProjects: string[];
+  /** 생략·비정상 값이면 DEFAULT_QUIET_MINUTES — 설정을 손으로 만든 호출자도 같은 술어를 쓴다. */
+  quietMinutes?: number;
 }
 
 /** Env-derived config, identical for the worker and the hook. */
@@ -38,7 +51,27 @@ export function getExtractionConfig(): ExtractionConfig {
   // monitoring noise that yields no durable facts. Interpolated into SQL →
   // boundedInt (not bare parseInt) so garbage can't reach the query text.
   const minExchanges = boundedInt(process.env.BACKFILL_MIN_EXCHANGES, 2, 1000);
-  return { minExchanges, excludeProjects };
+  const quietMinutes = boundedInt(process.env.BACKFILL_QUIET_MINUTES, DEFAULT_QUIET_MINUTES, MAX_QUIET_MINUTES, 0);
+  return { minExchanges, excludeProjects, quietMinutes };
+}
+
+/**
+ * 추출기가 이 project 를 제외 대상으로 보는가 — 제외 목록의 경로이거나 그 하위 경로.
+ *
+ * 🚨 경로 **경계**로 비교한다. raw prefix 면 형제 프로젝트가 함께 배제된다 —
+ * '/…/memory-bank' 가 '/…/memory-bank-x' 같은 별개 프로젝트를 삼켜, 그 세션이
+ * 영구 0/0 마커를 받고 fact 가 영원히 추출되지 않았다(실측: 적격 8세션 전건 손실).
+ * pending SQL 필터는 exact 매칭이라 선정은 되고 추출기에서만 걸러져 무음이었다.
+ *
+ * 추출기(runFactExtraction)와 0건 마커 되돌리기 스크립트(requeue-zero-markers.mjs)가
+ * 같은 판정을 쓴다 — 추출기가 곧바로 제외 마커를 다시 쓸 세션을 되돌리지 않게.
+ */
+export function isExcludedProjectPath(
+  project: string | null | undefined,
+  cfg: Pick<ExtractionConfig, 'excludeProjects'> = getExtractionConfig(),
+): boolean {
+  if (!project) return false;
+  return cfg.excludeProjects.some((p) => project === p || project.startsWith(`${p}/`));
 }
 
 /**
@@ -166,11 +199,41 @@ export function failureMarkerUpsertSql(): string {
 }
 
 /**
+ * extraction_log.seen_exchanges — 완료 마커를 쓴 추출이 읽은 그 세션의 교환 수.
+ *
+ * 훅 변형의 선점은 확정 마커 위에서도 성공한다(--resume 으로 교환이 늘어난 세션의
+ * 재추출). 그런데 SessionEnd 는 같은 세션에 60초 안에 두 번 오는 일이 잦아(실측 840쌍),
+ * 교환이 그대로인데도 세션을 통째로 다시 추출해 사실이 두 벌이 된다. 마커가 교환 수를
+ * 기억하면 "그 뒤로 늘었는가"를 물을 수 있다.
+ *
+ * db.ts 의 스키마 마이그레이션이 아니라 추출 시점에 보장한다(멱등). 컬럼을 만들 수
+ * 없으면 false — 호출자는 교환 수 없이 예전 동작(매번 재추출)으로 돈다.
+ */
+export function ensureSeenExchangesColumn(db: { prepare: (sql: string) => { all: () => unknown[]; run: () => unknown } }): boolean {
+  try {
+    const cols = db.prepare(`SELECT name FROM pragma_table_info('extraction_log')`).all() as Array<{ name: string }>;
+    if (cols.length === 0) return false; // extraction_log 부재(구버전 DB)
+    if (cols.some((c) => c.name === 'seen_exchanges')) return true;
+    db.prepare('ALTER TABLE extraction_log ADD COLUMN seen_exchanges INTEGER').run();
+    return true;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/duplicate column name/i.test(msg)) return true; // 동시 실행이 먼저 추가했다
+    console.error(`extraction: extraction_log.seen_exchanges 컬럼을 보장하지 못했습니다(${msg}) — 이번 실행은 교환 수 기록 없이 진행`);
+    return false;
+  }
+}
+
+/**
  * Core SELECT over pending-extraction sessions, through GROUP BY / HAVING but
  * WITHOUT any ORDER BY / LIMIT — callers wrap it:
  *   worker: `${sql} ORDER BY ts DESC LIMIT ?`   (params + limit)
  *   hook:   `SELECT 1 FROM (${sql}) LIMIT 1`     (params)
  * Columns: sid, ts, n.
+ *
+ * A session qualifies only once its last main-chain exchange is `quietMinutes`
+ * old (see DEFAULT_QUIET_MINUTES) — a session still in use is left to its own
+ * SessionEnd.
  */
 export function pendingExtractionCoreQuery(cfg: ExtractionConfig): { sql: string; params: string[] } {
   const exTerms = cfg.excludeProjects;
@@ -182,6 +245,15 @@ export function pendingExtractionCoreQuery(cfg: ExtractionConfig): { sql: string
         AND (x.cwd LIKE '%/memory-bank-llm'
       ${exTerms.length ? 'OR ' + exTerms.map(() => 'x.cwd = ?').join(' OR ') : ''})
     )`;
+  // SQL 본문에 들어가는 값 — 0 이상 정수가 아니면 기본값으로 읽는다(쓰레기가 쿼리에 닿지 않게).
+  const q = cfg.quietMinutes;
+  const quietMinutes = typeof q === 'number' && Number.isInteger(q) && q >= 0
+    ? Math.min(q, MAX_QUIET_MINUTES) : DEFAULT_QUIET_MINUTES;
+  // 양쪽을 datetime() 으로 파싱해 비교한다(freshClaimPredicate 와 같은 이유). 시각을 읽을 수
+  // 없는 세션(NULL)은 조용한 것으로 본다 — 조건에서 영영 빠지면 그 세션은 굶는다.
+  const quietClause = quietMinutes > 0
+    ? `\n      AND COALESCE(datetime(MAX(e.timestamp)) <= datetime('now', '-${quietMinutes} minutes'), 1)`
+    : '';
   const sql = `
     SELECT e.session_id AS sid, MAX(e.timestamp) AS ts, COUNT(*) AS n
     FROM exchanges e
@@ -200,6 +272,6 @@ export function pendingExtractionCoreQuery(cfg: ExtractionConfig): { sql: string
       )
       ${exClause}
     GROUP BY e.session_id
-    HAVING COUNT(*) >= ${cfg.minExchanges}`;
+    HAVING COUNT(*) >= ${cfg.minExchanges}${quietClause}`;
   return { sql, params: exTerms };
 }

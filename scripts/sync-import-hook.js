@@ -34,7 +34,14 @@ async function main() {
     if (result.rejectedJunk > 0) {
       // Not "new": the rows stay in the sync files until the exporting device
       // stops exporting them, so the same count can repeat every session.
-      console.error(`sync-import: skipped ${result.rejectedJunk} template-residue row(s) present in the sync files`);
+      console.error(`sync-import: skipped ${result.rejectedJunk} row(s) in the sync files that the fact validity check refuses (template residue, prompt example, session-environment boilerplate)`);
+    }
+    if (result.rejectedSecrets > 0) {
+      // Kinds and counts only — never the text. Recorded in the log file too: this
+      // hook's stderr goes nowhere, and a credential sitting in the sync files is
+      // something the owner of the exporting device has to act on.
+      console.error(`sync-import: skipped ${result.rejectedSecrets} fact(s) carrying a credential-shaped string`);
+      logFailure({ action: 'rejected_secrets', rejected_secrets: result.rejectedSecrets, kinds: result.rejectedSecretReasons });
     }
     if (result.detachedCategoryRefs > 0) {
       console.error(`sync-import: ${result.detachedCategoryRefs} imported fact(s) referenced a category missing here — left unclassified for the ontology backfill`);

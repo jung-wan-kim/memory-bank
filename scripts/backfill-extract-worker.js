@@ -54,7 +54,10 @@ const CONCURRENCY = Math.max(1, boundedInt(process.env.BACKFILL_CONCURRENCY, 4, 
 // cron sessions). These are ~98% 1-exchange noise that the backfill itself
 // generates, so including them is a feedback loop that never converges.
 // Comma-separated cwd paths; env-overridable.
-const { minExchanges: MIN_EXCHANGES, excludeProjects: EXCLUDE_PROJECTS } = getExtractionConfig();
+// The whole config object goes to the pending query as it is: the SessionStart
+// probe passes getExtractionConfig() too, and a field picked out by hand here
+// (minExchanges, excludeProjects) once left a newer one (quietMinutes) behind.
+const EXTRACTION_CONFIG = getExtractionConfig();
 
 
 const LOCK = path.join(getIndexDir(), 'backfill-extract.lock');
@@ -133,7 +136,7 @@ function seedFromExistingFacts(db) {
 function pendingSessions(db, limit) {
   // Single source (pendingExtractionCoreQuery) shared with the SessionStart
   // hook's spawn condition so the two can never drift.
-  const { sql, params } = pendingExtractionCoreQuery({ minExchanges: MIN_EXCHANGES, excludeProjects: EXCLUDE_PROJECTS });
+  const { sql, params } = pendingExtractionCoreQuery(EXTRACTION_CONFIG);
   return db.prepare(`${sql} ORDER BY ts DESC LIMIT ?`).all(...params, limit);
 }
 
@@ -256,6 +259,10 @@ async function main() {
           } else if (result.skipped === 'claim_not_acquired') {
             buckets.handoff += 1;
             log(`session ${next.sid}: HANDOFF (claim_not_acquired) — 다른 러너가 처리 중`);
+          } else if (result.skipped === 'not_indexed') {
+            // 선정 뒤에 이 세션의 교환이 색인에서 사라졌다(재색인·정리). 마커가 없으니
+            // 다시 색인되면 다음 run 이 집는다 — 장애가 아니므로 경보로 세지 않는다.
+            log(`session ${next.sid}: skip (not_indexed) — 색인된 교환 0건, 마커 없음`);
           } else {
             buckets.transient += 1;
             escalateFailures += 1;
@@ -265,8 +272,16 @@ async function main() {
           return;
         }
         totalSaved += result.saved;
+        if (result.rejectedSecrets > 0) {
+          log(`session ${next.sid}: dropped ${result.rejectedSecrets} fact(s) carrying a credential-shaped string`);
+        }
         if (result.saved > 0) {
-          log(`session ${next.sid} (${project ?? '?'}, ${next.n} exch): saved ${result.saved}`);
+          log(
+            `session ${next.sid} (${project ?? '?'}, ${next.n} exch): saved ${result.saved}`
+            + (result.truncated > 0 ? ` (truncated ${result.truncated} by the session cap)` : '')
+            // worktree 세션: project 사실을 본 저장소 루트에 묶었다.
+            + (result.scopeProject ? ` (project facts scoped to ${result.scopeProject})` : ''),
+          );
         }
       } catch (error) {
         // 실패를 3분류한다. 예전에는 어떤 에러든 extraction_log(-2) 로 기록해서
