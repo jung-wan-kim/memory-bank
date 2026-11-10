@@ -42,7 +42,7 @@ import { clipLine, RELATED_MAX_CHARS } from './related-format.js';
 import { askAvatar } from './avatar-responder.js';
 import path from 'path';
 import os from 'os';
-import { resolveReadableConversation } from './read-guard.js';
+import { resolveReadableConversation, ACCESS_DENIED_MESSAGE } from './read-guard.js';
 import { getArchiveDir } from './paths.js';
 
 // Zod Schemas for Input Validation
@@ -205,6 +205,28 @@ type AskAvatarInput = z.infer<typeof AskAvatarInputSchema>;
 
 /** Related decisions listed under an ask_avatar answer. */
 const AVATAR_MAX_RELATED_LISTED = 10;
+
+/**
+ * The file the `read` tool opens for `requestedPath`: inside the conversation roots, and the same file the
+ * reader will pick.
+ *
+ * resolveReadableConversation returns the checked file with its symlinks resolved. The reader
+ * (readConversationRange → archive-io) then chooses between that file and its other variant (plain / `.zst`)
+ * once more, by modification time — so a link `a.jsonl` → `b.jsonl` inside the archive passed the check as
+ * `b.jsonl`, and the reader opened a newer `b.jsonl.zst` that nobody had looked at (a link out of the
+ * archive: its content, or for a non-conversation file its line count, came back). The check is therefore
+ * repeated on its own answer until the answer stops moving: the variant the reader picks for the returned
+ * path is then that path itself (or a link to it). A chain that never settles is refused.
+ */
+function resolveReadTarget(requestedPath: string, roots: string[]): string {
+  let file = resolveReadableConversation(requestedPath, roots);
+  for (let hop = 0; hop < 8; hop++) {
+    const again = resolveReadableConversation(file, roots);
+    if (again === file) return file;
+    file = again;
+  }
+  throw new Error(ACCESS_DENIED_MESSAGE);
+}
 
 // Error Handling Utility
 
@@ -572,9 +594,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // usable as an arbitrary-file reader (prompt-injected paths like
       // /tmp/secret.jsonl would otherwise be readable). The roots are checked
       // before any existence test, so a path outside them gets one answer
-      // whether or not a file is there (read-guard.ts). A reversed or out-of-file
+      // whether or not a file is there (read-guard.ts), and the file returned is
+      // the one the reader opens (resolveReadTarget). A reversed or out-of-file
       // line range is reported by readConversationRange below.
-      const realFile = resolveReadableConversation(params.path, [
+      const realFile = resolveReadTarget(params.path, [
         getArchiveDir(),
         path.join(os.homedir(), '.claude', 'projects'),
       ]);

@@ -211,6 +211,52 @@ describe('MCP server over stdio', () => {
       expect(text).toMatch(/outside the conversation archive/);
     });
 
+    // SEC-6 — the path check picked a file (symlinks resolved), and the reader then chose between that file and
+    // its other variant (plain / .zst) again: the newer variant could be a link the check never looked at.
+    it.runIf(zstdCompressSync !== undefined)('never opens a variant the path check did not look at (link to a checked file whose other variant leads outside)', async () => {
+      const outsideDir = path.join(configDir, 'outside-dir');
+      fs.mkdirSync(outsideDir, { recursive: true });
+      const marked = (marker: string) => JSON.stringify({ uuid: 'u1', timestamp: ts(1), type: 'user', isSidechain: false, sessionId: 's1', message: { role: 'user', content: `question ${marker}` } }) + '\n';
+      fs.writeFileSync(path.join(outsideDir, 'secret.jsonl'), marked('OUTSIDE-PLAIN'));
+      fs.writeFileSync(path.join(outsideDir, 'secret.jsonl.zst'), zstdCompressSync!(Buffer.from(marked('OUTSIDE-PACKED'), 'utf-8')));
+      fs.writeFileSync(path.join(outsideDir, 'plain.txt'), 'l1\nl2\nl3\nl4\nl5\nl6\nl7\n');
+      const old = new Date('2025-01-01T00:00:00Z');
+      const inside = (name: string) => path.join(archiveProject, name);
+      // 1: a.jsonl.zst → b.jsonl.zst (inside, older); next to it b.jsonl → outside (newer)
+      fs.writeFileSync(inside('b.jsonl.zst'), zstdCompressSync!(Buffer.from(marked('INSIDE-B'), 'utf-8')));
+      fs.utimesSync(inside('b.jsonl.zst'), old, old);
+      fs.symlinkSync(inside('b.jsonl.zst'), inside('a.jsonl.zst'));
+      fs.symlinkSync(path.join(outsideDir, 'secret.jsonl'), inside('b.jsonl'));
+      // 2: c.jsonl → d.jsonl (inside, older); next to it d.jsonl.zst → outside (newer)
+      fs.writeFileSync(inside('d.jsonl'), marked('INSIDE-D'));
+      fs.utimesSync(inside('d.jsonl'), old, old);
+      fs.symlinkSync(inside('d.jsonl'), inside('c.jsonl'));
+      fs.symlinkSync(path.join(outsideDir, 'secret.jsonl.zst'), inside('d.jsonl.zst'));
+      // 3: e.jsonl.zst → f.jsonl.zst (inside, older); next to it f.jsonl → an outside file that is no conversation
+      fs.writeFileSync(inside('f.jsonl.zst'), zstdCompressSync!(Buffer.from(marked('INSIDE-F'), 'utf-8')));
+      fs.utimesSync(inside('f.jsonl.zst'), old, old);
+      fs.symlinkSync(inside('f.jsonl.zst'), inside('e.jsonl.zst'));
+      fs.symlinkSync(path.join(outsideDir, 'plain.txt'), inside('f.jsonl'));
+
+      const one = await call('read', { path: inside('a.jsonl.zst') });
+      const two = await call('read', { path: inside('c.jsonl') });
+      // a line range past the end used to answer with the outside file's line count
+      const three = await call('read', { path: inside('e.jsonl.zst'), startLine: 999 });
+      for (const answer of [one, two, three]) {
+        expect(answer.text).not.toMatch(/OUTSIDE-/);
+        expect(answer.text).not.toMatch(/it has 7 lines/);
+        expect(answer.isError).toBe(true);
+        expect(answer.text).toMatch(/outside the conversation archive/);
+      }
+
+      // a link to a file inside whose variant choice stays inside is still read
+      fs.writeFileSync(inside('h.jsonl'), marked('INSIDE-H'));
+      fs.symlinkSync(inside('h.jsonl'), inside('g.jsonl'));
+      const ok = await call('read', { path: inside('g.jsonl') });
+      expect(ok.isError).toBe(false);
+      expect(ok.text).toContain('INSIDE-H');
+    });
+
     it('answers the same for a path outside the archive whether or not a file is there', async () => {
       const present = path.join(configDir, 'probe-present.jsonl');
       fs.writeFileSync(present, conversation(1));
