@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { initDatabase, isExchangeCurrent, deleteExchanges } from './db.js';
 import { getArchiveDir, getExcludedProjects, isExcludedProject } from './paths.js';
-import { archiveFileExists, canonicalArchiveName, removeArchiveFile, statArchiveFile } from './archive-io.js';
+import { archiveFileExists, archiveTrailingBytes, canonicalArchiveName, removeArchiveFile, statArchiveFile } from './archive-io.js';
 import { parseGuarded } from './conversation-guard.js';
 import { shouldIndexExchange } from './noise.js';
 import { backupExchangeRows, newBackupPath } from './row-backup.js';
@@ -25,6 +25,13 @@ export interface VerificationResult {
   outdated: Array<{ path: string; fileTime: number; dbTime: number }>;
   /** Files that could not be read to the end — never re-indexed, never judged "clean". */
   corrupted: Array<{ path: string; error: string }>;
+  /**
+   * Readable `.zst` files with bytes after their last complete zstd frame that
+   * begin no frame (how many bytes). The conversation is read up to that frame
+   * — these are not "unreadable" and nothing is repaired — but the ignored
+   * tail is told, in one line of the verify output (count and size range).
+   */
+  trailingBytes: Array<{ path: string; bytes: number }>;
   /**
    * What the repair thresholds are measured against: indexed exchanges, the
    * conversation files walked, and — of those files — the ones that hold
@@ -82,6 +89,7 @@ export async function verifyIndex(): Promise<VerificationResult> {
     orphaned: [],
     outdated: [],
     corrupted: [],
+    trailingBytes: [],
     totals: { exchanges: 0, conversations: 0, indexable: 0 }
   };
 
@@ -115,6 +123,10 @@ export async function verifyIndex(): Promise<VerificationResult> {
       let indexable;
       try {
         const { exchanges, excluded } = await parseGuarded(conversationPath, project, conversationPath);
+        // The file was read to the end of its frames. Bytes after them that
+        // begin no frame were not read: counted, so they are not dropped unseen.
+        const tail = archiveTrailingBytes(conversationPath);
+        if (tail > 0) result.trailingBytes.push({ path: conversationPath, bytes: tail });
         if (excluded) continue; // opted out: nothing to index, nothing to summarize
         indexable = exchanges.filter(shouldIndexExchange);
       } catch (error) {
@@ -172,6 +184,20 @@ export async function verifyIndex(): Promise<VerificationResult> {
     }
 
     console.log(`Verified ${result.totals.conversations} conversations.`);
+    if (result.trailingBytes.length > 0) {
+      // One line, no paths: these files are read (up to their last complete
+      // frame) and need no repair. A loop instead of Math.min(...sizes): the
+      // list can be long.
+      let smallest = Infinity;
+      let largest = 0;
+      for (const { bytes } of result.trailingBytes) {
+        if (bytes < smallest) smallest = bytes;
+        if (bytes > largest) largest = bytes;
+      }
+      console.log(
+        `Compressed files with bytes after their last complete zstd frame: ${result.trailingBytes.length} ` +
+        `(${smallest} to ${largest} bytes each) — read up to that frame; the bytes after it are not a frame and are ignored`);
+    }
 
     // Orphaned rows: the file each indexed path points at is checked ON DISK,
     // path by path. The walk above only lists the top level of each project

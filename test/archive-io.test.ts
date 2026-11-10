@@ -9,6 +9,7 @@ import {
   canonicalArchiveName,
   resolveArchiveFile,
   archiveFileExists,
+  archiveTrailingBytes,
   readArchiveFile,
   readArchiveLineRange,
   readResolvedArchiveFile,
@@ -273,12 +274,94 @@ describe('archive-io', () => {
       await expect(readArchiveLineRange(plain, { startLine: 590, endLine: 600 })).rejects.toThrow(/incomplete/);
     });
 
-    it('bytes after the last complete frame are an error too (the decoder ignores them)', async () => {
-      const plain = put('junk.jsonl', Buffer.concat([whole(), Buffer.from('not a frame')]));
-      const streamed = await drain(plain);
-      expect(streamed.error?.message).toMatch(/incomplete/);
-      expect(streamed.lines).toEqual(LINES); // everything the complete frame holds, then the error
-      expect(() => readArchiveFile(plain)).toThrow(/incomplete/);
+    // A real archive holds such files (measured: 528 of 228,765 `.zst`, tails of 1 to 1,078 bytes, none starting
+    // like a frame): the frame is the whole conversation and something else follows it. Calling them "incomplete"
+    // made verify list 528 unreadable files and `read` fail on 409 conversations every earlier version read.
+    for (const [name, tail] of [
+      ['5 bytes', Buffer.from([0xde, 0xbf, 0x15, 0xa2, 0x07])],
+      ['1 byte', Buffer.from([0x1c])],
+      ['3 bytes', Buffer.from([0xd0, 0x7d, 0x00])],
+      ['4 bytes', Buffer.from([0x7f, 0x2b, 0x44, 0x01])],
+      ['some text', Buffer.from('not a frame')],
+      ['a kilobyte', Buffer.alloc(1078, 0x61)],
+    ] as Array<[string, Buffer]>) {
+      it(`a complete frame + ${name} that are no frame: read to the end of the frame, and the tail is counted`, async () => {
+        const plain = put('tail.jsonl', Buffer.concat([whole(), tail]));
+        expect(await drain(plain)).toEqual({ lines: LINES, error: null });
+        expect(readArchiveFile(plain)).toBe(CONTENT);
+        expect(readResolvedArchiveFile(plain + '.zst')).toBe(CONTENT);
+        // a range that runs to the last line reads to the end of the stream — the tail must not fail it
+        const lastLines = await readArchiveLineRange(plain, { startLine: 590, endLine: 600 });
+        expect(lastLines.lines.map((l) => l.text)).toEqual(LINES.slice(589, 600));
+        const toTheEnd = await readArchiveLineRange(plain, { startLine: 599 });
+        expect(toTheEnd).toMatchObject({ totalLines: 600, stoppedEarly: false });
+        expect(archiveTrailingBytes(plain)).toBe(tail.length);
+      });
+    }
+
+    it('a complete frame + an unfinished frame (it starts with the zstd magic) is still an error', async () => {
+      const next = zstdCompressSync!(Buffer.from(randomBytes(4000).toString('hex') + '\n', 'utf-8'));
+      for (const keep of [4, 5, 9, Math.floor(next.length / 2), next.length - 1]) {
+        const plain = put(`unfinished-${keep}.jsonl`, Buffer.concat([whole(), next.subarray(0, keep)]));
+        const streamed = await drain(plain);
+        expect(streamed.error?.message, `first ${keep} bytes of the next frame`).toMatch(/incomplete/);
+        expect(streamed.lines.slice(0, LINES.length)).toEqual(LINES); // what the complete frame holds, then the error
+        expect(() => readArchiveFile(plain)).toThrow(/incomplete/);
+        await expect(readArchiveLineRange(plain, { startLine: 590, endLine: 601 })).rejects.toThrow(/incomplete/);
+        expect(archiveTrailingBytes(plain)).toBe(0); // not a tail: a frame that was being written
+      }
+    });
+
+    it('a complete frame + the first 1-3 bytes of a frame magic (zstd or skippable) is still an error', async () => {
+      for (const tail of [[0x28], [0x28, 0xb5], [0x28, 0xb5, 0x2f], [0x50], [0x5a, 0x2a], [0x5f, 0x2a, 0x4d]]) {
+        const plain = put(`magic-${tail.length}-${tail[0]}.jsonl`, Buffer.concat([whole(), Buffer.from(tail)]));
+        expect((await drain(plain)).error?.message, `tail ${tail.join(',')}`).toMatch(/incomplete/);
+        expect(() => readArchiveFile(plain)).toThrow(/incomplete/);
+        expect(archiveTrailingBytes(plain)).toBe(0);
+      }
+      // the same first byte followed by something that is no magic: a tail
+      for (const tail of [[0x28, 0x00], [0x28, 0xb5, 0x00], [0x50, 0x2a, 0x00], [0x60]]) {
+        const plain = put(`near-magic-${tail.length}-${tail[0]}.jsonl`, Buffer.concat([whole(), Buffer.from(tail)]));
+        expect(await drain(plain), `tail ${tail.join(',')}`).toEqual({ lines: LINES, error: null });
+        expect(archiveTrailingBytes(plain)).toBe(tail.length);
+      }
+    });
+
+    it('a complete frame + a skippable frame that is cut short is still an error; a whole skippable frame is not', async () => {
+      const skippable = Buffer.concat([Buffer.from([0x50, 0x2a, 0x4d, 0x18, 0x08, 0x00, 0x00, 0x00]), Buffer.alloc(8, 0x07)]);
+      const whole2 = put('skippable.jsonl', Buffer.concat([whole(), skippable]));
+      expect(await drain(whole2)).toEqual({ lines: LINES, error: null });
+      expect(archiveTrailingBytes(whole2)).toBe(0);
+      const cut = put('skippable-cut.jsonl', Buffer.concat([whole(), skippable.subarray(0, skippable.length - 3)]));
+      expect((await drain(cut)).error?.message).toMatch(/incomplete/);
+      expect(() => readArchiveFile(cut)).toThrow(/incomplete/);
+    });
+
+    it('a file that ends inside a frame is an error, whatever the frame before it', async () => {
+      const cutAlone = put('cut-alone.jsonl', whole().subarray(0, whole().length - 7));
+      expect((await drain(cutAlone)).error?.message).toMatch(/incomplete/);
+      expect(() => readArchiveFile(cutAlone)).toThrow(/incomplete/);
+      expect(archiveTrailingBytes(cutAlone)).toBe(0);
+    });
+
+    it('bytes that are no frame with no complete frame before them are an error, not a tail', async () => {
+      const plain = put('junk.jsonl', Buffer.from('not a frame at all, just some text\n'.repeat(4)));
+      expect((await drain(plain)).error).not.toBeNull();
+      expect(() => readArchiveFile(plain)).toThrow();
+      expect(archiveTrailingBytes(plain)).toBe(0);
+      // a skippable frame is not a frame that holds the conversation
+      const onlySkippable = put('only-skippable.jsonl', Buffer.concat([
+        Buffer.from([0x50, 0x2a, 0x4d, 0x18, 0x02, 0x00, 0x00, 0x00, 0x01, 0x02]), Buffer.from('tail bytes')]));
+      expect((await drain(onlySkippable)).error?.message).toMatch(/incomplete/);
+      expect(() => readArchiveFile(onlySkippable)).toThrow(/incomplete/);
+    });
+
+    it('archiveTrailingBytes is 0 for a file that is exactly its frames, a plain file and a missing file', () => {
+      expect(archiveTrailingBytes(put('exact.jsonl', whole()))).toBe(0);
+      const plainFile = join(testDir, 'plain.jsonl');
+      writeFileSync(plainFile, CONTENT + 'tail');
+      expect(archiveTrailingBytes(plainFile)).toBe(0);
+      expect(archiveTrailingBytes(join(testDir, 'missing.jsonl'))).toBe(0);
     });
 
     it('a file of several frames is read to its last frame, and a cut in its last frame is an error', async () => {
@@ -307,12 +390,22 @@ describe('archive-io', () => {
       }
     });
 
-    it('corrupt bytes in the middle are still an error', async () => {
+    // (This used to flip the byte in the middle of the file and expect an error. These frames carry no
+    // checksum, so a changed byte inside a block often decodes to other text with no error at all — measured
+    // on this very input: 20 of 60 random files read "fine" — and the test failed about one run in three.
+    // A block type no decoder accepts is corruption the decoder always reports.)
+    it('a corrupt block inside a complete frame is still an error', async () => {
       const bytes = Buffer.from(whole());
-      bytes[Math.floor(bytes.length / 2)] ^= 0xff;
-      const plain = put('flipped.jsonl', bytes);
+      // Frame header of a one-shot frame: magic(4) + descriptor(1) + [window(1)] + content size; then the first block header.
+      const descriptor = bytes[4];
+      const singleSegment = (descriptor >> 5) & 1;
+      const contentSizeBytes = (descriptor >> 6) === 0 ? singleSegment : [0, 2, 4, 8][descriptor >> 6];
+      const firstBlockHeader = 5 + (singleSegment ? 0 : 1) + [0, 1, 2, 4][descriptor & 3] + contentSizeBytes;
+      bytes[firstBlockHeader] |= 0x06; // Block_Type 3: reserved
+      const plain = put('bad-block.jsonl', bytes);
       expect((await drain(plain)).error).not.toBeNull();
       expect(() => readArchiveFile(plain)).toThrow();
+      expect(() => readResolvedArchiveFile(plain + '.zst')).toThrow();
     });
   });
 

@@ -137,22 +137,58 @@ function createByteLimit(maxBytes: number): Transform {
  * index rows with the head, a rebuild cleared its rows and re-created none.
  * So the frame structure is walked here (headers only, nothing is
  * decompressed — RFC 8878 §3.1), every complete frame is decoded on its own,
- * and anything else in the file is a read error.
+ * and a frame that begins but does not end is a read error.
+ *
+ * One thing after the frames is not an error: bytes that follow a complete
+ * frame and are not the start of another one (`trailingBytes`). A cut file
+ * never looks like that — what a compressor was interrupted on is the head of
+ * a frame, and it begins with the frame magic. Real archives hold such files
+ * (measured on one: 528 of 228,765, tails of 1 to 1,078 bytes, none beginning
+ * like a frame; the frame before the tail held the whole conversation, every
+ * line of it JSON). Treating them as cut made verify list 528 unreadable files
+ * and `read` fail on 409 conversations that every earlier version had read.
+ * They are read up to their last complete frame — as the decoder alone did —
+ * and the tail is reported (archiveTrailingBytes), not dropped unseen.
  */
 interface ZstdLayout {
   /** Byte ranges [start, end) of the complete zstd frames, in file order. */
   frames: Array<{ start: number; end: number }>;
   /** Start of a frame that begins but does not end, when the file stops inside one. */
   cutFrameAt: number | null;
-  /** Why the file is not a sequence of complete frames — null when it is. */
+  /** Why the file cannot be read as its frames — null when it can. */
   problem: string | null;
+  /**
+   * Bytes after the last complete frame that are no frame and no beginning of
+   * one (0 = none). Only ever set with at least one complete frame and no
+   * `problem`: the frames are the file's content, these bytes are not read.
+   */
+  trailingBytes: number;
 }
 
 const ZSTD_MAGIC = 0xfd2fb528;
 const ZSTD_SKIPPABLE_MAGIC = 0x184d2a50; // 0x184D2A50..5F: a frame a decoder skips
+/** The two magics as they lie in the file (little-endian); a skippable frame's first byte is 0x50..0x5F. */
+const ZSTD_MAGIC_BYTES = [0x28, 0xb5, 0x2f, 0xfd];
+const ZSTD_SKIPPABLE_MAGIC_BYTES = [0x50, 0x2a, 0x4d, 0x18];
+
+/**
+ * Whether these bytes (the first 1-4 after a frame) are a frame magic or the
+ * first bytes of one — i.e. whether what follows could be a frame that was
+ * being written when the file ended.
+ */
+function beginsLikeFrame(head: Buffer): boolean {
+  if (head.length === 0) return false;
+  const isPrefixOf = (magic: number[], firstByteMask: number): boolean => {
+    for (let i = 0; i < head.length && i < 4; i++) {
+      if ((i === 0 ? head[i] & firstByteMask : head[i]) !== magic[i]) return false;
+    }
+    return true;
+  };
+  return isPrefixOf(ZSTD_MAGIC_BYTES, 0xff) || isPrefixOf(ZSTD_SKIPPABLE_MAGIC_BYTES, 0xf0);
+}
 
 function zstdLayout(size: number, read: (position: number, length: number) => Buffer): ZstdLayout {
-  const layout: ZstdLayout = { frames: [], cutFrameAt: null, problem: null };
+  const layout: ZstdLayout = { frames: [], cutFrameAt: null, problem: null, trailingBytes: 0 };
   // Exactly `length` bytes at `position`, or null when the file ends before that.
   const take = (position: number, length: number): Buffer | null => {
     if (position + length > size) return null;
@@ -171,6 +207,15 @@ function zstdLayout(size: number, read: (position: number, length: number) => Bu
       layout.problem = `it ends inside ${where} (frame ${layout.frames.length + 1} starts at byte ${start} of ${size})`;
       return layout;
     };
+    if (layout.frames.length > 0) {
+      // After a complete frame: another frame (whole or cut — walked below), or bytes that are none.
+      const wanted = Math.min(4, size - pos);
+      const head = read(pos, wanted);
+      if (head.length === wanted && !beginsLikeFrame(head)) {
+        layout.trailingBytes = size - start;
+        return layout;
+      }
+    }
     const magic = take(pos, 4);
     if (!magic) return cut('a frame header');
     const magicNumber = magic.readUInt32LE(0);
@@ -182,6 +227,8 @@ function zstdLayout(size: number, read: (position: number, length: number) => Bu
       continue; // holds no conversation bytes
     }
     if (magicNumber !== ZSTD_MAGIC) {
+      // Reached only with no complete zstd frame so far (after one, such bytes are `trailingBytes`):
+      // the file holds no conversation frame at all, at most skippable ones.
       layout.problem = start === 0
         ? 'it does not start with a zstd frame'
         : `${size - start} byte(s) after its last complete frame are not a zstd frame`;
@@ -267,6 +314,19 @@ function zstdLayoutOfFile(filePath: string): ZstdLayout {
 }
 
 /**
+ * How many bytes follow the last complete zstd frame of an archive file
+ * without being a frame or the beginning of one — bytes no reader returns
+ * (see ZstdLayout). 0 for a `.zst` that is exactly its frames, for a plain
+ * file, for a missing file, and for a `.zst` that is a read error (that one
+ * is reported by the read itself). Reads the frame and block headers only.
+ */
+export function archiveTrailingBytes(filePath: string): number {
+  const resolved = resolveArchiveFile(filePath);
+  if (!resolved || !resolved.endsWith(ZST_SUFFIX)) return 0;
+  return zstdLayoutOfFile(resolved).trailingBytes;
+}
+
+/**
  * The decompressed bytes of a `.zst` file, frame after frame. What a damaged
  * file still holds is yielded first — a caller reading a line range inside it
  * gets its lines — and then the read fails: a consumer that reads to the end
@@ -305,8 +365,10 @@ export function readArchiveFile(filePath: string): string {
 
 /**
  * Create a readable stream over an archive file, transparently decompressing
- * `.zst`. Suitable as input for readline.createInterface. A `.zst` that is not
- * made of complete zstd frames ends in an 'error', after the bytes it does hold.
+ * `.zst`. Suitable as input for readline.createInterface. A `.zst` that ends
+ * inside a frame (or holds no frame) ends in an 'error', after the bytes it
+ * does hold; bytes after its last complete frame that begin no frame are not
+ * read and are no error (archiveTrailingBytes counts them).
  */
 export function createArchiveReadStream(filePath: string): Readable {
   const resolved = resolveArchiveFile(filePath);

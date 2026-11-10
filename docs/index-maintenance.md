@@ -31,6 +31,22 @@ Conversations that carry an exclusion marker, and files that hold nothing
 indexable (no exchange yet, only the plugin's own worker prompts, only machine
 noise such as agent warm-up turns), are in none of the lists.
 
+One more line can appear above the results, and it is not a finding:
+
+```
+Compressed files with bytes after their last complete zstd frame: N (A to B bytes each) — read up to that frame; the bytes after it are not a frame and are ignored
+```
+
+These `.zst` files hold their conversation in complete frames and have a few
+more bytes after the last one that do not begin a frame (on one measured
+archive: 528 of 228,765 files, tails of 1 to 1,078 bytes). They are read up to
+the last complete frame — by verify, repair, rebuild, search and `read` alike —
+and are **not** counted as unreadable; the line only says how many there are
+and how long the ignored tails are. What stays an unreadable file: one that
+ends inside a frame, and one whose bytes after a complete frame *begin* like a
+frame (the frame magic, or its first bytes) without being a whole one — that is
+what a compressor leaves when it is interrupted.
+
 ## `index-conversations --repair [--prune-missing] [--no-summaries] [--yes]`
 
 Runs verify, prints a plan (rows to delete, conversations to re-index, summary
