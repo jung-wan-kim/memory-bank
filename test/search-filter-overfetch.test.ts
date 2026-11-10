@@ -14,7 +14,7 @@ vi.mock('../src/embeddings.js', async (orig) => {
 });
 
 import { initDatabase } from '../src/db.js';
-import { searchConversations, searchConversationsDetailed, formatResults, VEC_KNN_K_MAX } from '../src/search.js';
+import { searchConversations, searchConversationsDetailed, formatResults, VEC_KNN_K_MAX, VEC_KNN_FLAT_K } from '../src/search.js';
 import { seedExchanges, type SeedRow } from './helpers/search-seed.js';
 
 // SQ-03 — date/agent filters used to run AFTER the KNN's top-k cut (k = limit), so a row
@@ -92,14 +92,50 @@ describe('vector search with row filters (bounded over-fetch)', () => {
     seedExchanges(db, rows);
     db.close();
 
+    const { results, meta } = await searchConversationsDetailed('anything', { mode: 'vector', limit: 20, after: '2026-01-01' });
+    expect(results).toHaveLength(20);
+    expect(results.every((r) => r.exchange.timestamp.startsWith('2026'))).toBe(true);
+    // 160 at first (20 × 8) → about 16 pass → next k = max(640, 160 × 20 × 2 / 16 = 400) = 640: two rounds, done
+    expect(meta.vector).toMatchObject({ k: 640, candidates: 640, truncated: false });
+    // about every 10th of the nearest 640 (int8 ties at the edge make it ±a few)
+    expect(meta.vector!.matched).toBeGreaterThanOrEqual(58);
+    expect(meta.vector!.matched).toBeLessThanOrEqual(70);
+  });
+
+  // F10 — sqlite-vec selects the nearest min(k, 1024) of every 1,024-vector chunk, so a KNN costs the same for
+  // any k from 1,024 up (341,840 vectors: k 400 → 145 ms, 1,600 → 300 ms, 4,096 → 300 ms). A k in between
+  // paid the ceiling's price for fewer candidates and often needed one more round at the ceiling.
+  it('a next k at or above the vec0 chunk size goes to the ceiling at once', async () => {
+    expect(VEC_KNN_FLAT_K).toBe(1024);
+    const db = initDatabase();
+    // every 10th of 1,500 rows passes the filter: about 32 of the nearest 320
+    const rows: SeedRow[] = Array.from({ length: 1500 }, (_, i) => ({
+      id: `row-${String(i).padStart(4, '0')}`,
+      theta: 0.05 + i * 0.0008,
+      timestamp: i % 10 === 0 ? '2026-10-20T00:00:00.000Z' : '2025-03-01T00:00:00.000Z',
+    }));
+    seedExchanges(db, rows);
+    db.close();
+
     const { results, meta } = await searchConversationsDetailed('anything', { mode: 'vector', limit: 40, after: '2026-01-01' });
     expect(results).toHaveLength(40);
     expect(results.every((r) => r.exchange.timestamp.startsWith('2026'))).toBe(true);
-    // 320 at first (40 × 8) → about 32 pass → next k = max(1280, 320 × 40 × 2 / 32 = 800) = 1280: two rounds, done
-    expect(meta.vector).toMatchObject({ k: 1280, candidates: 1280, truncated: false });
-    // about every 10th of the nearest 1,280 (int8 ties at the edge make it ±a few)
-    expect(meta.vector!.matched).toBeGreaterThanOrEqual(120);
-    expect(meta.vector!.matched).toBeLessThanOrEqual(136);
+    // 320 at first (40 × 8) → about 32 pass → the pass rate asks for max(1280, 800) = 1280 → the ceiling
+    // instead (the index holds 1,500 rows, so it is read whole: 150 pass)
+    expect(meta.vector).toEqual({ k: 4096, candidates: 1500, matched: 150, truncated: false });
+  });
+
+  it('starts at the k the caller names (a caller that just searched this index under the same filters)', async () => {
+    const db = initDatabase();
+    seedExchanges(db, [...oldNearRows(120), { id: 'recent', theta: 0.9, timestamp: '2026-10-20T00:00:00.000Z' }]);
+    db.close();
+
+    const guessed = await searchConversationsDetailed('anything', { mode: 'vector', limit: 1, after: '2026-01-01' });
+    // 64 at first, nothing passes → the ceiling
+    expect(guessed.meta.vector).toEqual({ k: 4096, candidates: 121, matched: 1, truncated: false });
+    const told = await searchConversationsDetailed('anything', { mode: 'vector', limit: 1, after: '2026-01-01', vector_first_k: 256 });
+    expect(told.results.map((r) => r.exchange.id)).toEqual(['recent']);
+    expect(told.meta.vector).toEqual({ k: 256, candidates: 121, matched: 1, truncated: false });
   });
 
   it('an index that runs out before `limit` is not reported as truncated', async () => {

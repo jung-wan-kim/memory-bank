@@ -175,6 +175,35 @@ describe('multi-concept search finds exchanges that contain every concept\'s wor
     expect((await searchMultipleConcepts(['Paddle', 'webhook'], { limit: 1 })).map((r) => r.matchedBy)).toEqual(['keyword']);
   });
 
+  // F10 — every concept used to start its vector pass from the same guess (k = 8 × what it wants) and grow from
+  // there. How many of the nearest vectors pass belongs to the index and the filters, not to the concept: on an
+  // index that is mostly machine noise each concept paid for the round that was too small.
+  it('a later concept starts its vector pass at the k an earlier one needed', async () => {
+    const noise = (prefix: string, axis: number) => Array.from({ length: 450 }, (_, i) => ({
+      id: `${prefix}-noise-${i}`, user: 'Warmup', vector: near(axis, 0.01 + i * 0.0005, axis + 1 + (i % 90)), sidechain: true,
+    }));
+    seed([...noise('a', 0), ...noise('b', 200)]);
+
+    const { getSearchDb } = await import('../src/search.js');
+    const db = getSearchDb();
+    const ks: number[] = [];
+    const original = db.prepare.bind(db);
+    (db as { prepare: unknown }).prepare = (text: string) => {
+      const stmt = original(text);
+      if (!/FROM vec_exchanges AS vec/.test(text)) return stmt;
+      const all = stmt.all.bind(stmt);
+      (stmt as { all: unknown }).all = (...params: unknown[]) => { ks.push(params[params.length - 1] as number); return all(...params); };
+      return stmt;
+    };
+    try {
+      await searchMultipleConcepts(['Paddle', 'webhook'], { limit: 10 });
+    } finally {
+      delete (db as { prepare?: unknown }).prepare;
+    }
+    // first concept: 400 (10 × 5 × 8), nothing but noise among them → the ceiling. Second concept: the ceiling at once.
+    expect(ks).toEqual([400, 4096, 4096]);
+  });
+
   it('machine-noise turns are not keyword matches unless asked for', async () => {
     seed([{ id: 'noise', user: 'Warmup', assistant: 'the Paddle webhook is ready', vector: near(0, 1.2, 300), sidechain: true }]);
     expect(await searchMultipleConcepts(['Paddle', 'webhook'], { limit: 5 })).toEqual([]);

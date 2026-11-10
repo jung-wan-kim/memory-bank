@@ -85,6 +85,14 @@ export interface SearchOptions {
    * the multi-concept search, where "some of the words" is not a match.
    */
   require_all_tokens?: boolean;
+  /**
+   * Vector pass: the k of its first KNN round, instead of the guess (8 × limit when rows are filtered). For a
+   * caller that has just searched the same index under the same filters and saw the k that took
+   * (SearchMeta.vector.k): how many of the nearest vectors pass is a property of the index and the filters,
+   * and every round is a scan of the whole index. The turns returned do not depend on it (a larger k can
+   * only bring a more complete snapshot of a returned turn into view).
+   */
+  vector_first_k?: number;
 }
 
 /** First characters of the prompts another memory plugin's observer session sends — not a person asking. */
@@ -108,6 +116,20 @@ export const NOISE_EXCHANGE_SQL =
 
 /** sqlite-vec refuses a KNN whose k is above this ("k value in knn query too large … the limit is 4096"). */
 export const VEC_KNN_K_MAX = 4096;
+
+/**
+ * From this k up a KNN costs what one at the ceiling costs: vec0 scans every vector whatever k is, and
+ * selects the nearest min(k, 1024) of each 1,024-vector chunk. Measured on 341,840 int8 vectors:
+ * k 10 → 45 ms, 50 → 60 ms, 400 → 145 ms, 1,600 → 300 ms, 4,096 → 300 ms. The vector pass therefore never
+ * asks for a k between this and the ceiling — it would pay the ceiling's price for fewer candidates, and
+ * then often for one more round at the ceiling.
+ */
+export const VEC_KNN_FLAT_K = 1024;
+
+/** `k` as the vector pass asks for it: within the sqlite-vec limit, and the ceiling once the cost is flat. */
+function knnK(k: number): number {
+  return k >= VEC_KNN_FLAT_K ? VEC_KNN_K_MAX : Math.max(1, Math.ceil(k));
+}
 
 /** Reciprocal-rank-fusion constant for merging the vector and keyword passes in `both` mode. */
 const RRF_K = 60;
@@ -242,7 +264,7 @@ export async function searchConversationsDetailed(
   query: string,
   options: SearchOptions = {}
 ): Promise<{ results: SearchHit[]; meta: SearchMeta }> {
-  const { limit = 10, mode = 'both', after, before, coding_agent, include_noise = false, require_all_tokens = false } = options;
+  const { limit = 10, mode = 'both', after, before, coding_agent, include_noise = false, require_all_tokens = false, vector_first_k } = options;
 
   // Validate date parameters
   if (after) validateISODate(after, '--after');
@@ -357,7 +379,9 @@ export async function searchConversationsDetailed(
         // has not upgraded yet (newest sessions are upgraded first).
         const blob = embeddingToVecBlob(queryEmbedding, vecQuant);
         const want = Math.min(limit, VEC_KNN_K_MAX);
-        let k = rowClause ? Math.min(VEC_KNN_K_MAX, Math.max(want * 8, 64)) : want;
+        let k = vector_first_k !== undefined
+          ? knnK(Math.max(want, vector_first_k))
+          : rowClause ? knnK(Math.max(want * 8, 64)) : want;
         type Candidate = { id: string; distance: number; archive_path: string; line_start: number; line_end: number; pass: number };
         for (;;) {
           const candidates = stmt.all(EMBEDDING_VERSION, ...timeParams, blob, k) as Candidate[];
@@ -388,8 +412,8 @@ export async function searchConversationsDetailed(
           }
           // Each round is a full scan of the index, so take as few as possible: at least ×4, and when the
           // pass rate seen so far says that cannot fill `want` either, twice what the rate implies (the
-          // ceiling when nothing has passed yet).
-          k = Math.min(VEC_KNN_K_MAX, Math.max(k * 4, turns.length === 0 ? VEC_KNN_K_MAX : Math.ceil((k * want * 2) / turns.length)));
+          // ceiling when nothing has passed yet, or when the k asked for is where the cost is flat anyway).
+          k = knnK(Math.max(k * 4, turns.length === 0 ? VEC_KNN_K_MAX : Math.ceil((k * want * 2) / turns.length)));
         }
       };
 
@@ -1121,10 +1145,20 @@ export async function searchMultipleConcepts(
     return [];
   }
 
-  // Search for each concept independently
-  const conceptResults = await Promise.all(
-    concepts.map(concept => searchConversations(concept, { ...options, limit: limit * 5, mode: 'vector' }))
-  );
+  // Search for each concept independently — one after the other (the database calls are synchronous anyway),
+  // each starting its vector pass at the largest k an earlier concept needed: the share of the nearest vectors
+  // that pass the row conditions belongs to the index and the filters, not to the concept. On an index that
+  // is mostly machine noise every concept used to pay for a first round that was too small (measured: 5 of
+  // 37 per-concept searches were done after one round).
+  const conceptResults: SearchHit[][] = [];
+  let firstK: number | undefined;
+  for (const concept of concepts) {
+    const { results, meta } = await searchConversationsDetailed(concept, {
+      ...options, limit: limit * 5, mode: 'vector', vector_first_k: firstK,
+    });
+    conceptResults.push(results);
+    if (meta.vector && meta.vector.k > (firstK ?? 0)) firstK = meta.vector.k;
+  }
 
   // Build map of conversation path -> array of results (one per concept)
   const conversationMap = new Map<string, Array<SearchResult & { conceptIndex: number }>>();
