@@ -559,6 +559,123 @@ export function searchAllFacts(
   return results;
 }
 
+/** sqlite-vec's ceiling for one KNN (`LIMIT`/k above it is refused). */
+export const FACT_KNN_MAX = 4096;
+
+export interface FilteredFactSearch {
+  /** The project whose facts (plus global facts) are in scope; null = every scope. */
+  project: string | null;
+  /**
+   * 'in-scope' (default): the project's facts and global facts.
+   * 'other-projects': project-scoped facts of projects OTHER than `project` (cross-project insights).
+   */
+  scope?: 'in-scope' | 'other-projects';
+  limit?: number;
+  threshold?: number;
+  /** A further condition on the fact (category, agent, tags …). */
+  filter?: (fact: Fact) => boolean;
+  /** Fold facts whose sentence is identical (whitespace and case ignored) into the best-ranked one. */
+  foldSameText?: boolean;
+}
+
+export interface FilteredFactHit {
+  fact: Fact;
+  distance: number;
+  /** Ids of the other facts that carry the same sentence (foldSameText), best-ranked first. */
+  duplicateIds: string[];
+}
+
+/**
+ * Nearest facts under conditions that are applied BEFORE the cut to `limit`.
+ *
+ * searchSimilarFacts takes a fixed number of candidates (max(limit×2, 50) per table) and filters after
+ * it; the MCP tools then filtered once more after ITS cut. A project whose facts sat behind other
+ * projects' facts, or a category filter, came back with a few rows or none while matching facts existed
+ * (measured: 3 returned of 14 in scope; `category=decision` → 0 with 2 in the top 50). Here the candidate
+ * list grows ×4 until `limit` facts pass every condition, the indexes run out, the similarity threshold is
+ * crossed, or the sqlite-vec ceiling is reached — and `truncated` says when it was the ceiling.
+ * Both language indexes are searched (the best distance per fact wins), like searchSimilarFacts.
+ */
+export function searchFactsFiltered(
+  db: Database.Database,
+  embedding: number[],
+  opts: FilteredFactSearch,
+): { results: FilteredFactHit[]; examined: number; truncated: boolean } {
+  const limit = opts.limit ?? 5;
+  const threshold = opts.threshold ?? 0.85;
+  const canonProject = opts.project ? canonicalizeProject(db, opts.project) : opts.project;
+  const inScope = scopeMatcher(canonProject, false);
+  const scopeOk = opts.scope === 'other-projects'
+    ? (fact: Fact) => fact.scope_type === 'project' && fact.scope_project !== canonProject
+    : (fact: Fact) => fact.scope_type !== 'project' || inScope(fact.scope_project);
+
+  const knn = (table: FactVecTable, n: number) => factKnn(table, () => {
+    const p = vecParamFor(db, table, embedding);
+    const rows = db.prepare(`
+      SELECT id, distance FROM ${table}
+      WHERE embedding MATCH ${p.sql}
+      ORDER BY distance
+      LIMIT ?
+    `).all(p.blob, n) as Array<{ id: string; distance: number }>;
+    // Normalize ×scale int8 distances BEFORE the cross-table merge.
+    for (const r of rows) r.distance = normalizeVecDistance(r.distance, p.q);
+    return rows;
+  }, [] as Array<{ id: string; distance: number }>);
+  const rowStmt = db.prepare('SELECT * FROM facts WHERE id = ? AND is_active = 1 AND embedding_version = ?');
+
+  for (let fetchCount = Math.min(FACT_KNN_MAX, Math.max(limit * 4, 50)); ; fetchCount = Math.min(fetchCount * 4, FACT_KNN_MAX)) {
+    const a = knn('vec_facts', fetchCount);
+    const b = knn('vec_facts_kr', fetchCount);
+    const best = new Map<string, number>();
+    for (const vr of [...a, ...b]) {
+      const cur = best.get(vr.id);
+      if (cur === undefined || vr.distance < cur) best.set(vr.id, vr.distance);
+    }
+    const merged = [...best.entries()].map(([id, distance]) => ({ id, distance })).sort((x, y) => x.distance - y.distance);
+
+    const results: FilteredFactHit[] = [];
+    const bySentence = new Map<string, FilteredFactHit>();
+    let crossedThreshold = false;
+    for (const vr of merged) {
+      if (l2DistanceToSimilarity(vr.distance) < threshold) {
+        crossedThreshold = true; // sorted by distance: nothing further can pass
+        break;
+      }
+      // Once the limit is filled the rest of this list is read only to find copies of what is shown.
+      if (results.length >= limit && !opts.foldSameText) break;
+      const row = rowStmt.get(vr.id, EMBEDDING_VERSION) as Record<string, unknown> | undefined;
+      if (!row) continue; // inactive, or a vector the re-embed worker has not upgraded yet
+      const fact = rowToFact(row);
+      if (!scopeOk(fact)) continue;
+      if (opts.filter && !opts.filter(fact)) continue;
+
+      if (opts.foldSameText) {
+        const key = fact.fact.replace(/\s+/g, ' ').trim().toLowerCase();
+        const shown = bySentence.get(key);
+        if (shown) {
+          shown.duplicateIds.push(fact.id);
+          continue;
+        }
+        if (results.length >= limit) continue;
+        const hit: FilteredFactHit = { fact, distance: vr.distance, duplicateIds: [] };
+        bySentence.set(key, hit);
+        results.push(hit);
+      } else {
+        results.push({ fact, distance: vr.distance, duplicateIds: [] });
+      }
+    }
+
+    const exhausted = a.length < fetchCount && b.length < fetchCount;
+    if (results.length >= limit || exhausted || crossedThreshold || fetchCount >= FACT_KNN_MAX) {
+      return {
+        results,
+        examined: merged.length,
+        truncated: results.length < limit && !exhausted && !crossedThreshold,
+      };
+    }
+  }
+}
+
 function rowToFact(row: Record<string, unknown>): Fact {
   const embeddingRaw = row['embedding'];
   let embedding: Float32Array | null = null;

@@ -195,6 +195,47 @@ describe('MCP server over stdio', () => {
     });
   });
 
+  describe('search (keyword mode — no embedding model needed)', () => {
+    it('json: clipped messages with where to read them; noise left out unless asked for', async () => {
+      await call('graph_stats', {}); // creates the schema if no tool has yet
+      const db = new Database(path.join(configDir, 'conversation-index', 'db.sqlite'));
+      const insert = db.prepare(`
+        INSERT INTO exchanges (id, project, timestamp, user_message, assistant_message, archive_path, line_start, line_end, is_sidechain, coding_agent)
+        VALUES (?, 'demo-project', ?, ?, ?, ?, ?, ?, ?, 'claude-code')
+      `);
+      const archive = path.join(archiveProject, 'short.jsonl');
+      db.transaction(() => {
+        insert.run('ex-real', '2026-10-01T00:00:00.000Z', 'why did the quokka migration fail ' + 'q'.repeat(30_000), 'because ' + 'a'.repeat(30_000), archive, 1, 2, 0);
+        insert.run('ex-warmup', '2026-10-02T00:00:00.000Z', 'Warmup', 'Ready to help with the quokka migration.', archive, 3, 4, 1);
+        insert.run('ex-snapshot', '2026-10-01T00:00:00.000Z', 'why did the quokka migration fail ' + 'q'.repeat(30_000), 'because ' + 'a'.repeat(40_000), archive, 1, 6, 0);
+      })();
+      db.close();
+
+      const answer = await call('search', { query: 'quokka', mode: 'text', response_format: 'json', limit: 50 });
+      expect(answer.isError).toBe(false);
+      expect(answer.text.length).toBeLessThan(3_000);
+      const parsed = JSON.parse(answer.text) as {
+        count: number; notes: string[]; hint: string;
+        results: Array<{ exchange: { id: string; archivePath: string; lineStart: number; lineEnd: number; userMessage: string }; matchedBy: string; clipped: boolean }>;
+      };
+      // one result: the warm-up turn is left out and the two snapshots of the turn are folded into the longer one
+      expect(parsed.results.map((r) => r.exchange.id)).toEqual(['ex-snapshot']);
+      expect(parsed.results[0]).toMatchObject({ matchedBy: 'text', clipped: true });
+      expect(parsed.results[0].exchange).toMatchObject({ archivePath: archive, lineStart: 1, lineEnd: 6 });
+      expect(parsed.results[0].exchange.userMessage.length).toBeLessThanOrEqual(501);
+      expect(parsed.notes).toEqual([]);
+      expect(parsed.hint).toMatch(/read tool/);
+
+      const withNoise = JSON.parse((await call('search', { query: 'quokka', mode: 'text', response_format: 'json', include_noise: true })).text) as { results: Array<{ exchange: { id: string } }> };
+      expect(withNoise.results.map((r) => r.exchange.id).sort()).toEqual(['ex-snapshot', 'ex-warmup']);
+    });
+
+    it('rejects an argument the schema does not declare', async () => {
+      const { isError } = await call('search', { query: 'quokka', mode: 'text', include_everything: true });
+      expect(isError).toBe(true);
+    });
+  });
+
   it('the server wrote nothing unexpected to stderr', () => {
     expect(serverStderr).not.toMatch(/Server error|UnhandledPromiseRejection|TypeError|ReferenceError/);
   });
