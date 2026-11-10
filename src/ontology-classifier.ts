@@ -1004,25 +1004,33 @@ function memoryDocumentOf(fact: Fact): string | null {
   return null;
 }
 
-/** The set of source exchanges a fact cites, as one comparable string; null when it cites none. */
-function sourceSetKey(fact: Fact): string | null {
-  const ids = (fact.source_exchange_ids ?? []).filter((x) => typeof x === 'string');
+// An exchange id as parser.ts makes it (md5 hex). source_exchange_ids also
+// holds importer markers — `memory-doc:…`, a tool's own namespace (643 live
+// facts share one such marker) — which say nothing about when a fact was
+// stated; facts sharing only a marker are ordered by their storage time.
+const EXCHANGE_ID = /^[0-9a-f]{32}$/;
+
+/** The set of conversation exchanges a fact cites, as one comparable string; null when it cites none. */
+function exchangeSetKey(fact: Fact): string | null {
+  const ids = (fact.source_exchange_ids ?? []).filter((x) => typeof x === 'string' && EXCHANGE_ID.test(x));
   return ids.length > 0 ? JSON.stringify([...new Set(ids)].sort()) : null;
 }
 
 /**
  * Siblings are two facts with no order in time between them: saved by one
  * extraction (the caller's `siblingIds`, or the same set of source exchanges —
- * an extraction stamps every fact of a session with all of its exchanges), or
- * two lines of one memory document (both are the document's current content;
- * its sync decides which line lives).
+ * an extraction stamps every fact of a session with all of its exchanges, and
+ * half of those sets no longer resolve to an exchange row, so the tie cannot
+ * be read off the stated-at time alone), or two lines of one memory document
+ * (both are the document's current content; its sync decides which line
+ * lives).
  */
 function areSiblings(a: Fact, b: Fact, siblingIds?: ReadonlySet<string>): boolean {
   if (siblingIds?.has(a.id) && siblingIds.has(b.id)) return true;
   const docA = memoryDocumentOf(a);
   if (docA !== null) return docA === memoryDocumentOf(b);
-  const sources = sourceSetKey(a);
-  return sources !== null && sources === sourceSetKey(b);
+  const exchanges = exchangeSetKey(a);
+  return exchanges !== null && exchanges === exchangeSetKey(b);
 }
 
 export interface DetectRelationsOptions {
@@ -1121,11 +1129,12 @@ export async function detectRelations(
 
       if (result && result.has_relation && result.relation_type) {
         // SUPERSEDES says one fact is the later belief. Between siblings no
-        // order exists — their stated-at times tie and the orientation above
-        // fell to id order — so the verdict would mark an arbitrary one of
-        // the two as replaced: 624 of 2,053 live SUPERSEDES rows join facts
-        // of one extraction and 442 join lines of one memory document
-        // (2026-11-10). Other verdicts between siblings are kept.
+        // order exists — their stated-at times tie (or fall back to the
+        // milliseconds between two inserts of one save) and the orientation
+        // above is arbitrary — so the verdict would mark an arbitrary one of
+        // the two as replaced: 139 of 2,053 live SUPERSEDES rows join facts
+        // with the same source exchanges and 442 join lines of one memory
+        // document (2026-11-10). Other verdicts between siblings are kept.
         if (result.relation_type === 'SUPERSEDES' && areSiblings(newer, older, opts.siblingIds)) {
           stats.siblingSupersedes++;
           continue;
