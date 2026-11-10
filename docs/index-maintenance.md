@@ -283,6 +283,14 @@ node scripts/requeue-zero-markers.mjs [--db PATH] --undo FILE                   
   refused). If the file cannot be written, no row changes.
 - `--undo FILE` puts the markers back for the sessions nothing has touched
   since (no marker and no claim today) and says how many it left alone.
+- The survey that finds the markers runs without the write lock. `--apply`
+  then judges the chosen sessions again under it — the same judgment, narrowed
+  to them — so a session claimed, extracted or given a fact since the survey is
+  left alone. Of the fact table that second judgment reads the rows stored
+  since the survey (`facts read again under the write lock: N stored since the
+  survey (of M)`); it reads every row again when a row the survey had read is
+  gone or replaced, or when a chosen session has an exchange the survey had not
+  seen (the line then says `all M` and why).
 - **Cost.** Each requeued session is extracted by the backfill worker: up to
   `MEMORY_BANK_MAX_EXTRACT_CALLS` extraction batches per session (default 12,
   at most 60; a batch that fails for a transient reason is tried again), plus

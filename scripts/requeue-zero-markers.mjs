@@ -17,7 +17,8 @@
  *       changes, every marker row about to be removed is written to the undo
  *       file (default: next to the database). The survey runs without the
  *       write lock; the write transaction only judges the chosen sessions
- *       again and removes the ones that still qualify.
+ *       again — reading, of the fact table, the rows stored since the survey —
+ *       and removes the ones that still qualify.
  *   node scripts/requeue-zero-markers.mjs [--db PATH] --undo FILE
  *       Put back the markers an --apply run removed, for the sessions nothing
  *       has touched since (no marker and no claim today).
@@ -102,21 +103,101 @@ function sessionProject(db, sid) {
 }
 
 /**
+ * Where the fact table ended when it was read: its last row (rowid, id, source
+ * list) and how many rows there are. null when there is no fact table. Taken in
+ * the survey's read snapshot; --apply hands it — with the exchange ids the
+ * survey looked for — to the judgment it runs again under the write lock (see
+ * factsToReadAgain).
+ */
+function factTableMark(db) {
+  if (columnsOf(db, 'facts').length === 0) return null;
+  const top = db.prepare('SELECT rowid AS r, id, source_exchange_ids AS sources FROM main.facts ORDER BY rowid DESC LIMIT 1').get();
+  if (!top) return { maxRowid: 0, maxId: null, maxSources: null, rows: 0 };
+  return { maxRowid: top.r, maxId: top.id, maxSources: top.sources, rows: db.prepare('SELECT COUNT(*) AS n FROM main.facts').get().n };
+}
+
+/**
+ * Which fact rows the judgment under the write lock has to read: only the rows
+ * stored since the survey ({ afterRowid }), or every row ({ everyRow: why }).
+ *
+ * Reading every source list again was most of the time the write lock was held
+ * (measured on a database of 46,507 facts, 61MB of source lists: 2.2s of 3.1s,
+ * whatever --limit said). The survey has already read the rows that were there,
+ * looking for the same exchange ids, and what those rows name does not grow
+ * behind its back: a fact is stored as a new row (extraction, import); a source
+ * list is only ever rewritten to move ids between rows that both exist
+ * (consolidation, the exact-duplicate merge) or from a replaced snapshot of a
+ * turn to its newer row (the survey looks for both — see sessionsWithFacts).
+ * So the rows after the survey's last one are the only new information —
+ * as long as two things still hold, and otherwise every row is read, as before:
+ *
+ *  - The rows the survey read are still the rows up to its last rowid. A new
+ *    row takes max(rowid)+1, so it lands at or below that rowid only if the
+ *    last row is gone — checked three ways: the number of rows up to it, the
+ *    id at it, and its source list (a row replaced under the same id).
+ *  - The chosen sessions have no exchange id the survey did not look for (a
+ *    turn indexed, or indexed again under its old id, since the survey): an
+ *    old fact row may name that id, and the survey could not have matched it.
+ */
+function factsToReadAgain(db, mark, idsLookedFor) {
+  if (mark === null) return { everyRow: 'the survey did not read the fact table' };
+  for (const id of idsLookedFor) {
+    if (!mark.idsLookedFor.has(id)) return { everyRow: 'a chosen session has an exchange the survey had not seen' };
+  }
+  if (mark.maxRowid === 0) return { afterRowid: 0 };   // the table was empty: every row is new
+  // Rows up to the survey's last one = all rows − the rows after it. Counted that way on purpose:
+  // `COUNT(*) … WHERE rowid <= ?` walks the table itself (1.0s on the measured database, under the
+  // write lock), while the total is read off an index and the rows after are a seek to the end.
+  const total = db.prepare('SELECT COUNT(*) AS n FROM main.facts').get().n;
+  const after = db.prepare('SELECT COUNT(*) AS n FROM main.facts WHERE rowid > ?').get(mark.maxRowid).n;
+  const upTo = total - after;
+  const top = db.prepare('SELECT id, source_exchange_ids AS sources FROM main.facts WHERE rowid = ?').get(mark.maxRowid);
+  if (upTo !== mark.rows || !top || top.id !== mark.maxId || top.sources !== mark.maxSources) {
+    return { everyRow: 'a fact row the survey had read is gone or was replaced' };
+  }
+  return { afterRowid: mark.maxRowid };
+}
+
+/**
  * Of the given sessions, the ones some stored fact names an exchange of as a
  * source (active or not — a deactivated fact was still extracted). The backfill
- * worker's seedFromExistingFacts reads the same column the same way. One pass
- * over the fact table; the sessions' exchange ids come from temp.requeue_exchanges.
+ * worker's seedFromExistingFacts reads the same column the same way. The
+ * sessions' exchange ids come from temp.requeue_exchanges — and, for a snapshot
+ * of a turn that was replaced and whose facts are not re-pointed yet, from the
+ * re-point queue: that id is in no exchanges row any more, and the fact that
+ * names it was still extracted from this session.
+ *
+ * One pass over the fact table — or, with `mark` (the judgment under the write
+ * lock), over the rows stored since the survey read it (factsToReadAgain).
+ * Returns the sessions, what was read, and the exchange ids it looked for.
  */
-function sessionsWithFacts(db, sessions) {
+function sessionsWithFacts(db, sessions, mark = undefined) {
   const yielded = new Set();
-  if (columnsOf(db, 'facts').length === 0) return yielded;
+  const read = { rows: 0, total: 0, everyRow: null };
   const sessionOf = new Map();
+  if (columnsOf(db, 'facts').length === 0) return { yielded, read, idsLookedFor: new Set() };
   const exchangeIds = db.prepare('SELECT id FROM temp.requeue_exchanges WHERE session_id = ?');
   for (const s of sessions) for (const e of exchangeIds.all(s.sid)) sessionOf.set(e.id, s.sid);
-  if (sessionOf.size === 0) return yielded;
+  if (sessionOf.size > 0 && columnsOf(db, 'exchange_repoints').length > 0) {
+    // The queued pair names the row that replaced the snapshot; that row's session is the snapshot's.
+    for (const q of db.prepare('SELECT from_id AS fromId, to_id AS toId FROM main.exchange_repoints').all()) {
+      const sid = sessionOf.get(q.toId);
+      if (sid !== undefined && !sessionOf.has(q.fromId)) sessionOf.set(q.fromId, sid);
+    }
+  }
+  const idsLookedFor = new Set(sessionOf.keys());
+  // `mark` undefined: the survey itself — every row. Otherwise the judgment under the lock.
+  const since = mark === undefined ? { everyRow: null } : factsToReadAgain(db, mark, idsLookedFor);
+  const everyRow = since.afterRowid === undefined;
+  read.everyRow = everyRow ? since.everyRow : null;
+  // What this call answers for (the output line reports it), counted before the read starts.
+  read.total = db.prepare('SELECT COUNT(*) AS n FROM main.facts').get().n;
+  read.rows = everyRow ? read.total : db.prepare('SELECT COUNT(*) AS n FROM main.facts WHERE rowid > ?').get(since.afterRowid).n;
+  if (sessionOf.size === 0) return { yielded, read, idsLookedFor };
   const rows = db.prepare(
-    "SELECT source_exchange_ids FROM main.facts WHERE source_exchange_ids IS NOT NULL AND source_exchange_ids != '[]'",
-  ).iterate();
+    "SELECT source_exchange_ids FROM main.facts WHERE source_exchange_ids IS NOT NULL AND source_exchange_ids != '[]'"
+      + (everyRow ? '' : ' AND rowid > ?'),
+  ).iterate(...(everyRow ? [] : [since.afterRowid]));
   for (const row of rows) {
     let parsed;
     try { parsed = JSON.parse(row.source_exchange_ids); } catch { continue; }   // a malformed list names no exchange
@@ -126,7 +207,7 @@ function sessionsWithFacts(db, sessions) {
       if (sid !== undefined) yielded.add(sid);
     }
   }
-  return yielded;
+  return { yielded, read, idsLookedFor };
 }
 
 // The message text and the stored vector are what make an exchanges row large; nothing here reads them.
@@ -146,9 +227,11 @@ function dropTemp(db) {
 /**
  * The markers to remove, newest session first, and why the others stay.
  * `only` (session ids) narrows the whole judgment to those sessions — what
- * --apply runs again under the write lock. Reads the database only; its temp
- * tables and views live in the connection's temp schema and are dropped before
- * it returns (a read-only connection may create them).
+ * --apply runs again under the write lock, with `factsMark` (where the survey's
+ * read of the fact table ended and the exchange ids it looked for) so that only
+ * the fact rows stored since are read again. Reads the database only; its temp tables and views live in the
+ * connection's temp schema and are dropped before it returns (a read-only
+ * connection may create them).
  *
  * The exchanges table is read once: the rows of the zero-marker sessions,
  * reached from the marker side through the session_id index (CROSS JOIN keeps
@@ -159,7 +242,7 @@ function dropTemp(db) {
  * Measured on a real database of 38,088 zero markers and 69,081 main-chain
  * exchanges: no output after 56 minutes; this way the survey takes about 5 seconds.
  */
-function findTargets(db, only = null) {
+function findTargets(db, only = null, factsMark = undefined) {
   dropTemp(db);
   const logCols = columnsOf(db, 'extraction_log');
   if (logCols.length === 0) fail('this database has no extraction_log table');
@@ -251,12 +334,14 @@ function findTargets(db, only = null) {
     counts.excludedByExtractor = pending.length - notExcluded.length;
 
     // Step 4 — not the ones that already yielded facts.
-    const yielded = sessionsWithFacts(db, notExcluded);
+    const { yielded, read: factsRead, idsLookedFor } = sessionsWithFacts(db, notExcluded, factsMark);
     const targets = notExcluded.filter((s) => !yielded.has(s.sid));
     counts.alreadyYieldedFacts = notExcluded.length - targets.length;
     counts.targets = targets.length;
     counts.targetExchanges = targets.reduce((sum, s) => sum + s.n, 0);
-    return { counts, targets };
+    // Where this read of the fact table ended and what it looked for — in the same snapshot as the read itself.
+    const mark = factTableMark(db);
+    return { counts, targets, factsRead, factsMark: mark === null ? null : { ...mark, idsLookedFor } };
   } finally {
     dropTemp(db);
   }
@@ -299,7 +384,7 @@ function apply() {
     // The survey only reads (one read snapshot, no write lock). On a real
     // database it takes seconds, and every other process — indexing, extraction,
     // even a plain open of the database — needs the write lock in that time.
-    const { counts, targets } = db.transaction(() => findTargets(db))();
+    const { counts, targets, factsMark } = db.transaction(() => findTargets(db))();
     printCounts(counts);
     const chosen = limit === null ? targets : targets.slice(0, limit);
     if (chosen.length === 0) {
@@ -311,13 +396,17 @@ function apply() {
     // findTargets, narrowed to them — and removes the ones that still qualify.
     // No extraction can claim, re-mark or extract one of them between that
     // judgment and the DELETE, so the undo file lists exactly the rows this run
-    // removed. A session that changed since the survey is left alone.
+    // removed. A session that changed since the survey is left alone. Of the
+    // fact table it reads the rows stored since the survey (factsToReadAgain).
     let noLongerQualified = 0;
     let lockedMs = 0;
+    let factsRead = null;
     const removed = db.transaction(() => {
       const lockedAt = Date.now();
       try {
-        const still = new Set(findTargets(db, chosen.map((s) => s.sid)).targets.map((s) => s.sid));
+        const judged = findTargets(db, chosen.map((s) => s.sid), factsMark);
+        factsRead = judged.factsRead;
+        const still = new Set(judged.targets.map((s) => s.sid));
         const confirmed = chosen.filter((s) => still.has(s.sid));
         noLongerQualified = chosen.length - confirmed.length;
         if (confirmed.length === 0) return 0;
@@ -360,6 +449,11 @@ function apply() {
       console.log('The backfill worker extracts them on its next runs (BACKFILL_EXTRACT_MAX sessions per run, after the quiet period).');
     }
     console.log(`write lock held for about ${lockedMs}ms (the survey ran without it).`);
+    if (factsRead !== null) {
+      console.log(factsRead.everyRow !== null
+        ? `facts read again under the write lock: all ${factsRead.total} (${factsRead.everyRow})`
+        : `facts read again under the write lock: ${factsRead.rows} stored since the survey (of ${factsRead.total})`);
+    }
   } catch (e) {
     // The transaction rolled back: an undo file left behind would describe a change that did not happen.
     if (undoWritten) { try { fs.unlinkSync(undoPath); } catch { /* reported below */ } }
