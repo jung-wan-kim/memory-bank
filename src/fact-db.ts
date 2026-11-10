@@ -473,7 +473,10 @@ export function getTopFacts(
 
   // The family predicate reads the filesystem, so it runs over the distinct project
   // scopes (an index-only read, a few hundred values), not over fact rows.
-  const inScope = scopeMatcher(project, true);
+  // No project (empty cwd) = no project facts: scopeMatcher reads a missing project as "every
+  // scope is visible" (its meaning for searches), which here would put every project's facts
+  // into one session's block.
+  const inScope = project ? scopeMatcher(project, true) : () => false;
   const scopes = (db.prepare("SELECT DISTINCT scope_project AS s FROM facts WHERE scope_type = 'project'")
     .all() as Array<{ s: string | null }>)
     .map((r) => r.s)

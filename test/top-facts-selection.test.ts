@@ -199,6 +199,15 @@ describe('getTopFacts — 저장소 가족 scope', () => {
     expect(getTopFacts(db, R, 10, { globalMax: 0 }).map((f) => f.id)).toEqual([repoFact, wtFact]);
   });
 
+  it('프로젝트를 모르면(빈 문자열) 어느 프로젝트의 사실도 싣지 않는다 — 전역 사실만', () => {
+    // scopeMatcher 는 프로젝트가 없으면 「모든 scope 가 보인다」고 답한다(검색용). 이 블록에서 그대로 쓰면
+    // 다른 프로젝트들의 사실이 한 세션에 섞여 실린다.
+    seed({ fact: 'Project A private fact', scope: '/proj-a' });
+    seed({ fact: 'Project B private fact', scope: '/proj-b' });
+    const g = seed({ fact: 'A global fact' });
+    expect(getTopFacts(db, '', 10).map((f) => f.id)).toEqual([g]);
+  });
+
   it('저장소가 아닌 경로(없는 경로 포함)는 예전처럼 정확히 같은 scope 만 본다', () => {
     const mine = seed({ fact: 'Exact scope fact', scope: '/tmp/mb-no-such-dir/x' });
     seed({ fact: 'Child path fact', scope: '/tmp/mb-no-such-dir/x/sub' });
