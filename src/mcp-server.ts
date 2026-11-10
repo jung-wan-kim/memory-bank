@@ -297,7 +297,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'read',
-        description: `Read a conversation (or a line range of it) after finding relevant results with search. Essential for understanding the complete rationale, evolution, and gotchas behind past decisions. Pass the "Lines A-B" range a search result reports as startLine/endLine (1-indexed, inclusive). One call returns at most ${READ_MAX_OUTPUT_CHARS} characters: a longer range ends with "Output truncated … Continue with startLine=N" — call again with the values that line names. When the answer stopped inside one message longer than the limit, the line also names startChar=M, so a message of any length can be read to its end. Tool inputs/results longer than ${READ_MAX_BLOCK_CHARS} characters are clipped ("…[+N chars not shown …]") unless full is true. A range outside the file is an error that names the file's line count.`,
+        description: `Read a conversation (or a line range of it) after finding relevant results with search. Essential for understanding the complete rationale, evolution, and gotchas behind past decisions. Pass the "Lines A-B" range a search result reports as startLine/endLine (1-indexed, inclusive). One call returns at most ${READ_MAX_OUTPUT_CHARS} characters: a longer range ends with "Output truncated … Continue with startLine=N" — call again with every value that line names. When the answer stopped inside one message longer than the limit, the line also names startChar=M (without it the message starts over), so a message of any length can be read to its end. Tool inputs/results longer than ${READ_MAX_BLOCK_CHARS} characters are clipped ("…[+N chars not shown …]") unless full is true. A range outside the file is an error that names the file's line count.`,
         inputSchema: {
           type: 'object',
           properties: {
@@ -462,11 +462,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'graph_stats',
-        description: 'Get knowledge graph statistics: total facts, domains, categories, relations, and top domains by fact count. Useful for understanding what knowledge has been accumulated.',
+        description: 'Get knowledge graph statistics: total facts, domains, categories, relations, and top domains by fact count. Useful for understanding what knowledge has been accumulated. The totals are always of the whole graph (every project).',
         inputSchema: {
           type: 'object',
           properties: {
-            project: { type: 'string', description: 'Project path to scope stats (optional, default: all)' },
+            project: { type: 'string', description: 'Accepted for compatibility and not applied: the totals always cover the whole graph' },
           },
           additionalProperties: false,
         },
@@ -528,7 +528,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
-    const { name, arguments: args } = request.params;
+    const { name } = request.params;
+    // `arguments` is optional in tools/call. Left out, it is the empty object: the tools that need no argument
+    // answer as they do for {}, and the others name the argument that is missing (the object schemas used to
+    // be given `undefined`, and every tool answered "expected object, received undefined").
+    const args = request.params.arguments ?? {};
 
     if (name === 'search') {
       const params = SearchInputSchema.parse(args);
@@ -836,7 +840,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     if (name === 'graph_stats') {
-      z.object({
+      // `project` is accepted (callers written against the old description pass it) but no total is scoped
+      // by it — the answer says so instead of letting whole-graph numbers be read as that project's.
+      const params = z.object({
         project: z.string().max(500).optional(),
       }).strict().parse(args);
 
@@ -888,6 +894,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           output += `## Relation Types\n\n`;
           for (const { relation_type, count } of relationBreakdown) output += `- ${relation_type}: ${count}\n`;
           output += '\n';
+        }
+
+        if (params.project !== undefined) {
+          output += '_Note: `project` is not applied: these totals cover the whole graph (every project)._\n';
         }
 
         return { content: [{ type: 'text', text: output }] };

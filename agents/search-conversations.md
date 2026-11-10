@@ -46,7 +46,8 @@ mcp__plugin_memory-bank_memory-bank__read
 `read` returns at most 40,000 characters per call. A longer range ends with a line like
 `Output truncated … Continue with startLine=3, startChar=39907, endLine=11` — call `read` again with
 **every** value that line names (`startLine`, and `startChar` / `endLine` / `full` when present). `startChar`
-appears when the answer stopped inside one long message; with `startLine` alone you get the same piece again.
+appears when the answer stopped inside one long message; with `startLine` alone you get the same piece again,
+every time. If you do not need the rest of that message, the same line says which line to start at to skip it.
 A tool input or result over 2,000 characters is clipped (`…[+N chars not shown — read again with full: true]`):
 pass `full: true` when you need the whole command or output.
 Archived conversations are often stored compressed (`.jsonl.zst`), so the built-in Read tool

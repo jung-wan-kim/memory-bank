@@ -121,15 +121,36 @@ describe('multi-concept search finds exchanges that contain every concept\'s wor
     expect(new Set(six.map((r) => r.exchange.archivePath)).size).toBe(6);
   });
 
-  it('keyword matches are ranked by their similarity to the concepts, not by the keyword pass', async () => {
+  // R2-SEARCH-2 — the keyword matches were re-sorted by their average similarity to the concepts. A one-word
+  // concept and a long turn score in a narrow band whatever the turn is about, so the sort pushed the turn
+  // the keyword pass ranked first out of the answer: on the live index the conversation a fact came from was
+  // in the top 10 for 10 of 70 two-word queries with the sort and for 14 with the keyword order kept.
+  it('keyword matches keep the keyword pass\'s order: their similarity to the concepts does not re-rank them', async () => {
     seed([
-      // the keyword pass ranks this one first (the words repeat), but its vector is far from both concepts
+      // the keyword pass ranks this one first (the words repeat); its vector is the farther one from the concepts
       { id: 'kw-far', user: 'paddle webhook paddle webhook paddle webhook', vector: near(0, 1.5, 300) },
       { id: 'kw-near', user: 'the paddle webhook arrives late after the retry window closes', vector: near(0, 0.6, 301) },
     ]);
     const results = await searchMultipleConcepts(['Paddle', 'webhook'], { limit: 5 });
-    expect(results.map((r) => r.exchange.id)).toEqual(['kw-near', 'kw-far']);
-    expect(results[0].averageSimilarity).toBeGreaterThan(results[1].averageSimilarity);
+    expect(results.map((r) => r.exchange.id)).toEqual(['kw-far', 'kw-near']);
+    // the similarity is still reported for each — it is shown, not ranked by
+    expect(results[0].averageSimilarity).toBeLessThan(results[1].averageSimilarity);
+    expect(results.every((r) => r.matchedBy === 'keyword')).toBe(true);
+  });
+
+  it('a keyword match whose exchange has no vector keeps its keyword rank, with its similarity unknown', async () => {
+    seed([
+      { id: 'kw-first', user: 'paddle webhook paddle webhook paddle webhook', vector: near(0, 1.5, 300) },
+      { id: 'kw-second', user: 'the paddle webhook arrives late after the retry window closes', vector: near(0, 0.6, 301) },
+    ]);
+    const db = initDatabase();
+    db.prepare('DELETE FROM vec_exchanges WHERE id = ?').run('kw-first');
+    db.close();
+
+    const results = await searchMultipleConcepts(['Paddle', 'webhook'], { limit: 5 });
+    expect(results.map((r) => r.exchange.id)).toEqual(['kw-first', 'kw-second']);
+    expect(Number.isNaN(results[0].averageSimilarity)).toBe(true);
+    expect(await formatMultiConceptResults(results, ['Paddle', 'webhook'])).toMatch(/1\. \[demo, 2026-10-01\] - every word in one exchange \(n\/a/);
   });
 
   it('a conversation found both ways ranks above one found one way, and is listed once', async () => {

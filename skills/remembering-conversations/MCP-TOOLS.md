@@ -33,7 +33,7 @@ Search past conversations by meaning, by keyword, or both.
 | `mode` | `"vector"` \| `"text"` \| `"both"` | No | Default `"both"`. Single-string searches only |
 | `limit` | `number` | No | Results returned, 1-50 (default 10). `both` returns at most `limit` rows in total |
 | `after` | `string` | No | Only conversations on or after this date (YYYY-MM-DD, UTC timestamps) |
-| `before` | `string` | No | Only conversations before this date (YYYY-MM-DD, UTC timestamps) |
+| `before` | `string` | No | Only conversations before this date (YYYY-MM-DD, UTC timestamps). With `after`, it must be a later date: an `after` that is the same day as `before` or later is an error (for one day, pass the following day as `before`) |
 | `coding_agent` | `string` | No | Only conversations of this agent (`claude-code`, `codex`, …) |
 | `include_noise` | `boolean` | No | Also return machine-generated turns (default `false`) |
 | `response_format` | `"markdown"` \| `"json"` | No | Default `"markdown"` |
@@ -77,8 +77,9 @@ text of an exchange is read with `read`.
 **Multi-concept search** — `query: ["authentication", "React Router", "error handling"]` returns at most
 `limit` conversations in ONE ranking made from two lists:
 
-- the exchanges that contain every word of every concept, one per conversation, the ones nearest to the
-  concepts first — shown as `every word in one exchange (N% avg semantic)`;
+- the exchanges that contain every word of every concept, one per conversation, in the keyword search's own
+  order (word statistics, BM25) — shown as `every word in one exchange (N% avg semantic)`. The percentage is
+  that exchange's similarity to the concepts: it is shown, it does not order this list;
 - the conversations in which every concept has a semantically near exchange, by average similarity — shown
   as `N% avg match`.
 
@@ -113,11 +114,21 @@ Read a conversation, or a line range of it, as Markdown.
   (`…[message clipped: characters 0-39906 of 90048 shown]`) and the closing line also names `startChar`:
 
   ```
-  _Output truncated at the 40000-char limit: lines 3-3 of 4 shown, the message at line 3 up to character 39907. Continue with startLine=3, startChar=39907, endLine=4._
+  _Output truncated at the 40000-char limit: lines 3-3 of 4 shown, the message at line 3 up to character 39907. Without startChar the message starts over from its first character — to skip the rest of it instead, start at line 4. Continue with startLine=3, startChar=39907, endLine=4._
   ```
 
-  Calling again with only `startLine=3` returns the same first piece. The next piece starts with
+  The line it names is that message's own line: `startChar` is what moves on. Calling again with only
+  `startLine=3` returns the same first piece, every time. To leave the rest of the message unread, start at
+  the line the closing line gives for that (here `startLine: 4`); when the message is the last line of the
+  range the closing line says that nothing follows it. The next piece starts with
   `…[message at line 3 continues from character 39907 of 90048]`.
+- One call also reads at most 8,000,000 characters of the file itself (a few tool results can be that large
+  while their clipped rendering is short). An answer stopped by that ends the same way and says which limit
+  it was:
+
+  ```
+  _Output truncated at the 8000000-char limit: lines 1-5 shown (the limit is on the file text one call reads, not on this output). Continue with startLine=6._
+  ```
 - A tool input or tool result longer than 2,000 characters is clipped:
   `…[+N chars not shown — read again with full: true]`. With `full: true` nothing is clipped (the 40,000
   characters per call still apply) and the closing line carries `full=true` — a `startChar` counts the text
@@ -223,7 +234,7 @@ type, the ten largest domains, relations per type.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `project` | `string` | No | Accepted for compatibility; the totals cover the whole graph |
+| `project` | `string` | No | Accepted for compatibility and not applied: the totals cover the whole graph, and an answer to a call that passed it ends with a note saying so |
 
 ## cross_project_insights
 

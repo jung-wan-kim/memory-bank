@@ -229,7 +229,7 @@ Project A sees: Project A facts + Global facts (never Project B). Since v1.7.8 t
 | Tool | Description |
 |------|-------------|
 | `search` | Semantic + keyword search (at most `limit` results; date/agent filters; machine-generated turns left out unless `include_noise`) + related facts attached. An array of 2-5 concepts returns the conversations matching all of them, keyword and semantic matches in one ranking |
-| `read` | Read a conversation or a line range of it (streamed — any file size; 40,000 characters per call — the closing line names the `startLine`, and inside one long message the `startChar`, to continue from; `full: true` shows tool inputs/results over 2,000 characters whole) |
+| `read` | Read a conversation or a line range of it (streamed — any file size; 40,000 characters per call — the closing line names the values to continue with: `startLine`, and inside one long message also `startChar` (pass every value it names — `startLine` alone repeats that message); `full: true` shows tool inputs/results over 2,000 characters whole) |
 | `search_facts` | Query facts with ontology context + graph relations (category/agent/tag filters; identical sentences folded) |
 | `search_ontology` | Browse the ontology level by level: domains and category counts first, facts with a `category` filter (bounded output; `category_offset` lists a domain's categories past the first 200) |
 | `ask_avatar` | Ask your technical alter ego — answers grounded in past decisions (calls an LLM; a failed call — no login, a refusal, an outage — comes back as an error, `isError`) |

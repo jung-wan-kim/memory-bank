@@ -406,26 +406,71 @@ export async function readConversationRange(filePath: string, opts: Conversation
     output += SIDECHAIN_END;
   }
 
-  if (next === null && range.stoppedEarly) next = { line: lastLineRead + 1, char: 0 };
+  // Whether the file has a line after `line` that the requested range still covers. The stream is closed at
+  // the last line it needs, so the file's length is often unknown; only when it was closed by the raw ceiling
+  // on that very line does answering take a second look at the file.
+  const lastCollected = range.lines[range.lines.length - 1].line;
+  const lineFollows = async (line: number): Promise<boolean> => {
+    if (endLine !== undefined && line + 1 > endLine) return false;
+    if (range.totalLines !== null) return line + 1 <= range.totalLines;
+    return line + 1 <= lastCollected || archiveHasLine(filePath, line + 1);
+  };
+
+  // The raw ceiling ended this call with every message it read shown. The footer used to name "last line + 1"
+  // unseen: when the ceiling fell on the file's last line that was a line outside the file, and the call the
+  // footer asked for was an error.
+  let stoppedAtRawCeiling = false;
+  if (next === null && range.stoppedEarly && await lineFollows(lastLineRead)) {
+    next = { line: lastLineRead + 1, char: 0 };
+    stoppedAtRawCeiling = true;
+  }
   const moreToRead = next !== null && (
     next.char > 0
     || ((endLine === undefined || next.line <= endLine) && (range.totalLines === null || next.line <= range.totalLines))
   );
   if (next !== null && moreToRead) {
     const total = range.totalLines === null ? '' : ` of ${range.totalLines}`;
-    const shownSoFar = next.char > 0
-      ? `lines ${firstLine}-${next.line}${total} shown, the message at line ${next.line} up to character ${next.char}`
-      : `lines ${firstLine}-${next.line - 1}${total} shown`;
+    let shownSoFar: string;
+    if (next.char > 0) {
+      // The line named below is this message's own line, not the next one: what moves the next call forward is
+      // startChar.
+      // A caller that passes startLine alone gets the message from its start again, on every call — so the
+      // footer says so, and names the way out. (It ends with the values to continue with, as before.)
+      shownSoFar = `lines ${firstLine}-${next.line}${total} shown, the message at line ${next.line} up to character ${next.char}. `
+        + 'Without startChar the message starts over from its first character'
+        + (await lineFollows(next.line)
+          ? ` — to skip the rest of it instead, start at line ${next.line + 1}`
+          : ' (nothing follows it in the requested range)');
+    } else if (stoppedAtRawCeiling) {
+      shownSoFar = `lines ${firstLine}-${next.line - 1} shown (the limit is on the file text one call reads, not on this output)`;
+    } else {
+      shownSoFar = `lines ${firstLine}-${next.line - 1}${total} shown`;
+    }
     // Every value the next call needs, in one place: the offset counts the text as this call rendered it,
     // so `full` travels with it.
     const args = [`startLine=${next.line}`];
     if (next.char > 0) args.push(`startChar=${next.char}`);
     if (endLine !== undefined) args.push(`endLine=${endLine}`);
     if (opts.full) args.push('full=true');
-    output += `\n---\n_Output truncated at the ${maxChars}-char limit: ${shownSoFar}. Continue with ${args.join(', ')}._\n`;
+    const limitChars = stoppedAtRawCeiling ? READ_MAX_RAW_CHARS : maxChars;
+    output += `\n---\n_Output truncated at the ${limitChars}-char limit: ${shownSoFar}. Continue with ${args.join(', ')}._\n`;
   }
 
   return output;
+}
+
+/**
+ * Whether the archive file has a line `line`. Asked only where one call could not tell (the raw ceiling
+ * closed the stream on the line before): it reads the file once more, up to that line. A stream error counts
+ * as "yes" — the call that then asks for the line is the one that reports it, with the error itself.
+ */
+async function archiveHasLine(filePath: string, line: number): Promise<boolean> {
+  try {
+    const probe = await readArchiveLineRange(filePath, { startLine: line, endLine: line, maxChars: 1 });
+    return probe.lines.length > 0;
+  } catch {
+    return true;
+  }
 }
 
 export function formatConversationAsHTML(jsonl: string): string {

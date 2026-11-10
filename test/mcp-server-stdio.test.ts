@@ -168,6 +168,26 @@ describe('MCP server over stdio', () => {
       expect(last).not.toMatch(/Output truncated/);
     });
 
+    // R2-SEARCH-1 — the answer names the line it started on (plus a startChar). A caller that carried only
+    // startLine over got the same answer on every call, and nothing in it said why.
+    it('an answer that stopped inside a message says what startLine alone does and names the line that skips it', async () => {
+      const file = path.join(archiveProject, 'huge.jsonl');
+      const first = await call('read', { path: file });
+      expect(first.text).toMatch(/Without startChar the message starts over from its first character — to skip the rest of it instead, start at line 2\. Continue with startLine=1, startChar=\d+\._\n$/);
+      // startLine alone: the same answer again
+      expect((await call('read', { path: file, startLine: 1 })).text).toBe(first.text);
+      // the line it names moves on
+      const skipped = await call('read', { path: file, startLine: 2 });
+      expect(skipped.isError).toBe(false);
+      expect(skipped.text).toContain('after-the-huge-one');
+      expect(skipped.text).not.toMatch(/Output truncated/);
+
+      const { tools } = await client.listTools();
+      const read = tools.find((t) => t.name === 'read')!;
+      expect(read.description).toMatch(/call again with every value that line names/);
+      expect(read.description).toMatch(/without it the message starts over/);
+    });
+
     it('clips a long tool result with the way to read it, and full: true shows it whole', async () => {
       const file = path.join(archiveProject, 'tool.jsonl');
       const clipped = await call('read', { path: file });
@@ -364,6 +384,66 @@ describe('MCP server over stdio', () => {
     it('rejects an argument the schema does not declare', async () => {
       const { isError } = await call('search', { query: 'quokka', mode: 'text', include_everything: true });
       expect(isError).toBe(true);
+    });
+
+    // R2-SEARCH-4 — it used to search the vector index up to its ceiling and answer "cut short … relax the date filter".
+    it('a date range that ends before it starts is an error at once, in every mode', async () => {
+      for (const mode of ['both', 'vector', 'text']) {
+        const { text, isError } = await call('search', { query: 'quokka', mode, after: '2026-10-01', before: '2026-01-01' });
+        expect(isError).toBe(true);
+        expect(text).toMatch(/--after 2026-10-01 is later than --before 2026-01-01/);
+      }
+      const multi = await call('search', { query: ['quokka', 'migration'], after: '2026-10-01', before: '2026-01-01' });
+      expect(multi.isError).toBe(true);
+      expect(multi.text).toMatch(/--after 2026-10-01 is later than --before 2026-01-01/);
+    });
+  });
+
+  // R2-SEARCH-5 — `arguments` is optional in tools/call. The handlers gave `undefined` to an object schema, so
+  // the three tools that need no argument answered "expected object, received undefined".
+  describe('a call that leaves `arguments` out', () => {
+    const bare = async (name: string) => {
+      const result = await client.callTool({ name });
+      const content = result.content as Array<{ type: string; text: string }>;
+      return { text: content.map((c) => c.text).join('\n'), isError: result.isError === true };
+    };
+
+    it.each(['list_tags', 'search_ontology', 'graph_stats'])('%s answers as it does for {}', async (name) => {
+      const answer = await bare(name);
+      expect(answer.isError, answer.text.slice(0, 200)).toBe(false);
+      expect(answer.text).toBe((await call(name, {})).text);
+    });
+
+    it('a tool with a required argument still refuses, naming the argument', async () => {
+      for (const [name, required] of [['search', 'query'], ['read', 'path'], ['tag_fact', 'fact_id']] as const) {
+        const answer = await bare(name);
+        expect(answer.isError, name).toBe(true);
+        expect(answer.text, name).toContain(required);
+        expect(answer.text, name).not.toMatch(/expected object, received undefined/);
+      }
+    });
+  });
+
+  // R2-SEARCH-6 — `project` was accepted and described as "Project path to scope stats", but every total is of
+  // the whole graph: a caller that named a project read the whole graph's numbers as that project's.
+  describe('graph_stats', () => {
+    it('says that `project` is not applied — in the schema and in the answer', async () => {
+      const { tools } = await client.listTools();
+      const tool = tools.find((t) => t.name === 'graph_stats')!;
+      const described = (tool.inputSchema.properties as Record<string, { description: string }>).project.description;
+      expect(described).not.toMatch(/to scope stats/);
+      expect(described).toMatch(/not applied/);
+      expect(described).toMatch(/whole graph/);
+      expect(tool.description).toMatch(/whole graph/);
+
+      const all = await call('graph_stats', {});
+      const named = await call('graph_stats', { project: '/some/project' });
+      expect(named.isError).toBe(false);
+      expect(all.text).toMatch(/\| Active Facts \| \d+ \|/);
+      expect(all.text).not.toMatch(/not applied/);
+      // the same totals, followed by the note
+      expect(named.text.startsWith(all.text)).toBe(true);
+      expect(named.text.slice(all.text.length)).toMatch(/`project` is not applied: these totals cover the whole graph/);
     });
   });
 

@@ -208,3 +208,139 @@ describe('read: tool inputs and results longer than the block limit', () => {
     expect(pages[0].args).toMatchObject({ startLine: '2', endLine: '2', full: 'true' });
   });
 });
+
+// R2-SEARCH-1 — a stop inside a message names the line the call started on, with a startChar. A caller that
+// carries only startLine over (what the plugin's own agent notes described until this release) is given the
+// message from its start again, on every call: the same 40,000 characters, with nothing in them that says
+// why. The line now says it, and names the line that skips the rest of the message.
+describe('read: a stop inside a message says what startLine alone does', () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'mb-read-escape-')); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  const lastLine = (text: string): string => text.trimEnd().split('\n').pop()!;
+
+  it('names startChar as what moves on, and the line to start at to skip the rest of the message', async () => {
+    const file = join(dir, 'mixed.jsonl');
+    writeFileSync(file, [userLine(1, 'small-first'), assistantLine(1, counted(90_000)), userLine(2, 'small-after')].join('\n') + '\n');
+
+    const first = await readConversationRange(file, { startLine: 2 });
+    expect(lastLine(first)).toMatch(/the message at line 2 up to character \d+\. Without startChar the message starts over from its first character — to skip the rest of it instead, start at line 3\. Continue with startLine=2, startChar=\d+\._$/);
+
+    // startLine alone: the same page, word for word — and that page carries the way out
+    const again = await readConversationRange(file, { startLine: 2 });
+    expect(again).toBe(first);
+    // a later page of the same message says the same (startLine alone would go back to the message's start)
+    const second = await readConversationRange(file, { startLine: 2, startChar: Number(first.match(/startChar=(\d+)/)![1]) });
+    expect(lastLine(second)).toMatch(/Without startChar the message starts over from its first character — to skip the rest of it instead, start at line 3\. Continue with startLine=2, startChar=\d+\._$/);
+
+    // the line it names is the way out
+    const skipped = await readConversationRange(file, { startLine: 3 });
+    expect(skipped).toContain('small-after');
+    expect(skipped).not.toMatch(/Output truncated/);
+  });
+
+  it('keeps the requested endLine and full in the values to continue with; the skip hint stays inside the range', async () => {
+    const file = join(dir, 'mixed.jsonl');
+    writeFileSync(file, [userLine(1, 'small-first'), assistantLine(1, counted(90_000)), userLine(2, 'small-after'), assistantLine(2, 'beyond')].join('\n') + '\n');
+
+    const inRange = await readConversationRange(file, { startLine: 2, endLine: 3, full: true });
+    expect(lastLine(inRange)).toMatch(/to skip the rest of it instead, start at line 3\. Continue with startLine=2, startChar=\d+, endLine=3, full=true\._$/);
+
+    // the long message is the last line of the requested range: there is no line to skip to
+    const atRangeEnd = await readConversationRange(file, { startLine: 2, endLine: 2 });
+    expect(lastLine(atRangeEnd)).toMatch(/Without startChar the message starts over from its first character \(nothing follows it in the requested range\)\. Continue with startLine=2, startChar=\d+, endLine=2\._$/);
+    expect(atRangeEnd).not.toMatch(/start at line/);
+  });
+
+  it('says nothing follows when the long message is the last line of the file', async () => {
+    const file = join(dir, 'tail.jsonl');
+    writeFileSync(file, [userLine(1, 'small-first'), assistantLine(1, counted(90_000))].join('\n') + '\n');
+    const text = await readConversationRange(file, { startLine: 2 });
+    expect(lastLine(text)).toMatch(/\(nothing follows it in the requested range\)\. Continue with startLine=2, startChar=\d+\._$/);
+    expect(text).not.toMatch(/start at line/);
+  });
+
+  it('a stop between two messages is worded as before: startLine alone is all it takes there', async () => {
+    const file = join(dir, 'pairs.jsonl');
+    const lines: string[] = [];
+    for (let k = 1; k <= 30; k++) lines.push(userLine(k, `q-${k} ${'q'.repeat(1500)}`), assistantLine(k, `a-${k} ${'a'.repeat(1500)}`));
+    writeFileSync(file, lines.join('\n') + '\n');
+    const text = await readConversationRange(file, { startLine: 1, endLine: 60 });
+    expect(lastLine(text)).toMatch(/^_Output truncated at the 40000-char limit: lines 1-\d+ of 60 shown\. Continue with startLine=\d+, endLine=60\._$/);
+    expect(text).not.toMatch(/Without startChar/);
+  });
+
+  it('the line still ends with the values to continue with, the first startLine= in it being the one to pass', async () => {
+    const file = join(dir, 'mixed.jsonl');
+    writeFileSync(file, [userLine(1, 'small-first'), assistantLine(1, counted(90_000)), userLine(2, 'small-after')].join('\n') + '\n');
+    const text = await readConversationRange(file, { startLine: 2 });
+    // one "name=value" list, at the very end; the skip hint is prose so that a pattern looking for
+    // startLine=<n> finds only the value to continue with
+    expect([...lastLine(text).matchAll(/startLine=(\d+)/g)].map((m) => m[1])).toEqual(['2']);
+    expect(text.match(FOOTER)![1]).toMatch(/^startLine=2, startChar=\d+$/);
+  });
+
+  // The stream is closed at the last line a call needs, so the file's length is usually not known. One line
+  // can be larger than everything one call reads (8,000,000 characters): the stream then ends on that very
+  // line, and whether a line follows takes a second look at the file.
+  it('a message on a line larger than one call reads still knows whether a line follows it', async () => {
+    const big = userLine(1, counted(8_100_000));
+    const alone = join(dir, 'one-line.jsonl');
+    writeFileSync(alone, big + '\n');
+    expect(await readConversationRange(alone)).toMatch(/\(nothing follows it in the requested range\)\. Continue with startLine=1, startChar=\d+\._\n$/);
+
+    const followed = join(dir, 'two-lines.jsonl');
+    writeFileSync(followed, [big, assistantLine(1, 'after-it')].join('\n') + '\n');
+    expect(await readConversationRange(followed)).toMatch(/to skip the rest of it instead, start at line 2\. Continue with startLine=1, startChar=\d+\._\n$/);
+  });
+});
+
+// R2-SEARCH-3 — one call reads at most 8,000,000 characters of the file. When that ceiling stopped a call it
+// named "the last line read + 1" without knowing whether the file went on, and called it the 40000-char output
+// limit: on the file's last line the named line did not exist and the call the footer asked for was an error.
+describe('read: the ceiling on the file text one call reads', () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'mb-read-rawcap-')); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  // 2 × (a tool call + its 4,100,000-character result): the second result is where the 8,000,000 are passed
+  const heavy = (): string[] => [
+    userLine(1, 'run both'),
+    toolUseLine(2, 'toolu_1', { command: 'cat one.log' }),
+    toolResultLine(3, 'toolu_1', `ONE ${'r'.repeat(4_100_000)}`),
+    toolUseLine(4, 'toolu_2', { command: 'cat two.log' }),
+    toolResultLine(5, 'toolu_2', `TWO ${'r'.repeat(4_100_000)}`),
+  ];
+
+  it('on the last line of the file the answer just ends — no line outside the file is named', async () => {
+    const file = join(dir, 'raw-tail.jsonl');
+    writeFileSync(file, heavy().join('\n') + '\n');
+    const text = await readConversationRange(file);
+    expect(text).toContain('cat two.log');
+    expect(text.length).toBeLessThan(READ_MAX_OUTPUT_CHARS);
+    expect(text).not.toMatch(/Output truncated|Continue with/);
+    // (what the old footer asked for)
+    await expect(readConversationRange(file, { startLine: 6 })).rejects.toThrow(/outside the file: it has 5 lines/);
+  });
+
+  it('before the last line it names the next line, which exists, and says which limit stopped it', async () => {
+    const file = join(dir, 'raw-more.jsonl');
+    writeFileSync(file, [...heavy(), assistantLine(6, 'tail-marker')].join('\n') + '\n');
+    const first = await readConversationRange(file);
+    expect(first).not.toContain('tail-marker');
+    expect(first).toMatch(/\n---\n_Output truncated at the 8000000-char limit: lines 1-5 shown \(the limit is on the file text one call reads, not on this output\)\. Continue with startLine=6\._\n$/);
+
+    const pages = await readAll(file);
+    expect(pages.length).toBe(2);
+    expect(pages[1].text).toContain('tail-marker');
+    expect(pages[1].args).toBeNull();
+  });
+
+  it('with an endLine: nothing is named past it, and the endLine is carried when the range goes on', async () => {
+    const file = join(dir, 'raw-range.jsonl');
+    writeFileSync(file, [...heavy(), assistantLine(6, 'tail-marker'), userLine(7, 'beyond')].join('\n') + '\n');
+    expect(await readConversationRange(file, { startLine: 1, endLine: 5 })).not.toMatch(/Output truncated/);
+    expect(await readConversationRange(file, { startLine: 1, endLine: 6 })).toMatch(/Continue with startLine=6, endLine=6\._\n$/);
+  });
+});
