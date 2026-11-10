@@ -26,7 +26,7 @@ vi.mock('../src/embeddings.js', async (io) => ({ ...(await io<typeof import('../
     if (stealAtEmbedCall && embedCalls === stealAtEmbedCall) stealHook?.();
     return new Array(384).fill(0.01);
   } }));
-vi.mock('../src/ontology-classifier.js', async (io) => ({ ...(await io<typeof import('../src/ontology-classifier.js')>()), classifyAndLinkFact: async () => {} }));
+vi.mock('../src/ontology-classifier.js', async (io) => ({ ...(await io<typeof import('../src/ontology-classifier.js')>()), classifyAndLinkFact: async () => {}, classifyAndLinkFacts: async () => {} }));
 
 let tmp: string; let db: import('better-sqlite3').Database;
 beforeEach(async () => {

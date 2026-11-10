@@ -56,7 +56,7 @@ vi.mock('../src/embeddings.js', async (importOriginal) => {
 // 온톨로지 분류는 별도 LLM 경로 — 추출 결과 판정과 무관하므로 no-op.
 vi.mock('../src/ontology-classifier.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/ontology-classifier.js')>();
-  return { ...actual, classifyAndLinkFact: async () => {} };
+  return { ...actual, classifyAndLinkFact: async () => {}, classifyAndLinkFacts: async () => {} };
 });
 
 let tmpDir: string;

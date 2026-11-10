@@ -4,7 +4,7 @@ import { callHaiku, parseJsonResponse } from './llm.js';
 import { classifyLlmError, LlmCallError } from './llm-error-class.js';
 import { insertFact } from './fact-db.js';
 import { generateEmbedding, initEmbeddings } from './embeddings.js';
-import { classifyAndLinkFact } from './ontology-classifier.js';
+import { classifyAndLinkFacts } from './ontology-classifier.js';
 import { randomUUID } from 'node:crypto';
 import { factRejectReason, factKrRejectReason, normalizeCategory } from './fact-validity.js';
 import { secretRejectReason } from './secret-scan.js';
@@ -499,12 +499,11 @@ export async function saveExtractedFacts(
   }
 
   // 3단계(비동기, 커밋 이후): 온톨로지 분류. 파생 작업이라 실패해도 fact 는 유효하다.
-  for (let i = 0; i < savedIds.length; i++) {
-    try {
-      await classifyAndLinkFact(db, savedIds[i], prepared[i].embedding);
-    } catch (err) {
-      console.error(`Ontology pipeline failed for fact ${savedIds[i]}:`, err);
-    }
+  // 저장한 fact 전부를 분류 호출 1회로 보낸다(예전: fact 마다 1회 — 20건이면 헤드리스 세션 20개).
+  try {
+    await classifyAndLinkFacts(db, savedIds.map((id, i) => ({ factId: id, embedding: prepared[i].embedding })));
+  } catch (err) {
+    console.error(`Ontology pipeline failed for ${savedIds.length} fact(s):`, err);
   }
 
   return savedIds;
