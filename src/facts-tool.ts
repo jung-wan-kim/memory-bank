@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import { l2DistanceToSimilarity } from './db.js';
-import { searchSimilarFacts, searchFactsFiltered, getRevisions, FACT_KNN_MAX } from './fact-db.js';
+import { searchFactsFiltered, getRevisions, FACT_KNN_MAX } from './fact-db.js';
 import { listDomains, listCategories, getRelatedFacts } from './ontology-db.js';
 import { clipLine, summarizeRelated } from './related-format.js';
 import type { Fact } from './types.js';
@@ -116,7 +116,9 @@ export function formatFactTrace(
   queryEmbedding: number[],
   params: { query: string; project: string; limit: number },
 ): string {
-  const results = searchSimilarFacts(db, queryEmbedding, params.project, params.limit, 0.5);
+  // Scope decided inside the search (see formatFactSearch): a project's fact behind other projects' nearer
+  // facts was "no matching facts".
+  const { results } = searchFactsFiltered(db, queryEmbedding, { project: params.project, limit: params.limit, threshold: 0.5 });
 
   if (results.length === 0) {
     return 'No matching facts found to trace.';
@@ -235,7 +237,7 @@ export function formatGraphExploration(
   queryEmbedding: number[],
   params: { query: string; hops: number; project?: string },
 ): string {
-  const seedFacts = searchSimilarFacts(db, queryEmbedding, params.project ?? null, 3, 0.5);
+  const { results: seedFacts } = searchFactsFiltered(db, queryEmbedding, { project: params.project ?? null, limit: 3, threshold: 0.5 });
 
   if (seedFacts.length === 0) {
     return `No facts found related to "${params.query}" to start graph exploration.`;

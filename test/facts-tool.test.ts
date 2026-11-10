@@ -209,6 +209,16 @@ describe('related facts in tool output are few, short and in scope', () => {
     expect(text).toMatch(/…and 4 more related facts/);
   });
 
+  it('trace_fact and explore_graph find the project\'s fact behind 60 nearer facts of another project', () => {
+    for (let i = 0; i < 60; i++) fact(`Other project note number ${i} about releases`, 0.05 + i * 0.004, { project: OTHER });
+    fact('Project A ships releases on Tuesdays', 0.5);
+
+    expect(formatFactTrace(db, QUERY_VECTOR, { query: 'releases', project: PROJECT, limit: 3 })).toContain('## Project A ships releases on Tuesdays');
+    const explored = formatGraphExploration(db, QUERY_VECTOR, { query: 'releases', hops: 1, project: PROJECT });
+    expect(explored).toContain('## Seed: Project A ships releases on Tuesdays');
+    expect(explored).not.toContain('Other project note');
+  });
+
   it('trace_fact: no fact to trace says so', () => {
     expect(formatFactTrace(db, QUERY_VECTOR, { query: 'nothing', project: PROJECT, limit: 3 })).toBe('No matching facts found to trace.');
   });

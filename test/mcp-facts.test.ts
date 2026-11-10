@@ -20,7 +20,6 @@ describe('MCP Facts Tool', () => {
     expect(server).toContain('formatFactSearch(');
     const content = fs.readFileSync('src/facts-tool.ts', 'utf-8');
     expect(content).toContain('searchFactsFiltered');
-    expect(content).toContain('searchSimilarFacts');
     expect(content).toContain('getRevisions');
   });
 
