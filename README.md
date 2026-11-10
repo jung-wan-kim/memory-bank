@@ -462,6 +462,8 @@ open docs/graph-3d.html   # Interactive 3D graph (local)
         └── vec_facts           # Vector index (384-dim)
 ```
 
+`conversation-index/sync/` is the cross-device sync folder (facts and the knowledge graph as JSONL files, written when a session ends and imported when one starts): whoever can write to it can decide sentences that are later injected into your prompts as your own past decisions, so do not share that folder with a device, account or cloud location you do not trust.
+
 ## Development
 
 ```bash
