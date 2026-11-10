@@ -68,6 +68,7 @@ describe('secretRejectReason', () => {
       'The token: placeholder in the README must be replaced before use.',
       // 접두는 같지만 낱말로 이어진 이름(글자·숫자가 섞인 긴 덩어리가 없다)
       `The pipeline module is named ${j('s', 'k-', 'learn-pipeline-builder-v2')} after scikit-learn.`,
+      // 지어낸 숫자다(실제 채팅 id 를 픽스처에 두지 않는다)
       'The Telegram chat id is 123456789 and messages are sent after each task.',
       'vec_facts stores int8 vectors at scale 127; the migration id is 20261110123456.',
       'Cache key format is user:1234567890:profile:v2 in Redis.',
