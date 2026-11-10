@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import fs from 'fs';
-import { EXCHANGES_FTS_AD_DDL, ensureExchangeTurnIndex, getVecQuant, initDatabase, vecParamSql } from './db.js';
+import { EXCHANGES_FTS_AD_DDL, ensureExchangeTurnIndex, getVecQuant, initDatabase, pauseForOtherWriters, vecParamSql } from './db.js';
 import { newBackupPath, writeRowBackup } from './row-backup.js';
 import { getArchiveDir } from './paths.js';
 import { removeAllSummaries } from './archive-io.js';
@@ -124,10 +124,7 @@ export function backupExchangesOfPaths(
   archivePaths: readonly string[],
   backupPath: string,
 ): { exchanges: number; toolCalls: number } {
-  db.exec('CREATE TEMP TABLE IF NOT EXISTS rebuild_unreachable (p TEXT PRIMARY KEY)');
-  db.exec('DELETE FROM temp.rebuild_unreachable');
-  const add = db.prepare('INSERT OR IGNORE INTO temp.rebuild_unreachable (p) VALUES (?)');
-  db.transaction(() => { for (const p of archivePaths) add.run(p); })();
+  fillUnreachablePaths(db, archivePaths);
   try {
     const rows = 'SELECT * FROM exchanges WHERE archive_path IN (SELECT p FROM temp.rebuild_unreachable)';
     const counts = writeRowBackup(db, backupPath, [
@@ -136,6 +133,40 @@ export function backupExchangesOfPaths(
     ]);
     return { exchanges: counts.exchanges, toolCalls: counts.tool_calls };
   } finally {
+    db.exec('DELETE FROM temp.rebuild_unreachable');
+  }
+}
+
+function fillUnreachablePaths(db: Database.Database, archivePaths: readonly string[]): void {
+  db.exec('CREATE TEMP TABLE IF NOT EXISTS rebuild_unreachable (p TEXT PRIMARY KEY)');
+  db.exec('DELETE FROM temp.rebuild_unreachable');
+  const add = db.prepare('INSERT OR IGNORE INTO temp.rebuild_unreachable (p) VALUES (?)');
+  db.transaction(() => { for (const p of archivePaths) add.run(p); })();
+}
+
+/**
+ * How many exchanges indexed from the given archive paths are NOT in the
+ * backup written by backupExchangesOfPaths. The backup copies a read snapshot
+ * (it does not hold the write lock — see writeRowBackup), so a row another
+ * process indexed while it was being written is not in it; the rebuild is
+ * about to clear every row, and for these files no re-index brings one back.
+ * Reads only.
+ */
+export function exchangesMissingFromBackup(
+  db: Database.Database,
+  archivePaths: readonly string[],
+  backupPath: string,
+): number {
+  fillUnreachablePaths(db, archivePaths);
+  db.exec(`ATTACH DATABASE '${backupPath.replace(/'/g, "''")}' AS bak`);
+  try {
+    return (db.prepare(`
+      SELECT count(*) AS n FROM exchanges
+      WHERE archive_path IN (SELECT p FROM temp.rebuild_unreachable)
+        AND id NOT IN (SELECT id FROM bak.exchanges WHERE id IS NOT NULL)
+    `).get() as { n: number }).n;
+  } finally {
+    db.exec('DETACH DATABASE bak');
     db.exec('DELETE FROM temp.rebuild_unreachable');
   }
 }
@@ -179,14 +210,29 @@ export function backupFactLayer(db: Database.Database, backupPath: string): Reco
 /**
  * Swap vec_exchanges for a fresh table of the same DDL that holds only the
  * vectors of the rows `exchanges` has right now, and rebuild the FTS index
- * from the content table — one write transaction.
+ * from the content table — two write transactions with a pause between them,
+ * the vectors and then the text index. As one they held the write lock for over 5s at the end of a
+ * rebuild of a large index (dropping 341,840 vectors: 2.3s, emptying the text
+ * index: 1.5s with a warm cache, more with a cold one), and every other
+ * process's write failed after its 5s wait. A row another process indexes
+ * between the two is indexed by the insert trigger and read again by the
+ * 'rebuild'; a run that dies between them leaves the text index marked "not
+ * built" (search scans), as an interrupted clear does.
  *
  * After a clear, `exchanges` is empty or holds the few rows another process
  * indexed since the last delete batch; those keep their vector (same bytes),
  * so no exchange row is ever left without one.
  */
-export function resetVectorsAndTextIndex(db: Database.Database): { vectorsKept: number } {
-  return db.transaction(() => {
+export function resetVectorsAndTextIndex(
+  db: Database.Database,
+  opts: {
+    /** Called between the two transactions (none is open). */
+    onVectorsReset?: () => void;
+    /** Wait between the two (default DELETE_BATCH_PAUSE_MS). 0 = none. */
+    pauseMs?: number;
+  } = {},
+): { vectorsKept: number } {
+  const vectorsKept = db.transaction(() => {
     const ddl = (db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'vec_exchanges'`).get() as { sql: string } | undefined)?.sql;
     if (!ddl) throw new Error('vec_exchanges: table does not exist');
     const getVector = db.prepare('SELECT embedding FROM vec_exchanges WHERE id = ?');
@@ -204,18 +250,37 @@ export function resetVectorsAndTextIndex(db: Database.Database): { vectorsKept: 
     const quant = getVecQuant(db, 'vec_exchanges');
     const insertVector = db.prepare(`INSERT INTO vec_exchanges (id, embedding) VALUES (?, ${vecParamSql(quant)})`);
     for (const s of survivors) insertVector.run(s.id, s.embedding);
+    return survivors.length;
+  }).immediate();
+  opts.onVectorsReset?.();
+  // Two transactions with nothing between them are one long hold to a process
+  // that retries the lock every 100ms: it needs a gap it can land in.
+  pauseForOtherWriters(opts.pauseMs);
 
+  db.transaction(() => {
     db.exec(`INSERT INTO exchanges_fts(exchanges_fts) VALUES('rebuild')`);
     // The index now holds exactly what the content table holds, and the
     // triggers index every later insert — so it is complete, whatever the flag said.
     db.prepare(`INSERT OR REPLACE INTO fts_meta(key, value) VALUES('exchanges_fts_built', '1')`).run();
-    return { vectorsKept: survivors.length };
   }).immediate();
+  return { vectorsKept };
 }
+
+/**
+ * While clearing, batches follow each other at once: a process waiting for
+ * the write lock retries every 100ms at most and has only the microseconds
+ * between two batches to land in. After this long without a gap the clear
+ * waits (pauseForOtherWriters) before its next batch. Measured on a 341,840
+ * exchange index: a waiter sat through the last exchange batches and the
+ * vector reset — 4.6s to 5.1s, at the edge of its 5s limit.
+ */
+export const CLEAR_YIELD_EVERY_MS = 1000;
 
 export interface ClearOptions {
   /** Rows per transaction. Default 2000. */
   batchSize?: number;
+  /** Length of each wait for other writers (default DELETE_BATCH_PAUSE_MS). 0 = none. */
+  pauseMs?: number;
   /** Called after each committed batch (progress; other connections can write here). */
   onBatch?: (progress: { table: 'tool_calls' | 'exchanges'; deleted: number }) => void;
 }
@@ -250,6 +315,12 @@ export function clearConversationIndex(db: Database.Database, opts: ClearOptions
   const batchSize = opts.batchSize ?? 2000;
   if (!Number.isInteger(batchSize) || batchSize < 1) throw new Error(`invalid batch size: ${batchSize}`);
   const cleared = { exchanges: 0, toolCalls: 0 };
+  let lastGap = Date.now();
+  const letOthersIn = (always = false): void => {
+    if (!always && Date.now() - lastGap < CLEAR_YIELD_EVERY_MS) return;
+    pauseForOtherWriters(opts.pauseMs);
+    lastGap = Date.now();
+  };
 
   // 1. tool_calls first (children of exchanges; no trigger on this table).
   const deleteToolCalls = db.prepare('DELETE FROM tool_calls WHERE rowid IN (SELECT rowid FROM tool_calls LIMIT ?)');
@@ -258,6 +329,7 @@ export function clearConversationIndex(db: Database.Database, opts: ClearOptions
     if (changes === 0) break;
     cleared.toolCalls += changes;
     opts.onBatch?.({ table: 'tool_calls', deleted: cleared.toolCalls });
+    letOthersIn();
   }
 
   // Before the first trigger-free delete: mark the text index as not built, so
@@ -284,10 +356,13 @@ export function clearConversationIndex(db: Database.Database, opts: ClearOptions
     if (changes === 0) break;
     cleared.exchanges += changes;
     opts.onBatch?.({ table: 'exchanges', deleted: cleared.exchanges });
+    letOthersIn();
   }
 
-  // 3. Vectors + FTS (one transaction — see resetVectorsAndTextIndex).
-  resetVectorsAndTextIndex(db);
+  // 3. Vectors, then FTS (a transaction each — see resetVectorsAndTextIndex).
+  //    The vector reset is the longest hold of the clear: a gap right before it.
+  letOthersIn(true);
+  resetVectorsAndTextIndex(db, { pauseMs: opts.pauseMs });
 
   // 4. An empty table is when the (archive_path, line_start) index costs
   //    nothing to build — see ensureExchangeTurnIndex (it does nothing if
@@ -411,6 +486,15 @@ export async function rebuildConversationIndex(opts: RebuildOptions = {}): Promi
       lostExchangesBackupPath = newBackupPath('pre-rebuild-unreachable-exchanges');
       const lost = backupExchangesOfPaths(db, reach.unreachablePaths, lostExchangesBackupPath);
       console.log(`Backed up ${lost.exchanges} exchange(s) and ${lost.toolCalls} tool call(s) that will not be re-created to ${lostExchangesBackupPath}`);
+      // The copy read a snapshot and other processes kept writing meanwhile.
+      // A row of these files indexed since then would be cleared with no copy.
+      const late = exchangesMissingFromBackup(db, reach.unreachablePaths, lostExchangesBackupPath);
+      if (late > 0) {
+        throw new Error(
+          `rebuild stopped — nothing was cleared. ${late} exchange(s) of the files that cannot be re-created were indexed while their backup was being written ` +
+          `(another process is writing to this database). Close the other Claude Code sessions and run the rebuild again. ` +
+          `Backups written by this run: ${backupPath}, ${lostExchangesBackupPath}`);
+      }
     }
 
     cleared = clearConversationIndex(db, {

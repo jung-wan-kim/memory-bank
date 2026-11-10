@@ -8,9 +8,10 @@ import { getIndexDir } from './paths.js';
  *
  * A backup is a plain sqlite file holding copies of the rows (CREATE TABLE AS
  * SELECT — data only, no indexes or constraints). It is written and counted in
- * ONE transaction with the read of the source rows, and the caller deletes
- * only after this returns: a copy that does not hold exactly the rows it was
- * asked for throws, and the half-written file is removed.
+ * ONE transaction with the read of the source rows (one read snapshot — the
+ * source's write lock is not taken), and the caller deletes only after this
+ * returns: a copy that does not hold exactly the rows it was asked for throws,
+ * and the half-written file is removed.
  *
  * Restore by hand: ATTACH the file and `INSERT INTO main.<table> SELECT * FROM
  * bak.<table>` (vectors are not in it — the re-embed worker rebuilds those).
@@ -43,9 +44,19 @@ export function writeRowBackup(
   const counts: Record<string, number> = {};
   db.exec(`ATTACH DATABASE '${backupPath.replace(/'/g, "''")}' AS bak`);
   try {
-    // IMMEDIATE: the write lock up front, so no other process changes the
-    // source rows between the copy and the count it is verified against.
-    db.exec('BEGIN IMMEDIATE');
+    // A read snapshot of the source, NOT its write lock. The count and the
+    // copy below read the same snapshot (WAL: the transaction's first read
+    // pins it), so the copy is verified against exactly what it was taken
+    // from — as it was under BEGIN IMMEDIATE — while other processes keep
+    // writing. Under the write lock a large copy (measured: about a minute
+    // for 131,380 exchanges) failed every other process's write, and every
+    // DB open, with "database is locked" after their 5s wait. Only the backup
+    // file is written in this transaction.
+    // The snapshot does not stop rows from ARRIVING meanwhile: a caller that
+    // deletes by the ids it backed up needs nothing more; one that deletes
+    // more than that checks for late rows itself (rebuild:
+    // exchangesMissingFromBackup).
+    db.exec('BEGIN');
     try {
       for (const copy of copies) {
         if (!/^[a-z_][a-z0-9_]*$/i.test(copy.table)) throw new Error(`invalid backup table name: ${copy.table}`);

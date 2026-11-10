@@ -1057,21 +1057,76 @@ export function deleteExchange(db: Database.Database, id: string): void {
   db.transaction(() => deleteExchangeRows(db, id)).immediate();
 }
 
-/** Delete many exchanges, each batch one transaction (see deleteExchangeRows for the order). */
-export function deleteExchanges(db: Database.Database, ids: readonly string[], batchSize = 2000): number {
-  // 2,000 per transaction: one transaction deleting 50K+ vec0 rows tripped
-  // SQLITE_CORRUPT_VTAB in the extension's chunk bookkeeping (observed live,
-  // scripts/purge-llm-sessions.mjs); small batches also let other writers in.
-  const deleteBatch = db.transaction((chunk: readonly string[]) => {
-    for (const id of chunk) deleteExchangeRows(db, id);
+/**
+ * How long one delete batch may hold the write lock before it commits. Every
+ * other process waits 5s for that lock and then fails ("database is locked" —
+ * a session-start hook, a worker, the MCP server opening the DB). A batch
+ * bounded only by row count (2,000) held it for over 5s on a large DB: each
+ * row is an FTS delete (its whole text tokenized again) and a vec0 delete.
+ */
+export const DELETE_BATCH_MAX_MS = 400;
+
+/**
+ * Pause between two delete batches. A process waiting for the lock retries at
+ * intervals of up to 100ms (SQLite's busy handler); batches that follow each
+ * other at once leave it microseconds to land in, and it starves until its 5s
+ * are over. The pause is longer than its longest sleep.
+ */
+export const DELETE_BATCH_PAUSE_MS = 120;
+
+export interface DeleteExchangesOptions {
+  /** Commit the batch once it has taken this long (default DELETE_BATCH_MAX_MS). 0 = one row per batch. */
+  maxBatchMs?: number;
+  /** Wait this long between batches (default DELETE_BATCH_PAUSE_MS). 0 = none. */
+  pauseMs?: number;
+  /** Called after each committed batch with the rows deleted so far; no transaction is open here. */
+  onBatch?: (deleted: number) => void;
+}
+
+/**
+ * Wait between two write transactions that follow each other, long enough for
+ * a process waiting on the write lock to take it (see DELETE_BATCH_PAUSE_MS).
+ * Call it with no transaction open.
+ */
+export function pauseForOtherWriters(ms: number = DELETE_BATCH_PAUSE_MS): void {
+  if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Delete many exchanges in batches, each one transaction (see
+ * deleteExchangeRows for the order). A batch ends at `batchSize` rows or after
+ * DELETE_BATCH_MAX_MS, whichever comes first, and the next one starts after a
+ * pause — so other processes keep writing while a maintenance command deletes.
+ */
+export function deleteExchanges(
+  db: Database.Database,
+  ids: readonly string[],
+  batchSize = 2000,
+  opts: DeleteExchangesOptions = {},
+): number {
+  // At most 2,000 per transaction: one transaction deleting 50K+ vec0 rows
+  // tripped SQLITE_CORRUPT_VTAB in the extension's chunk bookkeeping (observed
+  // live, scripts/purge-llm-sessions.mjs).
+  const maxBatchMs = opts.maxBatchMs ?? DELETE_BATCH_MAX_MS;
+  const pauseMs = opts.pauseMs ?? DELETE_BATCH_PAUSE_MS;
+  let next = 0;
+  const deleteBatch = db.transaction((): number => {
+    const started = Date.now();
+    let n = 0;
+    while (next + n < ids.length && n < batchSize) {
+      deleteExchangeRows(db, ids[next + n]);
+      n++;
+      if (Date.now() - started >= maxBatchMs) break;
+    }
+    return n;
   });
-  let deleted = 0;
-  for (let i = 0; i < ids.length; i += batchSize) {
-    const chunk = ids.slice(i, i + batchSize);
-    deleteBatch.immediate(chunk);
-    deleted += chunk.length;
+  while (next < ids.length) {
+    // `next` moves only after the commit: a batch that throws deleted nothing.
+    next += deleteBatch.immediate();
+    opts.onBatch?.(next);
+    if (next < ids.length) pauseForOtherWriters(pauseMs);
   }
-  return deleted;
+  return next;
 }
 
 /**
