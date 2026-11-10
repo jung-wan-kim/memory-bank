@@ -226,6 +226,47 @@ describe('fact-consolidate-worker.js', () => {
     expect(logLines()).toHaveLength(1);
   }, 90_000);
 
+  // The lock itself is tested in consolidate-lock.test.ts (2차 검수 R2-CE-05); these pin what the worker does with it.
+  describe('the single-instance lock', () => {
+    const lockFiles = () => fs.readdirSync(indexDir()).filter((f) => f.startsWith('fact-consolidate.lock')).sort();
+    const deadPid = () => spawnSync(process.execPath, ['-e', '']).pid!;
+    const writeLock = (name: string, pid: number) => {
+      fs.mkdirSync(indexDir(), { recursive: true });
+      fs.writeFileSync(path.join(indexDir(), name), String(pid));
+    };
+
+    it('a lock left by a dead worker does not stop the run, and the run leaves no lock behind', () => {
+      writeLock('fact-consolidate.lock', deadPid());
+      runWorker();
+      expect(JSON.parse(fs.readFileSync(cursorFile(), 'utf8')).id, 'the run happened').toBe(ids[2]);
+      expect(lockFiles()).toEqual([]);
+    }, 40_000);
+
+    it('a lock held by a live process: the worker steps aside and leaves everything as it was', () => {
+      writeLock('fact-consolidate.lock', process.pid); // this test process is alive
+      runWorker();
+      expect(fs.existsSync(cursorFile()), 'no run').toBe(false);
+      expect(logLines()).toEqual([]);
+      expect(lockFiles()).toEqual(['fact-consolidate.lock']);
+      expect(fs.readFileSync(path.join(indexDir(), 'fact-consolidate.lock'), 'utf8')).toBe(String(process.pid));
+    }, 40_000);
+
+    it('a lock that cannot be decided (two unfinished takeovers): the worker does not run and the log says which file is in the way', () => {
+      const dead = deadPid();
+      const taker1 = deadPid();
+      writeLock('fact-consolidate.lock', dead);
+      writeLock(`fact-consolidate.lock.takeover-${dead}`, taker1);
+      writeLock(`fact-consolidate.lock.takeover-${dead}.takeover-${taker1}`, deadPid());
+      const before = lockFiles();
+      runWorker();
+      expect(fs.existsSync(cursorFile()), 'no run').toBe(false);
+      expect(logLines()).toEqual([
+        expect.stringMatching(new RegExp(`^worker: lock unavailable \\(a lock takeover was left unfinished twice — remove \\S+fact-consolidate\\.lock\\.takeover-${dead}\\.takeover-${taker1} to let a worker start\\) — not started$`)),
+      ]);
+      expect(lockFiles()).toEqual(before);
+    }, 40_000);
+  });
+
   // 2차 검수 CE-01b: a restore pass that threw (another process held the write lock for 30s while it ran) was
   // recorded like one that ran to the end — on a copy of the live store the 19 restorable facts stayed without
   // their Korean sentence for the rest of the version. What such a run leaves is the state file below.

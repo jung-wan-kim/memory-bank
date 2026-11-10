@@ -49,6 +49,8 @@ import {
   saveConsolidateHealth,
   consolidateBackoffUntil,
   consolidateBackoffAheadOfClock,
+  acquireConsolidateLock,
+  releaseConsolidateLock,
 } from '../dist/consolidate-health.js';
 
 // GLOBAL single-instance lock (NOT per-project): consolidation touches shared
@@ -59,7 +61,9 @@ import {
 // This kills the flood: the SessionStart hook re-spawns this worker on every
 // session with no lock (measured 14 orphaned ppid=1 workers at once, each
 // spawning a headless Claude session per LLM call).
-const LOCK = path.join(getIndexDir(), 'fact-consolidate.lock');
+// The lock itself — a pid file whose stale takeover is one atomic step — is in
+// consolidate-health.ts (acquireConsolidateLock): two workers starting on the
+// same dead lock used to both take it.
 // Persisted progress cursor: without it, INDEPENDENT facts (which stay active)
 // would re-consume the whole Haiku budget on the same oldest rows every run and
 // never reach newer backlog. Each run resumes from the last fully-examined
@@ -89,36 +93,6 @@ function log(line) {
     // best-effort logging
   }
   console.log(msg);
-}
-
-// Atomic exclusive create ('wx') + pid-liveness check so a stale lock from a
-// killed worker is cleared and re-acquired.
-function acquireLock() {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      fs.writeFileSync(LOCK, String(process.pid), { flag: 'wx' });
-      return true;
-    } catch (e) {
-      if (e.code !== 'EEXIST') return false;
-      try {
-        const pid = parseInt(fs.readFileSync(LOCK, 'utf8'), 10);
-        if (pid && !Number.isNaN(pid)) {
-          try { process.kill(pid, 0); return false; } // alive → don't run
-          catch { /* stale lock */ }
-        }
-        fs.unlinkSync(LOCK); // stale — remove and retry the exclusive create
-      } catch {
-        return false;
-      }
-    }
-  }
-  return false;
-}
-
-function releaseLock() {
-  try {
-    if (parseInt(fs.readFileSync(LOCK, 'utf8'), 10) === process.pid) fs.unlinkSync(LOCK);
-  } catch { /* ignore */ }
 }
 
 /** One log line's worth of an error message. */
@@ -166,13 +140,17 @@ async function restoreKoreanSentences(db, version) {
 }
 
 async function main() {
-  if (!acquireLock()) {
+  const lock = acquireConsolidateLock();
+  if (!lock.acquired) {
     // Another consolidate worker already holds the GLOBAL lock — exit cleanly.
     // It processes the whole backlog (every scope/project), so nothing is lost;
     // this session's spawn simply steps aside instead of piling up.
+    // With a problem, the lock could not be set up at all: not running is the
+    // only safe answer, and this line is the only place it can be seen.
+    if (lock.problem) log(`worker: lock unavailable (${oneLine(lock.problem)}) — not started`);
     process.exit(0);
   }
-  process.on('exit', releaseLock);
+  process.on('exit', () => releaseConsolidateLock());
   process.on('SIGINT', () => process.exit(0));
   process.on('SIGTERM', () => process.exit(0));
 

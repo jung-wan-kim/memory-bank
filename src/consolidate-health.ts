@@ -294,3 +294,163 @@ export function consolidateWorkerGate(
     ? { start: true, reason: 'pending facts' }
     : { start: false, reason: 'no pending facts' };
 }
+
+// ── Single-instance lock ────────────────────────────────────────────────────
+//
+// One consolidate worker at a time (why: scripts/fact-consolidate-worker.js).
+// The lock is a file holding its owner's pid; a lock whose owner is dead is
+// taken over.
+//
+// The takeover used to be "remove the stale file, then create mine". Two
+// workers that read the same stale lock both removed a file and both created
+// one: the later removal deleted the earlier worker's NEW lock, and both ran
+// (measured: 1 of 30 simultaneous starts of two workers on a copy of the live
+// store, 3 of 40 with four workers, 25 of 30 with eight processes running that
+// lock code alone). A lock is mutual exclusion or it is nothing, so no step
+// here removes a file another live worker may have just put there:
+//
+//  - a lock or claim appears with its pid already in it (a hard link to a
+//    finished file) — no reader sees one without its owner;
+//  - a stale file is replaced only by the worker that holds the claim on
+//    (that file, that dead pid), after reading that the file still names that
+//    pid, and the replacement is one rename. A worker that read the stale pid
+//    earlier and comes late finds the claim taken, or another pid in the file;
+//  - a claim left by a worker that died inside its takeover (the steps between
+//    are synchronous: a kill at that instant) is taken over the same way, once.
+//    A second unfinished takeover on top of that is not resolved by guessing:
+//    the worker does not start and says which file is in the way.
+//
+// Not covered: a 1.7.x worker starting at the same instant still removes a
+// stale lock its own way, and can remove the one this code just put there.
+
+export function consolidateLockPath(): string {
+  return path.join(getIndexDir(), 'fact-consolidate.lock');
+}
+
+/**
+ * A lock file with no pid in it that is younger than this is held: builds up
+ * to 1.7.9 create the file first and write the pid next. Older, it is what a
+ * process that died in between left.
+ */
+const LOCK_WRITE_GRACE_MS = 60_000;
+
+/** The pid in a lock file, 0 when it holds none. Throws when the file cannot be read (ENOENT: it is gone). */
+function lockPid(file: string): number {
+  const n = parseInt(fs.readFileSync(file, 'utf8'), 10);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+let ownFileSeq = 0;
+/** A finished file holding this pid, to be linked or renamed into place. */
+function ownPidFile(target: string): string {
+  const tmp = `${target}.${process.pid}.${++ownFileSeq}.tmp`;
+  fs.writeFileSync(tmp, String(process.pid));
+  return tmp;
+}
+
+/** Create `file` holding this pid unless a file of that name exists. */
+function createOwned(file: string): boolean {
+  const tmp = ownPidFile(file);
+  try {
+    fs.linkSync(tmp, file);
+    return true;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw e;
+  } finally {
+    fs.rmSync(tmp, { force: true });
+  }
+}
+
+function removeIfOwned(file: string): void {
+  try {
+    if (lockPid(file) === process.pid) fs.unlinkSync(file);
+  } catch {
+    // gone, or not ours
+  }
+}
+
+/**
+ * Replace `file` — left by the dead process `deadPid` (0: it holds no pid) —
+ * with one holding this pid. false when another worker has it or is taking
+ * it. Throws when it cannot be decided (see the block comment above).
+ */
+function takeOverStale(file: string, deadPid: number, depth: number): boolean {
+  const claim = `${file}.takeover-${deadPid}`;
+  if (!createOwned(claim)) {
+    let claimant: number;
+    try {
+      claimant = lockPid(claim);
+    } catch {
+      return false; // the claim was removed just now: its owner is done with the file
+    }
+    if (claimant > 0 && processAlive(claimant)) return false; // being taken over right now
+    if (depth >= 1) {
+      throw new Error(`a lock takeover was left unfinished twice — remove ${claim} to let a worker start`);
+    }
+    if (!takeOverStale(claim, claimant, depth + 1)) return false;
+  }
+  // The claim is ours: nobody else replaces this file while it names deadPid.
+  try {
+    let current: number;
+    try {
+      current = lockPid(file);
+    } catch {
+      return false; // removed meanwhile (a release, or an older build's takeover)
+    }
+    if (current !== deadPid) return false; // another worker's by now
+    if (deadPid > 0 && processAlive(deadPid)) return false; // that pid is a running process again
+    const mine = ownPidFile(file);
+    try {
+      fs.renameSync(mine, file);
+    } catch (e) {
+      fs.rmSync(mine, { force: true });
+      throw e;
+    }
+    return true;
+  } finally {
+    removeIfOwned(claim);
+  }
+}
+
+/**
+ * Take the consolidate lock. `acquired: false` without `problem` = another
+ * worker holds it or is taking it — it drains the whole backlog, so stepping
+ * aside loses nothing. With `problem`, the lock could not be set up at all
+ * (missing or read-only directory, a file system without hard links, two
+ * unfinished takeovers): the worker must not run, and must say why.
+ */
+export function acquireConsolidateLock(file: string = consolidateLockPath()): { acquired: boolean; problem?: string } {
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (createOwned(file)) return { acquired: true };
+      let holder: number;
+      let ageMs: number;
+      try {
+        holder = lockPid(file);
+        ageMs = Date.now() - fs.statSync(file).mtimeMs;
+      } catch {
+        continue; // released between the two looks — try the plain create once more
+      }
+      if (holder > 0 ? processAlive(holder) : ageMs < LOCK_WRITE_GRACE_MS) return { acquired: false };
+      return { acquired: takeOverStale(file, holder, 0) };
+    }
+    return { acquired: false };
+  } catch (e) {
+    return { acquired: false, problem: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Remove the lock if this process holds it. */
+export function releaseConsolidateLock(file: string = consolidateLockPath()): void {
+  removeIfOwned(file);
+}
