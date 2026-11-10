@@ -56,6 +56,25 @@ export function getExtractionConfig(): ExtractionConfig {
 }
 
 /**
+ * 추출기가 이 project 를 제외 대상으로 보는가 — 제외 목록의 경로이거나 그 하위 경로.
+ *
+ * 🚨 경로 **경계**로 비교한다. raw prefix 면 형제 프로젝트가 함께 배제된다 —
+ * '/…/memory-bank' 가 '/…/memory-bank-x' 같은 별개 프로젝트를 삼켜, 그 세션이
+ * 영구 0/0 마커를 받고 fact 가 영원히 추출되지 않았다(실측: 적격 8세션 전건 손실).
+ * pending SQL 필터는 exact 매칭이라 선정은 되고 추출기에서만 걸러져 무음이었다.
+ *
+ * 추출기(runFactExtraction)와 0건 마커 되돌리기 스크립트(requeue-zero-markers.mjs)가
+ * 같은 판정을 쓴다 — 추출기가 곧바로 제외 마커를 다시 쓸 세션을 되돌리지 않게.
+ */
+export function isExcludedProjectPath(
+  project: string | null | undefined,
+  cfg: Pick<ExtractionConfig, 'excludeProjects'> = getExtractionConfig(),
+): boolean {
+  if (!project) return false;
+  return cfg.excludeProjects.some((p) => project === p || project.startsWith(`${p}/`));
+}
+
+/**
  * extraction_log.extracted 의 상태 코드 (음수는 전부 "fact 0건"의 사유 구분).
  *
  * 🚨 이 3-상태가 없으면 세션 처리는 두 나쁜 선택 사이를 왕복한다 — 실패를 기록하면

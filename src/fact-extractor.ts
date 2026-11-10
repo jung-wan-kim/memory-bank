@@ -11,7 +11,7 @@ import { secretRejectReason } from './secret-scan.js';
 import { resolveRepoRoots } from './project-family.js';
 import {
   claimSessionSql, renewClaimSql, failureMarkerUpsertSql, freshClaimPredicate,
-  getExtractionConfig, EXTRACTION_STATE, MAX_INTERNAL_RETRIES, ensureSeenExchangesColumn,
+  isExcludedProjectPath, EXTRACTION_STATE, MAX_INTERNAL_RETRIES, ensureSeenExchangesColumn,
 } from './pending-extraction.js';
 
 export const EXTRACTION_SYSTEM_PROMPT = `You are an expert at extracting long-term facts from conversations.
@@ -197,13 +197,8 @@ function maxLlmCallsPerSession(): number {
 // 파일 헤더가 명시한 "두 소비자는 동일 술어" 계약이 그것이다.
 
 function isExcludedProject(project: string | null | undefined): boolean {
-  if (!project) return false;
-  const EXCLUDE_PROJECTS = getExtractionConfig().excludeProjects;
-  // 🚨 경로 **경계**로 비교한다. raw prefix 면 형제 프로젝트가 함께 배제된다 —
-  // '/…/memory-bank' 가 '/…/memory-bank-x' 같은 별개 프로젝트를 삼켜, 그 세션이
-  // 영구 0/0 마커를 받고 fact 가 영원히 추출되지 않았다(실측: 적격 8세션 전건 손실).
-  // pending SQL 필터는 exact 매칭이라 선정은 되고 여기서만 걸러져 무음이었다.
-  return EXCLUDE_PROJECTS.some((p) => project === p || project.startsWith(`${p}/`));
+  // 판정(경로 경계 비교)은 pending-extraction.ts 의 isExcludedProjectPath 하나다.
+  return isExcludedProjectPath(project);
 }
 
 /**
