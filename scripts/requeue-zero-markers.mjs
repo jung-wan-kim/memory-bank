@@ -41,8 +41,11 @@
  *    would store them twice).
  *
  * Cost: each requeued session is extracted by the backfill worker — up to
- * MEMORY_BANK_MAX_EXTRACT_CALLS LLM calls per session plus one classification
- * call per saved fact, BACKFILL_EXTRACT_MAX sessions per run. Use --limit.
+ * MEMORY_BANK_MAX_EXTRACT_CALLS extraction calls per session (default 12). The
+ * facts it saves are then classified together, one LLM call per 20 facts (a
+ * reply whose numbering cannot be trusted is asked again: at most n + 3 calls
+ * for n facts), and each saved fact gets at most one relation call (none when
+ * it has no close neighbour). BACKFILL_EXTRACT_MAX sessions per run. Use --limit.
  */
 
 import Database from 'better-sqlite3';

@@ -293,8 +293,11 @@ node scripts/requeue-zero-markers.mjs [--db PATH] --undo FILE                   
   seen (the line then says `all M` and why).
 - **Cost.** Each requeued session is extracted by the backfill worker: up to
   `MEMORY_BANK_MAX_EXTRACT_CALLS` extraction batches per session (default 12,
-  at most 60; a batch that fails for a transient reason is tried again), plus
-  the classification and relation calls for the facts it saves,
+  at most 60; a batch that fails for a transient reason is tried again). The
+  facts it saves are then classified together — one classification call per 20
+  facts, not one per fact (a reply whose numbering cannot be trusted is asked
+  again: at most n + 3 calls for n facts) — and each saved fact gets at most
+  one relation call (none when it has no close neighbour).
   `BACKFILL_EXTRACT_MAX` sessions per run, once the session has been quiet for
   `BACKFILL_QUIET_MINUTES`. Use `--limit`.
 
