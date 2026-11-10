@@ -13,15 +13,21 @@
  *   - Facts are REASSIGNED (never deleted); only the now-empty source category +
  *     its vec_categories row are removed. Every merge is logged with the ids of
  *     the facts it moved (category_merge_log.fact_ids), so it can be undone by hand.
- *   - DRY_RUN=1 or --dry-run previews without writing: the database is opened
- *     read-only, so not even the schema changes (the first version created the
- *     merge-log table and ran initDatabase()'s migrations in a dry run).
- *   - Any other argument stops the run before the database is opened — a typo
- *     like --dryrun used to be ignored and the merge ran for real.
+ *   - The default is a preview, like the other clean-up scripts: with no
+ *     argument (or --dry-run, or DRY_RUN=1) nothing is written — the database
+ *     is opened read-only, so not even the schema changes (the first version
+ *     created the merge-log table and ran initDatabase()'s migrations in a dry
+ *     run). The merge itself needs --apply. Until 2026-11-11 a run with no
+ *     argument merged for real: on a copy of a live database that was 326
+ *     categories merged and 240 facts moved by a command that looked like the
+ *     other scripts' preview.
+ *   - --apply together with --dry-run or DRY_RUN=1 is refused, and so is any
+ *     other argument, before the database is opened — a typo like --dryrun
+ *     used to be ignored and the merge ran for real.
  *
  * Requires category embeddings (scripts/backfill-category-embeddings.mjs first).
  * Idempotent: re-running merges any remaining qualifying singletons.
- * Usage: [DRY_RUN=1] [MERGE_SIM_THRESHOLD=0.93] [MERGE_MAX_FACTS=1] node scripts/merge-singleton-categories.mjs [--dry-run]
+ * Usage: [MERGE_SIM_THRESHOLD=0.93] [MERGE_MAX_FACTS=1] node scripts/merge-singleton-categories.mjs [--apply]
  */
 import * as sqliteVec from 'sqlite-vec';
 import { initDatabase, openReadOnlyDatabase } from '../dist/db.js';
@@ -31,13 +37,17 @@ import { parseCliArgs } from '../dist/cli-args.js';
 
 let cli;
 try {
-  cli = parseCliArgs(process.argv.slice(2), { flags: ['--dry-run'] });
+  cli = parseCliArgs(process.argv.slice(2), { flags: ['--apply', '--dry-run'] });
+  if (cli.flags.has('--apply') && (cli.flags.has('--dry-run') || process.env.DRY_RUN === '1')) {
+    throw new Error('--apply cannot be used with --dry-run or DRY_RUN=1');
+  }
 } catch (e) {
   console.error(`merge-singleton-categories: ${e instanceof Error ? e.message : e}`);
-  console.error('Usage: [DRY_RUN=1] [MERGE_SIM_THRESHOLD=0.93] [MERGE_MAX_FACTS=1] node scripts/merge-singleton-categories.mjs [--dry-run]');
+  console.error('Usage: [MERGE_SIM_THRESHOLD=0.93] [MERGE_MAX_FACTS=1] node scripts/merge-singleton-categories.mjs [--apply]   (no argument: preview only)');
   process.exit(1);
 }
-const DRY_RUN = process.env.DRY_RUN === '1' || cli.flags.has('--dry-run');
+// A preview unless --apply was given.
+const DRY_RUN = !cli.flags.has('--apply');
 const SIM = Math.min(Math.max(parseFloat(process.env.MERGE_SIM_THRESHOLD || '0.93'), 0.5), 0.999);
 const MAX_FACTS = Math.max(parseInt(process.env.MERGE_MAX_FACTS || '1', 10) || 1, 1);
 const simOf = (d) => 1 - (d * d) / 2;
@@ -128,6 +138,7 @@ try {
 
   const after = db.prepare('SELECT count(*) c FROM ontology_categories').get().c;
   console.log(`merge: done — merged ${merged} categories, reassigned ${reassigned} facts. categories ${before} → ${after}${DRY_RUN ? ' (dry-run, no change)' : ''}`);
+  if (DRY_RUN && merged > 0) console.log(`dry run: nothing changed. --apply merges the ${merged} categor${merged === 1 ? 'y' : 'ies'} listed above.`);
 } catch (e) {
   console.error('merge-singleton-categories failed:', e instanceof Error ? e.message : e);
   process.exit(1);
