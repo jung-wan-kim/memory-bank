@@ -427,12 +427,19 @@ export class RebuildWouldLoseIndexError extends Error {
 
 export function formatRebuildCounts(counts: RebuildCounts, reach: RebuildReach): string[] {
   const p = counts.preserved;
+  // An upper bound: the rows whose file the re-index reads. How many of those
+  // the current rules index again is only known by reading every row's text.
+  const reCreatable = Math.max(0, counts.cleared.exchanges - reach.unreachable.exchanges);
   return [
     `Preserved: ${p.facts} facts (${p.activeFacts} active, ${p.taggedFacts} tagged), ${p.relations} relations, ` +
       `${p.revisions} revisions, ${p.domains} domains / ${p.categories} categories, ${p.extractionLog} extraction log rows`,
-    `Cleared and re-created from the archive: ${counts.cleared.exchanges} exchanges, ` +
-      `${counts.cleared.toolCalls} tool calls, ${counts.cleared.vectors} vectors`,
-    `Re-index source: ${reach.archiveConversations} archive conversation(s)`,
+    // What is cleared and what can come back are different numbers: this line
+    // used to read "Cleared and re-created from the archive: <every row>",
+    // two lines above the count of the rows that are not re-created.
+    `Cleared: ${counts.cleared.exchanges} exchanges, ${counts.cleared.toolCalls} tool calls, ${counts.cleared.vectors} vectors`,
+    `Re-index source: ${reach.archiveConversations} archive conversation(s) — at most ${reCreatable} of the ` +
+      `${counts.cleared.exchanges} cleared exchanges are indexed from them and can be re-created`,
+    `  (fewer when today's indexing rules skip some of them: agent warm-up turns, observer sessions and the plugin's own worker prompts are not indexed again)`,
     `Cleared and NOT re-created (file not among them): ${reach.unreachable.exchanges} exchanges from ${reach.unreachable.files} file(s)`,
   ];
 }

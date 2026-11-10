@@ -114,7 +114,11 @@ describe('index-cli rebuild / repair (the shipped command)', () => {
       db.close();
     }
     expect(r.stdout).toMatch(/Preserved: 2 facts \(2 active, 1 tagged\), 1 relations/);
-    expect(r.stdout).toMatch(/Cleared and re-created from the archive: 3 exchanges, 3 tool calls, 3 vectors/);
+    // what is cleared, and how much of it can come back, are two numbers (review LSO-9: one line used to
+    // call every cleared row "re-created", next to the line counting the rows that are not)
+    expect(r.stdout).toMatch(/^Cleared: 3 exchanges, 3 tool calls, 3 vectors$/m);
+    expect(r.stdout).toMatch(/Re-index source: 3 archive conversation\(s\) — at most 3 of the 3 cleared exchanges are indexed from them and can be re-created/);
+    expect(r.stdout).not.toMatch(/Cleared and re-created/);
     expect(r.stdout).toMatch(/Cleared and NOT re-created \(file not among them\): 0 exchanges from 0 file\(s\)/);
 
     const made = backups().filter((f) => f.startsWith('pre-rebuild-facts-'));
@@ -143,6 +147,8 @@ describe('index-cli rebuild / repair (the shipped command)', () => {
     const refused = run('rebuild', '--yes');
     expect(refused.status).toBe(1);
     expect(refused.stdout).toMatch(/Cleared and NOT re-created \(file not among them\): 3 exchanges from 3 file\(s\)/);
+    expect(refused.stdout).toMatch(/Re-index source: 0 archive conversation\(s\) — at most 0 of the 3 cleared exchanges are indexed from them and can be re-created/);
+    expect(refused.stdout).not.toMatch(/Cleared and re-created/);
     expect(refused.stderr).toMatch(/rebuild refused — nothing was changed\. 3 indexed exchange\(s\) from 3 file\(s\) cannot be re-created/);
     expect(refused.stderr).toMatch(/--allow-index-loss/);
     expect(state()).toEqual(before);
