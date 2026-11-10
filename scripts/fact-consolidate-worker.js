@@ -16,6 +16,8 @@
  * answer Korean queries through the main vector only until fact_kr is filled;
  * changed_pairs, only when not 0 = verdicts not applied because one of the two
  * facts was switched off or rewritten while the call was in flight).
+ * `worker: WARN no_content_time=<n>` follows when pairs were ordered by creation
+ * time because the content-time column could not be added (see below).
  * Whenever a run fails on a fact it appends
  *   worker: ERROR fact=<id> kind=<internal|transient|deterministic|unknown> msg=<message>
  * whether or not an LLM call was made, and a run that ends held on a fact is
@@ -225,6 +227,11 @@ async function main() {
     }
     if (result.cappedSearches > 0) {
       log(`worker: WARN knn_cap_reached=${result.cappedSearches} — that many candidate searches stopped at the KNN limit with matches possibly unread`);
+    }
+    // facts.content_at is added on first use; an attempt that meets another process's write lock is repeated at the
+    // next comparison. Until it is there a pair is ordered by creation time — said here, the run's only visible place.
+    if (result.withoutContentTime > 0) {
+      log(`worker: WARN no_content_time=${result.withoutContentTime} — facts.content_at was not there and could not be added (when another process holds the write lock it is tried again at the next comparison), so that many pairs were ordered by creation time`);
     }
     // Logged whatever the call count: an error before the LLM is reached makes
     // no call, and that is exactly the run that used to leave no usable trace.

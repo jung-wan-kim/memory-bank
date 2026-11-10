@@ -84,6 +84,8 @@ interface ComparisonTally {
   rewroteWithoutKorean?: boolean;
   /** The verdict was not applied: one of the two facts changed (switched off, rewritten) while it was being judged. */
   pairChanged?: boolean;
+  /** The pair was ordered by creation time: facts.content_at is not there and could not be added. */
+  withoutContentTime?: boolean;
 }
 
 /**
@@ -147,7 +149,12 @@ async function consolidateOne(
   if (candidates.length === 0) return 'none';
 
   const candidate = candidates[0].fact;
-  const [existingFact, newFact] = inContentOrder(candidate, driver, factContentTimes(db, [candidate.id, driver.id]));
+  // false on a writable store = the column could not be added just now (another
+  // process held the write lock): this pair is ordered by creation time, and
+  // the run says how many were (the next comparison tries again).
+  const hasContentTime = ensureFactContentAtColumn(db);
+  if (!hasContentTime) tally.withoutContentTime = true;
+  const [existingFact, newFact] = inContentOrder(candidate, driver, factContentTimes(db, [candidate.id, driver.id], hasContentTime));
   // Tag ONLY the provider call's rejection as an LlmCallError. Anything after
   // this (parseJsonResponse, the rewrite's embedding, applyConsolidationResult
   // DB writes) throws as a plain error, so the drain loop can hold on an
@@ -304,6 +311,13 @@ export interface ConsolidationRunResult {
    * the call was in flight (switched off or rewritten by another writer).
    */
   changedPairs: number;
+  /**
+   * Pairs ordered by creation time because facts.content_at could not be added
+   * (first use of the column while another process held the write lock). 0 on
+   * a store that has the column. The caller must surface it: for such a pair
+   * the fact shown as "existing" can be the one holding the later content.
+   */
+  withoutContentTime: number;
 }
 
 export async function consolidateAllPending(
@@ -329,6 +343,7 @@ export async function consolidateAllPending(
   let rewrites = 0;
   let rewritesWithoutKorean = 0;
   let changedPairs = 0;
+  let withoutContentTime = 0;
   let lastError: ConsolidationError | null = null;
   // KEYSET progress cursor `(created_at, id)`: the last fact FULLY examined this
   // run. Persisted by the caller so the next run resumes strictly after it.
@@ -361,6 +376,7 @@ export async function consolidateAllPending(
         if (tally.rewrote) rewrites++;
         if (tally.rewroteWithoutKorean) rewritesWithoutKorean++;
         if (tally.pairChanged) changedPairs++;
+        if (tally.withoutContentTime) withoutContentTime++;
         if (verdict === 'DUPLICATE') merged++;
         else if (verdict === 'CONTRADICTION') contradictions++;
         else if (verdict === 'EVOLUTION') evolutions++;
@@ -373,6 +389,7 @@ export async function consolidateAllPending(
         // `haiku=1` for a search failure that never reached the LLM.
         if (tally.llmCalled) haikuCalls++;
         if (tally.searchCapped) cappedSearches++;
+        if (tally.withoutContentTime) withoutContentTime++;
         console.error(`Consolidation call failed for fact ${newFact.id}:`, error);
         const kind: ConsolidationErrorKind = error instanceof LlmCallError ? classifyLlmError(error) : 'internal';
         lastError = {
@@ -429,7 +446,7 @@ export async function consolidateAllPending(
     cursor = { createdAt: newFact.created_at, id: newFact.id };
   }
 
-  return { processed, merged, contradictions, evolutions, haikuCalls, cursor, lastError, cappedSearches, rewrites, rewritesWithoutKorean, aheadOfClock, changedPairs };
+  return { processed, merged, contradictions, evolutions, haikuCalls, cursor, lastError, cappedSearches, rewrites, rewritesWithoutKorean, aheadOfClock, changedPairs, withoutContentTime };
 }
 
 /** A verdict resolved against its pair: which stored sentence (if any) it rewrites. */

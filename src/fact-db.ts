@@ -278,35 +278,49 @@ export function setFactKorean(db: Database.Database, id: string, text: string, v
 
 const contentAtColumn = new WeakMap<Database.Database, boolean>();
 
-/** Make sure facts.content_at exists. false when it does not and cannot be added (read-only handle, old DB). */
+/**
+ * Make sure facts.content_at exists. false when it does not and cannot be
+ * added: a read-only handle or an old DB (remembered for the handle), or
+ * another process holding the write lock right now (not remembered).
+ */
 export function ensureFactContentAtColumn(db: Database.Database): boolean {
   const known = contentAtColumn.get(db);
   if (known !== undefined) return known;
   let present: boolean;
-  let addedInTransaction = false;
+  // An answer read inside a caller's transaction is not remembered (the next
+  // call looks again): the column may have been added in that transaction —
+  // by this call or an earlier one — and its rollback takes the column along.
+  let remember = !db.inTransaction;
   try {
     const cols = db.prepare(`SELECT name FROM pragma_table_info('facts')`).all() as Array<{ name: string }>;
     present = cols.some((c) => c.name === 'content_at');
     if (!present && cols.length > 0) {
       db.prepare('ALTER TABLE facts ADD COLUMN content_at TEXT').run();
       present = true;
-      addedInTransaction = db.inTransaction;
     }
   } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
     // Another process added it between the check and the ALTER — the goal is met.
-    present = /duplicate column name/i.test(e instanceof Error ? e.message : String(e));
+    present = /duplicate column name/i.test(message);
+    // A write lock held by another process is about this moment, not about the
+    // handle. Remembered, it made every merge of the run order its pair by
+    // creation time and record no content time — the handle that met the lock
+    // on its first look never looked again.
+    if (!present && /database is locked|database table is locked|SQLITE_BUSY/i.test(message)) remember = false;
   }
-  // An ALTER inside a caller's transaction is undone by its rollback: such an
-  // answer is not remembered (the next call looks again).
-  if (!addedInTransaction) contentAtColumn.set(db, present);
+  if (remember) contentAtColumn.set(db, present);
   return present;
 }
 
-/** Content time of each given fact that exists: content_at, else created_at. */
-export function factContentTimes(db: Database.Database, ids: string[]): Map<string, string> {
+/**
+ * Content time of each given fact that exists: content_at, else created_at.
+ * `hasColumn` is the answer ensureFactContentAtColumn just gave the caller
+ * (so a caller that needs the answer itself does not ask twice).
+ */
+export function factContentTimes(db: Database.Database, ids: string[], hasColumn?: boolean): Map<string, string> {
   const times = new Map<string, string>();
   if (ids.length === 0) return times;
-  const expr = ensureFactContentAtColumn(db) ? 'COALESCE(content_at, created_at)' : 'created_at';
+  const expr = (hasColumn ?? ensureFactContentAtColumn(db)) ? 'COALESCE(content_at, created_at)' : 'created_at';
   const rows = db.prepare(`SELECT id, ${expr} AS t FROM facts WHERE id IN (${ids.map(() => '?').join(', ')})`)
     .all(...ids) as Array<{ id: string; t: string }>;
   for (const r of rows) times.set(r.id, r.t);
