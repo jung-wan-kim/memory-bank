@@ -114,10 +114,13 @@ Read a conversation, or a line range of it, as Markdown.
   (`…[message clipped: characters 0-39906 of 90048 shown]`) and the closing line also names `startChar`:
 
   ```
-  _Output truncated at the 40000-char limit: lines 3-3 of 4 shown, the message at line 3 up to character 39907. Continue with startLine=3, startChar=39907, endLine=4._
+  _Output truncated at the 40000-char limit: lines 3-3 of 4 shown, the message at line 3 up to character 39907. Without startChar the message starts over from its first character — to skip the rest of it instead, start at line 4. Continue with startLine=3, startChar=39907, endLine=4._
   ```
 
-  Calling again with only `startLine=3` returns the same first piece. The next piece starts with
+  The line it names is the one the call started on: `startChar` is what moves on. Calling again with only
+  `startLine=3` returns the same first piece, every time. To leave the rest of the message unread, start at
+  the line the closing line gives for that (here `startLine: 4`); when the message is the last line of the
+  range the closing line says that nothing follows it. The next piece starts with
   `…[message at line 3 continues from character 39907 of 90048]`.
 - A tool input or tool result longer than 2,000 characters is clipped:
   `…[+N chars not shown — read again with full: true]`. With `full: true` nothing is clipped (the 40,000

@@ -168,6 +168,26 @@ describe('MCP server over stdio', () => {
       expect(last).not.toMatch(/Output truncated/);
     });
 
+    // R2-SEARCH-1 — the answer names the line it started on (plus a startChar). A caller that carried only
+    // startLine over got the same answer on every call, and nothing in it said why.
+    it('an answer that stopped inside a message says what startLine alone does and names the line that skips it', async () => {
+      const file = path.join(archiveProject, 'huge.jsonl');
+      const first = await call('read', { path: file });
+      expect(first.text).toMatch(/Without startChar the message starts over from its first character — to skip the rest of it instead, start at line 2\. Continue with startLine=1, startChar=\d+\._\n$/);
+      // startLine alone: the same answer again
+      expect((await call('read', { path: file, startLine: 1 })).text).toBe(first.text);
+      // the line it names moves on
+      const skipped = await call('read', { path: file, startLine: 2 });
+      expect(skipped.isError).toBe(false);
+      expect(skipped.text).toContain('after-the-huge-one');
+      expect(skipped.text).not.toMatch(/Output truncated/);
+
+      const { tools } = await client.listTools();
+      const read = tools.find((t) => t.name === 'read')!;
+      expect(read.description).toMatch(/call again with every value that line names/);
+      expect(read.description).toMatch(/without it the message starts over/);
+    });
+
     it('clips a long tool result with the way to read it, and full: true shows it whole', async () => {
       const file = path.join(archiveProject, 'tool.jsonl');
       const clipped = await call('read', { path: file });
