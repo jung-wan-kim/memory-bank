@@ -26,6 +26,13 @@
  * the result to equal dist/mcp-server.js byte for byte — the stamp is written
  * only for a bundle this machine makes from the sources being hashed.
  *
+ * A bundle built where node_modules is not a folder of the checkout (a git
+ * worktree whose node_modules is a symlink to another directory) names every
+ * inlined module by a path that leaves the project — `// ../../…/<home>/…/
+ * node_modules/zod/…` — and so carries that machine's directory names. It runs
+ * the same, and it is stamped, with a warning: the check refuses it (it must
+ * not be committed or published), see outsideModulePathCount.
+ *
  *   node scripts/stamp-bundle.mjs [--root <project dir>]
  *
  * Exit: 0 stamped · 1 not stamped (usage error, bundle missing, bundle is not
@@ -148,6 +155,23 @@ export function bundleStaleReason(file, expectedInputs) {
   return null;
 }
 
+/**
+ * How many lines of a bundle name a module by a path that leaves the project:
+ * esbuild's module comment (`// ../…`) and its CommonJS wrapper key (`"../…"(`).
+ * 0 for a bundle built in a checkout that has its own node_modules.
+ */
+export function outsideModulePathCount(bytes) {
+  let count = 0;
+  for (const line of bytes.toString('utf8').split('\n')) {
+    if (/^\/\/ \.\.\//.test(line) || /^\s+"\.\.\/[^"]*"\(/.test(line)) count++;
+  }
+  return count;
+}
+
+export const OUTSIDE_PATHS_ADVICE =
+  'it was built where node_modules is not a folder of the checkout (a symlink to another directory?) and carries that machine\'s directory names — ' +
+  'build the dist to commit in a checkout with its own node_modules (`npm install`, then `npm run build`)';
+
 function usage(message) {
   process.stderr.write(`stamp-bundle: ${message}\nusage: node scripts/stamp-bundle.mjs [--root <project dir>]\n`);
   return 1;
@@ -178,6 +202,11 @@ function main(argv) {
     }
     fs.writeFileSync(file, withStamp(body, inputsDigest(root, built.inputs, esbuildArgs, pkg)));
     process.stdout.write(`stamp-bundle: ${BUNDLE_REL} stamped (${built.inputs.length} first-party source files)\n`);
+    const outside = outsideModulePathCount(body);
+    if (outside > 0) {
+      // Not an error here: the bundle works, and tests that import dist/ run on it (`npx vitest run`).
+      process.stderr.write(`stamp-bundle: warning — ${BUNDLE_REL} names ${outside} modules by a path outside the project: ${OUTSIDE_PATHS_ADVICE}. \`npm test\` refuses this bundle.\n`);
+    }
     return 0;
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

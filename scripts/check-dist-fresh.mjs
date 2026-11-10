@@ -17,6 +17,9 @@
  *    wrote into it (scripts/stamp-bundle.mjs): the digest of the first-party
  *    sources, bundle arguments and dependency ranges it was made from must be
  *    the digest of the current ones, and its bytes must be the stamped ones.
+ *    A bundle that names modules by paths outside the project (built where
+ *    node_modules is a symlink to another directory) is refused even when it
+ *    is fresh: it carries the directory names of the machine that built it.
  *
  * Files only dist/ has (left over from deleted sources) are reported but do
  * not fail the check — a rebuild does not remove them, so failing would have
@@ -31,7 +34,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BUNDLE_REL, bundleEsbuildArgs, bundleInto, bundleStaleReason, inputsDigest, repoBin } from './stamp-bundle.mjs';
+import {
+  BUNDLE_REL, OUTSIDE_PATHS_ADVICE, bundleEsbuildArgs, bundleInto, bundleStaleReason, inputsDigest, outsideModulePathCount, repoBin,
+} from './stamp-bundle.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 // Relative to dist/: tsc emits the unbundled module here, the bundle step overwrites it.
@@ -101,7 +106,10 @@ function main() {
       if (!fs.existsSync(target)) missing.push(rel);
       else if (!fs.readFileSync(path.join(compiled, rel)).equals(fs.readFileSync(target))) different.push(rel);
     }
-    const bundleReason = bundleStaleReason(path.join(root, BUNDLE_REL), inputsDigest(root, inputs, esbuildArgs, pkg));
+    const bundleFile = path.join(root, BUNDLE_REL);
+    const bundleReason = bundleStaleReason(bundleFile, inputsDigest(root, inputs, esbuildArgs, pkg));
+    const outside = fs.existsSync(bundleFile) ? outsideModulePathCount(fs.readFileSync(bundleFile)) : 0;
+    const outsideLine = outside === 0 ? '' : `  the bundle ${BUNDLE_REL} names ${outside} modules by a path outside the project: ${OUTSIDE_PATHS_ADVICE}\n`;
 
     const expectedSet = new Set(expected).add(BUNDLE_IN_DIST);
     const leftover = fs.existsSync(distDir) ? listFiles(distDir).filter((rel) => !expectedSet.has(rel)) : [];
@@ -109,6 +117,11 @@ function main() {
       process.stderr.write(`check-dist-fresh: note — ${leftover.length} file(s) in dist/ have no source any more (not checked): ${leftover.slice(0, 5).join(', ')}${leftover.length > 5 ? ', …' : ''}\n`);
     }
 
+    if (missing.length === 0 && different.length === 0 && bundleReason === null && outside > 0) {
+      // Fresh, and still not a dist to commit: rebuilding here would produce the same paths.
+      process.stderr.write(`check-dist-fresh: dist matches the current sources, but it must not be committed as it is.\n${outsideLine}`);
+      return 1;
+    }
     if (missing.length === 0 && different.length === 0 && bundleReason === null) {
       const compared = expected.filter((rel) => rel !== BUNDLE_IN_DIST).length;
       process.stdout.write(`check-dist-fresh: dist is fresh (${compared} compiled files match a build of the current sources; the bundle's stamp matches its ${inputs.length} first-party sources)\n`);
@@ -119,7 +132,8 @@ function main() {
       `check-dist-fresh: dist is stale — run \`npm run build\` first (tests import dist/, and this check does not rebuild it).\n` +
       show('differs from a build of the current sources', different) +
       show('missing from dist', missing) +
-      (bundleReason === null ? '' : `  the bundle ${BUNDLE_REL} ${bundleReason}\n`),
+      (bundleReason === null ? '' : `  the bundle ${BUNDLE_REL} ${bundleReason}\n`) +
+      outsideLine,
     );
     return 1;
   } finally {

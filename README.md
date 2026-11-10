@@ -465,6 +465,8 @@ npm test
 
 `npm test` does not build. Its first step (`pretest`, `scripts/check-dist-fresh.mjs`) fails with "dist is stale — run `npm run build` first" when `dist/` is not a build of the current sources, and writes nothing. Compiled files are compared byte for byte. The bundle `dist/mcp-server.js` inlines third-party packages whose versions differ from one `npm install` to the next (there is no lock file), so it is judged by the stamp `npm run build` writes on its last line — a digest of the sources, bundle arguments and dependency ranges it was built from — not by its bytes.
 
+Build the `dist/` you commit in a checkout that has its own `node_modules`. Where `node_modules` is a symlink to another directory (a git worktree sharing the main checkout's install), the bundle names every inlined module by a path outside the project and so carries that machine's directory names: the build warns, and `npm test` refuses that bundle. `npx vitest run` still runs the tests on it.
+
 ## License
 
 MIT

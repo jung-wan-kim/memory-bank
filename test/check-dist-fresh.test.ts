@@ -267,6 +267,45 @@ describe('scripts/check-dist-fresh.mjs', () => {
     expect(check().status).toBe(0);
   }, 120_000);
 
+  it('refuses a fresh bundle that was built where node_modules is a link to another folder (it carries that machine\'s paths)', () => {
+    // A git worktree whose node_modules points at another checkout: esbuild names each inlined
+    // module by its real path, which leaves the project — `// ../<elsewhere>/node_modules/fake-dep/…`.
+    const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mb-dist-elsewhere-')));
+    const portable = fs.readFileSync(at('dist', 'mcp-server.js'));
+    expect(portable.toString('utf8')).toContain('// node_modules/fake-dep/index.js');
+    try {
+      fs.renameSync(at('node_modules'), path.join(elsewhere, 'node_modules'));
+      fs.symlinkSync(path.join(elsewhere, 'node_modules'), at('node_modules'));
+
+      // The bundle built in the real checkout is still fine here: nothing is judged by this machine's rebuild.
+      const committed = check();
+      expect(committed.stderr).toBe('');
+      expect(committed.status).toBe(0);
+
+      // Built here, it works and is stamped — with a warning…
+      runTsc();
+      runEsbuild();
+      const stamped = stamp();
+      expect(stamped.status, stamped.stderr).toBe(0);
+      expect(stamped.stderr).toContain('warning — dist/mcp-server.js names 1 modules by a path outside the project');
+      expect(fs.readFileSync(at('dist', 'mcp-server.js'), 'utf8')).toMatch(/^\/\/ \.\.\/.*\/node_modules\/fake-dep\/index\.js$/m);
+
+      // …and the check refuses it, saying it is not staleness (a rebuild here changes nothing).
+      const r = check();
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('dist matches the current sources, but it must not be committed as it is');
+      expect(r.stderr).toContain('names 1 modules by a path outside the project');
+      expect(r.stderr).toContain('a checkout with its own node_modules');
+      expect(r.stderr).not.toContain('dist is stale');
+    } finally {
+      fs.rmSync(at('node_modules'), { recursive: true, force: true });
+      fs.renameSync(path.join(elsewhere, 'node_modules'), at('node_modules'));
+      fs.rmSync(elsewhere, { recursive: true, force: true });
+      fs.writeFileSync(at('dist', 'mcp-server.js'), portable);
+    }
+    expect(check().status).toBe(0);
+  }, 120_000);
+
   it('reports a file left over from a deleted source without failing', () => {
     fs.writeFileSync(at('dist', 'removed-module.js'), 'export {};\n');
     const r = check();

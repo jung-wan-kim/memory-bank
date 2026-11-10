@@ -248,6 +248,8 @@ npm test
 
 `npm test` 는 빌드하지 않습니다. 첫 단계(`pretest`, `scripts/check-dist-fresh.mjs`)가 `dist/` 가 지금 소스의 빌드인지 확인하고, 아니면 "dist is stale — run `npm run build` first" 로 멈춥니다(아무것도 쓰지 않습니다). 컴파일 결과 파일은 바이트로 비교합니다. 번들 `dist/mcp-server.js` 에는 외부 패키지 코드가 들어가는데 잠금 파일이 없어 `npm install` 할 때마다 그 버전이 달라질 수 있으므로, 바이트가 아니라 `npm run build` 가 번들 마지막 줄에 적는 표식(번들에 들어간 소스·번들 인자·의존성 범위의 해시)으로 판정합니다.
 
+커밋할 `dist/` 는 자기 `node_modules` 폴더가 있는 체크아웃에서 빌드하세요. `node_modules` 가 다른 폴더로 가는 심링크인 곳(메인 체크아웃의 설치를 같이 쓰는 git worktree)에서 만든 번들은 외부 모듈을 프로젝트 밖 경로로 적어 그 기기의 폴더 이름이 들어갑니다. 빌드가 경고를 내고 `npm test` 는 그 번들을 거부합니다. 테스트 자체는 `npx vitest run` 으로 그 번들에서도 돌릴 수 있습니다.
+
 ## 라이선스
 
 MIT
