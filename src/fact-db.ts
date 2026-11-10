@@ -150,6 +150,12 @@ export function getActiveFacts(db: Database.Database): Fact[] {
     .map(rowToFact);
 }
 
+/** The fact as it is stored now, or null when it is gone or inactive. */
+export function getActiveFact(db: Database.Database, id: string): Fact | null {
+  const row = db.prepare('SELECT * FROM facts WHERE id = ? AND is_active = 1').get(id) as Record<string, unknown> | undefined;
+  return row ? rowToFact(row) : null;
+}
+
 export function getFactsByProject(db: Database.Database, project: string): Fact[] {
   const canon = canonicalizeProject(db, project);
   return (db.prepare(`

@@ -6,6 +6,7 @@ import { LlmCallError, classifyLlmError } from './llm-error-class.js';
 import {
   getNewFactsSince,
   getAllNewFactsSince,
+  getActiveFact,
   searchSimilarFactsSameScope,
   countFactsDatedAfter,
   updateFact,
@@ -214,11 +215,12 @@ export async function consolidateFacts(
   let haikuCalls = 0, merged = 0, contradictions = 0, evolutions = 0;
   for (const newFact of newFacts) {
     if (haikuCalls >= MAX_HAIKU_CALLS) break;
-    const stillActive = db.prepare('SELECT 1 FROM facts WHERE id = ? AND is_active = 1').get(newFact.id);
-    if (!stillActive) continue;
+    // The row as it is now (see consolidateAllPending): an earlier comparison may have switched it off or rewritten it.
+    const driver = getActiveFact(db, newFact.id);
+    if (!driver) continue;
     const tally: ComparisonTally = { llmCalled: false, searchCapped: false };
     try {
-      const verdict = await consolidateOne(db, newFact, tally);
+      const verdict = await consolidateOne(db, driver, tally);
       if (tally.llmCalled) haikuCalls++; // count the CALL, not the verdict (malformed output still spent budget)
       if (verdict === 'DUPLICATE') merged++;
       else if (verdict === 'CONTRADICTION') contradictions++;
@@ -339,13 +341,20 @@ export async function consolidateAllPending(
     const newFact = newFacts[i];
     if (haikuCalls >= MAX_HAIKU_CALLS) break; // budget wall — cursor stays at the last examined fact
 
-    // Re-read: an earlier comparison this run may have deactivated this fact.
-    const stillActive = db.prepare('SELECT 1 FROM facts WHERE id = ? AND is_active = 1').get(newFact.id);
-    if (stillActive) {
+    // Re-read the whole row, not just "still active?": an earlier comparison
+    // this run may have switched this fact off — or rewritten it (CONTRADICTION
+    // with a merged sentence rewrites the later fact, which is still to be
+    // driven). The list read at the start of the run then holds a sentence and
+    // a vector the fact no longer has: the LLM judged the old sentence, the
+    // neighbours were searched with the old vector, and the revision recorded
+    // the old sentence as previous_fact. The cursor key (created_at, id) is
+    // the same either way.
+    const driver = getActiveFact(db, newFact.id);
+    if (driver) {
       const tally: ComparisonTally = { llmCalled: false, searchCapped: false };
       try {
         // Same-scope isolation + budget accounting via the shared helper.
-        const verdict = await consolidateOne(db, newFact, tally);
+        const verdict = await consolidateOne(db, driver, tally);
         if (tally.llmCalled) haikuCalls++; // count the CALL, not the verdict
         if (tally.searchCapped) cappedSearches++;
         if (tally.rewrote) rewrites++;
