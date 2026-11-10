@@ -198,6 +198,51 @@ function narrowFtsUpdateTrigger(db: Database.Database): void {
   }
 }
 
+/**
+ * How long after dropping idx_facts_active an index of that name is left alone.
+ *
+ * A 1.7.x process sharing the database re-creates the index on its own open
+ * (`CREATE INDEX IF NOT EXISTS`), reading the whole fact table under the write
+ * lock — measured 1.6-3.4s at 46,507 facts. Dropping it again on every open of
+ * this code made the two versions rebuild it for as long as both ran: every
+ * open of the older one paid those seconds (an older MCP server opens the
+ * database per tool call). So an index that is back within this time of the
+ * last drop stays. The two queries the drop was measured on (key facts in
+ * fact-db.ts, the ontology tree in ontology-db.ts) carry a `+is_active` hint
+ * and stay off it either way; other `is_active = 1` queries plan as they did
+ * in 1.7.x while it is back. After that time — the older processes of an
+ * upgrade are long replaced — it is dropped again. 6 hours: chosen, not
+ * measured; the interval of the session-start maintenance, the other cleanup
+ * that is not done per open.
+ */
+export const FACTS_ACTIVE_INDEX_REDROP_MS = 6 * 60 * 60 * 1000;
+const FACTS_ACTIVE_INDEX_DROPPED_AT = 'idx_facts_active_dropped_at';
+
+function dropFactsActiveIndex(db: Database.Database): void {
+  const exists = () => db.prepare(
+    `SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_facts_active'`
+  ).get() !== undefined;
+  if (!exists()) return;
+  // fts_meta is this database's key/value table (created above); every reader asks for its own key.
+  const recorded = Number((db.prepare(
+    `SELECT value FROM fts_meta WHERE key = ?`
+  ).get(FACTS_ACTIVE_INDEX_DROPPED_AT) as { value: string } | undefined)?.value);
+  const sinceDrop = Date.now() - recorded;
+  // No record, an unreadable one, or one from the future (the clock was set back) never keeps the index.
+  if (Number.isFinite(sinceDrop) && sinceDrop >= 0 && sinceDrop < FACTS_ACTIVE_INDEX_REDROP_MS) return;
+  try {
+    db.transaction(() => {
+      db.exec(`DROP INDEX IF EXISTS idx_facts_active`);
+      db.prepare(`INSERT OR REPLACE INTO fts_meta(key, value) VALUES(?, ?)`).run(FACTS_ACTIVE_INDEX_DROPPED_AT, String(Date.now()));
+    }).immediate();
+  } catch (e) {
+    // Lock contention is not an error: the index only makes some plans slower, and the next open tries again.
+    const msg = (e as Error)?.message ?? '';
+    if (!/database is locked|database table is locked|SQLITE_BUSY/i.test(msg)) throw e;
+    console.error('[db] idx_facts_active 제거 지연 — 락 경합, 다음 초기화에서 재시도');
+  }
+}
+
 /** One turn of one file: what insertExchange looks up to remove older snapshots of a turn. */
 export const EXCHANGE_TURN_INDEX = 'idx_exchanges_path_line';
 const EXCHANGE_TURN_INDEX_DDL =
@@ -470,10 +515,8 @@ export function initDatabase(): Database.Database {
   // planner estimates every equality index at ~10 rows and picked it for
   // `… AND is_active = 1` queries — measured live: the key-facts query 48ms vs
   // 0.02ms through idx_facts_scope, facts-by-category 4.41s vs 0.046s per 60
-  // categories. A no-op (no write) once the index is gone. A 1.7.x process
-  // sharing the DB re-creates it on its next open and the next open of this
-  // code drops it again; until then the planner behaves as before this change.
-  db.exec(`DROP INDEX IF EXISTS idx_facts_active`);
+  // categories. Nothing is written once the index is gone.
+  dropFactsActiveIndex(db);
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS fact_revisions (
