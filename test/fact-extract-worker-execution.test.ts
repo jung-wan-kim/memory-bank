@@ -228,6 +228,30 @@ describe('훅 워커: 선색인이 실패하면 일부만 색인된 세션을 "�
     expect(probeAt, '추출 전에 묻는다').toBeLessThan(order.indexOf('extract'));
     expect(log).toMatch(new RegExp(`WARN \\(preindex_failed\\) session=${SID} .*색인된 만큼만 추출`));
     expect(log).toMatch(/extracted=2 saved=2/);
+    expect(log.indexOf('WARN (preindex_failed)'), '경고가 결과 줄보다 먼저다').toBeLessThan(log.indexOf('extracted=2 saved=2'));
+  });
+
+  // 2차 검수 R2-CE-06: 색인된 교환이 0개인 세션에서 두 줄이 반대로 말했다 — 앞줄은 "backfill 대상이 아니라
+  // 색인된 만큼만 추출 … 나머지는 다음 SessionEnd 에서", 바로 뒷줄은 "색인된 뒤 backfill 이 처리".
+  // 추출한 것이 없으면 앞줄은 사실이 아니다(교환이 없어서 지금 대상이 아닐 뿐, 색인되면 backfill 이 집는다).
+  it('선색인 실패 + 색인된 교환 0개: "색인된 만큼만 추출" 경고는 적지 않고 not_indexed 한 줄만 남긴다', () => {
+    writeStubs({ preindex: 'failed', backfillEligible: false, result: { extracted: 0, saved: 0, skipped: 'not_indexed' } });
+    const { code, order, log } = runWorker();
+    expect(code).toBe(0);
+    expect(order).toContain('extract');
+    expect(log).toMatch(new RegExp(`SKIPPED \\(not_indexed\\) session=${SID} .*preindex=failed.*색인된 뒤 backfill 이 처리`));
+    expect(log).not.toMatch(/preindex_failed/);
+    expect(log).not.toMatch(/색인된 만큼만 추출|다음 SessionEnd/);
+  });
+
+  it('선색인 실패 + backfill 대상이 아닌 세션에서 추출이 실패해도 경고는 남고, 실패 줄보다 먼저다', () => {
+    writeStubs({ preindex: 'failed', backfillEligible: false, throwKind: 'internal' });
+    const { code, log } = runWorker();
+    expect(code).toBe(0);
+    expect(log).toMatch(new RegExp(`WARN \\(preindex_failed\\) session=${SID} .*색인된 만큼만 추출`));
+    expect(log).toMatch(/ERROR \(internal\) session=.*extraction blew up/);
+    expect(log.indexOf('WARN (preindex_failed)')).toBeLessThan(log.indexOf('ERROR (internal)'));
+    expect(log.match(/WARN \(preindex_failed\)/g), '한 번만 적는다').toHaveLength(1);
   });
 
   it('선색인이 성공했으면 묻지 않고 바로 추출한다', () => {
