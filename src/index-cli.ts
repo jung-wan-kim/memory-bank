@@ -31,7 +31,14 @@ const noSummaries = getNoSummaries();
  * read as "no --yes given, but go on anyway".
  */
 function strictArgs(flags: string[]) {
-  return parseCliArgs(process.argv.slice(3), { flags, values: ['--concurrency', '-c'] });
+  try {
+    return parseCliArgs(process.argv.slice(3), { flags, values: ['--concurrency', '-c'] });
+  } catch (error) {
+    // A typo is the user's to fix, not a crash: the message and what is accepted, no stack.
+    console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`Accepted for ${command}: ${flags.join(' ')}`);
+    process.exit(1);
+  }
 }
 
 async function main() {
