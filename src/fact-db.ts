@@ -533,9 +533,14 @@ export function searchSimilarFactsSameScope(
   const canonProject = scope.type === 'project' ? canonicalizeProject(db, scope.project) : null;
 
   // Early out only if the scope is genuinely empty (nothing to match against).
+  // `+is_active` keeps the count on idx_facts_scope when an older process has
+  // re-created idx_facts_active (db.ts, FACTS_ACTIVE_INDEX_REDROP_MS): without
+  // it the planner reads every active fact for each driver (measured at 30,584
+  // active facts: 30-47ms a call against 0.4-2.1ms for a project scope, 24-29ms
+  // against 14-16ms for the global one). The rows counted are the same.
   const scopeCount = scope.type === 'global'
-    ? (db.prepare("SELECT COUNT(*) AS n FROM facts WHERE is_active = 1 AND scope_type = 'global' AND embedding_version = ?").get(EMBEDDING_VERSION) as { n: number }).n
-    : (db.prepare("SELECT COUNT(*) AS n FROM facts WHERE is_active = 1 AND scope_type = 'project' AND scope_project = ? AND embedding_version = ?").get(canonProject, EMBEDDING_VERSION) as { n: number }).n;
+    ? (db.prepare("SELECT COUNT(*) AS n FROM facts WHERE +is_active = 1 AND scope_type = 'global' AND embedding_version = ?").get(EMBEDDING_VERSION) as { n: number }).n
+    : (db.prepare("SELECT COUNT(*) AS n FROM facts WHERE +is_active = 1 AND scope_type = 'project' AND scope_project = ? AND embedding_version = ?").get(canonProject, EMBEDDING_VERSION) as { n: number }).n;
   if (scopeCount === 0) return [];
 
   // fetchN returns rows AND whether the index returned fewer than requested

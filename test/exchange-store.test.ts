@@ -371,6 +371,18 @@ describe('schema checks that run on every open', () => {
     `SELECT * FROM facts WHERE category = 'decision' AND is_active = 1`,
   ];
 
+  // The statements the product runs now where a selective column stands next to is_active: each carries the
+  // `+is_active` hint, so it stays off idx_facts_active for the hours an older process's copy of that index is
+  // left alone (below). test/facts-active-index-back.test.ts checks the statements the functions really prepare.
+  const FACT_QUERIES_WITH_HINT = [
+    `SELECT COUNT(*) AS n FROM facts WHERE ontology_category_id = 'x' AND +is_active = 1`,
+    `SELECT * FROM facts WHERE ontology_category_id = 'x' AND +is_active = 1 ORDER BY consolidated_count DESC`,
+    `SELECT COUNT(*) AS n FROM facts WHERE +is_active = 1 AND scope_type = 'project' AND scope_project = 'x' AND embedding_version = 3`,
+    `SELECT COUNT(*) AS n FROM facts WHERE +is_active = 1 AND scope_type = 'global' AND embedding_version = 3`,
+    `SELECT * FROM facts WHERE +is_active = 1 AND scope_type = 'project' AND scope_project IN ('x', 'y') ORDER BY updated_at DESC LIMIT 20`,
+    `SELECT * FROM facts WHERE +is_active = 1 AND scope_type = 'global' ORDER BY updated_at DESC LIMIT 20`,
+  ];
+
   it('a fresh DB has no idx_facts_active and no fact query plans through it', () => {
     const db = initDatabase();
     try {
@@ -420,6 +432,9 @@ describe('schema checks that run on every open', () => {
     const soon = initDatabase();
     try {
       expect(indexNames(soon)).toContain('idx_facts_active'); // not dropped again: that would only make the older process rebuild it
+      // while it is back: a shape without the hint is planned through it, the product's statements are not
+      expect(plan(soon, FACT_QUERIES[0])).toMatch(/idx_facts_active \(/);
+      for (const q of FACT_QUERIES_WITH_HINT) expect(plan(soon, q), q).not.toMatch(/idx_facts_active\b(?!_)/);
       // long after the last drop (the older processes have had their time): dropped again
       soon.prepare(`UPDATE fts_meta SET value = ? WHERE key = 'idx_facts_active_dropped_at'`).run(String(Date.now() - FACTS_ACTIVE_INDEX_REDROP_MS - 1000));
     } finally {
