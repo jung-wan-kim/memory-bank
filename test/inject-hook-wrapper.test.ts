@@ -27,7 +27,8 @@ function fakeNodePath(): string {
 }
 
 function runWrapper(nativeBin: string): { stdout: string; status: number | null; errLog: string } {
-  // The registered command string is `bash ${CLAUDE_PLUGIN_ROOT}/hooks/inject-context.sh` — run exactly that.
+  // The registered command string is `bash "${CLAUDE_PLUGIN_ROOT}/hooks/inject-context.sh"` (hooks.json — the path is
+  // quoted, so an install path with a space still works): the same interpreter and script, run here without a shell.
   const r = spawnSync('bash', [path.join(REPO, 'hooks', 'inject-context.sh')], {
     input: JSON.stringify({ prompt: '프롬프트 훅 래퍼의 바이너리 선택 규칙을 확인한다', cwd: '/tmp/proj', session_id: 'sess-wrap-01', hook_event_name: 'UserPromptSubmit' }),
     env: { PATH: fakeNodePath(), HOME: tmp, MEMORY_BANK_CONFIG_DIR: tmp, MEMORY_BANK_NATIVE_CLIENT: nativeBin },

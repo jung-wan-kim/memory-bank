@@ -18,12 +18,14 @@ Read-only apart from opening the database. Reports five separate findings:
 
 - **Not indexed** — an archive conversation with indexable exchanges and no row.
 - **Outdated** — changed after it was indexed *and* holding an exchange the
-  index lacks (a newer mtime alone is not enough).
+  index lacks (a newer mtime alone is not enough), or holding a turn the index
+  has only a shorter snapshot of (whatever the mtime says).
 - **Missing summaries** — has something to summarize and no summary file.
 - **Index rows whose file is gone** — the file each indexed path points at is
   checked on disk, plain and `.zst`, wherever it is (sub-folders included).
 - **Unreadable files** — could not be read to the end; nothing else is
-  concluded about them.
+  concluded about them. A `.zst` archive that stops inside a frame is one of
+  them: it is not read as a shorter conversation.
 
 Conversations that carry an exclusion marker, and files that hold nothing
 indexable (no exchange yet, only the plugin's own worker prompts, only machine
@@ -43,29 +45,81 @@ LLM calls), then:
   copied to `conversation-index/backups/prune-missing-<timestamp>.sqlite`
   (exchanges + tool calls), re-checked on disk, and deleted.
 
-If a count of the plan is over 5% of the index (and over 20), the repair stops
-before changing anything; `--yes` runs it anyway. A mistyped flag stops the
-command.
+The plan is checked before anything changes. Each count has its own total, and
+a count over its limit stops the repair (`repair stopped before changing
+anything — …`, with the count, the limit and the total it was measured
+against); `--yes` runs it anyway:
+
+| Count of the plan | Limit |
+|-------------------|-------|
+| rows to delete (`--prune-missing`) | 5% of the **indexed exchanges**, at least 20 |
+| conversations to re-index | 5% of the **conversations with something to index**, at least 20 |
+| summary (LLM) calls | 5% of the **conversations with something to index**, at least 20 and **at most 100** |
+
+"Conversations with something to index" is not every file of the archive:
+excluded conversations and files that hold only warm-up turns or observer
+prompts are left out (the plan prints both numbers: `N archived conversations
+(M with something to index)`). More than 100 summary calls always need `--yes`,
+however large the archive — each one is a model call of 10-14 seconds. A
+mistyped flag stops the command.
 
 ## `index-conversations --rebuild [--allow-index-loss] [--reset-summaries]`
 
 Empties the conversation index **in place** and re-creates it from the archive.
 The database file is never deleted, and the fact layer is not written.
 
-1. Prints what is preserved (facts, tagged facts, relations, …), what is
-   cleared, how many archive conversations the re-index will read, and how many
-   indexed exchanges it could **not** re-create.
+**Close the other Claude Code sessions first.** A rebuild clears every row, and
+a session that keeps indexing meanwhile writes rows the rebuild has no copy of
+(see step 5); the step that resets the vector table also holds the write lock
+in one transaction (about 2 seconds on an index of 340,000 exchanges).
+
+1. Prints what is preserved and what is cleared — two different numbers:
+
+   ```
+   Preserved: … facts (… active, … tagged), … relations, … revisions, … domains / … categories, … extraction log rows
+   Cleared: N exchanges, … tool calls, … vectors
+   Re-index source: C archive conversation(s) — at most M of the N cleared exchanges are indexed from them and can be re-created
+     (fewer when today's indexing rules skip some of them: agent warm-up turns, observer sessions and the plugin's own worker prompts are not indexed again)
+   Cleared and NOT re-created (file not among them): X exchanges from Y file(s)
+   ```
+
+   `M` is an upper bound (`N` minus `X`); how many of those rows today's rules
+   index again is only known after the re-index.
 2. Without `--yes` (the `index-conversations` wrapper passes it after its
-   confirmation prompt) it stops here.
-3. If any indexed exchange could not be re-created, it stops here too, unless
-   `--allow-index-loss` — in which case those rows are first copied to
-   `backups/pre-rebuild-unreachable-exchanges-<timestamp>.sqlite`.
-4. Copies the fact layer to `backups/pre-rebuild-facts-<timestamp>.sqlite`.
-5. Clears `tool_calls` and `exchanges` in batches of 2,000 (other processes keep
-   reading and writing in between), swaps `vec_exchanges` for an empty table of
-   the same definition, rebuilds the text index, and checks that the fact layer
-   counts did not move.
-6. Re-indexes the archive through the repair path. No summary is written or
+   confirmation prompt) it stops here: `rebuild not confirmed — nothing was
+   changed`.
+3. Reads every archive conversation that has indexed rows **to its end**, the
+   way the re-index will (`Reading the indexed conversations of the archive
+   before anything is cleared...`, one progress line per 5,000). A file that
+   cannot be read to the end — a `.zst` the compressor was interrupted on — is
+   printed (`cannot be read to the end: <path> (<error>)`) and its rows are
+   counted as not re-creatable: its path being in the archive does not mean
+   its rows come back. This pass costs one read of those files (the re-index
+   reads them again).
+4. If any indexed exchange could not be re-created, it stops here too
+   (`rebuild refused — nothing was changed. N indexed exchange(s) from M
+   file(s) cannot be re-created …`, with the damaged files counted
+   separately), unless `--allow-index-loss`.
+5. Copies the fact layer to `backups/pre-rebuild-facts-<timestamp>.sqlite`
+   and, with `--allow-index-loss`, the rows that will not come back to
+   `backups/pre-rebuild-unreachable-exchanges-<timestamp>.sqlite`. Both copies
+   read a snapshot and do not hold the write lock, so other processes keep
+   writing while they are made — which is why the rebuild then counts the rows
+   of those files again: if another process indexed one while its backup was
+   being written, the rebuild stops with
+
+   ```
+   rebuild stopped — nothing was cleared. N exchange(s) of the files that cannot be re-created were indexed while their backup was being written (another process is writing to this database). Close the other Claude Code sessions and run the rebuild again.
+   ```
+
+   The backups it had written stay (the message names them). A row of such a
+   file indexed later, *during* the clear, is cleared without a copy — the
+   reason to close the other sessions before starting.
+6. Clears `tool_calls` and `exchanges` in batches of 2,000, pausing for other
+   writers at least once a second; swaps `vec_exchanges` for an empty table of
+   the same definition and rebuilds the text index (two transactions); and
+   checks that the fact layer counts did not move.
+7. Re-indexes the archive through the repair path. No summary is written or
    deleted (`--reset-summaries` deletes them all; sync and `--repair` write
    them back, one LLM call each).
 
@@ -131,18 +185,29 @@ node scripts/dedupe-exchange-snapshots.mjs
 node scripts/dedupe-exchange-snapshots.mjs --apply [--create-index]
 ```
 
+**Run both with the other Claude Code sessions closed** (`--apply` only — the
+dry runs just read). Their deletes go in short batches — 2,000 rows or 400ms,
+whichever comes first, with a pause in between — so another process still
+gets the write lock while rows are deleted. What that does not cover is in
+each item below:
+
 - `purge-llm-sessions.mjs --apply` appends the rows it deletes to
   `conversation-index/purge-llm-backup.sqlite`, then looks the deleted ids up
   again in `exchanges`, `tool_calls` and the vector index (exit 1 if anything
   is left). Facts extracted from purged exchanges keep those ids in
-  `source_exchange_ids`; decide what to do with such facts first.
+  `source_exchange_ids`; decide what to do with such facts first. Its backup
+  is copied under the write lock in one transaction: for a large purge that
+  is longer than the 5 seconds other processes wait, and their writes fail
+  with "database is locked" meanwhile.
 - `dedupe-exchange-snapshots.mjs --apply` keeps, per `(archive_path,
   line_start)`, the row with the largest `line_end`, points facts that named a
   removed row at it, and backs up rows, id map and the facts' original sources
-  to `backups/dedupe-snapshots-<timestamp>.sqlite`. `--create-index` also
-  builds the `(archive_path, line_start)` index that new databases are created
-  with — on a large index that reads the whole `exchanges` table under the
-  write lock, so run it when nothing else uses the database.
+  to `backups/dedupe-snapshots-<timestamp>.sqlite`. A session that indexes
+  while it runs can leave duplicate rows the run did not see: it then ends
+  with `WARNING: duplicate rows remain … run again` and exit 1. `--create-index`
+  also builds the `(archive_path, line_start)` index that new databases are
+  created with — on a large index that reads the whole `exchanges` table under
+  the write lock.
 
 Neither has an undo command: the deleted rows are in the backup file, and
 embeddings are not backed up (they are re-created from the text). After a large
@@ -178,9 +243,11 @@ node scripts/requeue-zero-markers.mjs [--db PATH] --undo FILE                   
 - `--undo FILE` puts the markers back for the sessions nothing has touched
   since (no marker and no claim today) and says how many it left alone.
 - **Cost.** Each requeued session is extracted by the backfill worker: up to
-  `MEMORY_BANK_MAX_EXTRACT_CALLS` LLM calls per session plus one
-  classification call per saved fact, `BACKFILL_EXTRACT_MAX` sessions per run,
-  once the session has been quiet for `BACKFILL_QUIET_MINUTES`. Use `--limit`.
+  `MEMORY_BANK_MAX_EXTRACT_CALLS` extraction batches per session (default 12,
+  at most 60; a batch that fails for a transient reason is tried again), plus
+  the classification and relation calls for the facts it saves,
+  `BACKFILL_EXTRACT_MAX` sessions per run, once the session has been quiet for
+  `BACKFILL_QUIET_MINUTES`. Use `--limit`.
 
 ### Facts
 
@@ -197,7 +264,7 @@ node scripts/dedupe-exact-facts.mjs [--db PATH] --restore TABLE
 
 # facts whose vector still describes a sentence consolidation rewrote (≤1.7.9)
 node scripts/reembed-rewritten-facts.mjs [--db PATH]                          # dry run: embeds the candidates, reports how many are stale
-node scripts/reembed-rewritten-facts.mjs [--db PATH] --apply --fact-kr clear|keep
+node scripts/reembed-rewritten-facts.mjs [--db PATH] --apply --fact-kr keep|clear   # keep unless translate-facts.mjs is run next
 node scripts/reembed-rewritten-facts.mjs [--db PATH] --restore TABLE
 ```
 
@@ -228,9 +295,17 @@ node scripts/reembed-rewritten-facts.mjs [--db PATH] --restore TABLE
   sentence without re-embedding it. The dry run embeds each candidate's
   sentence with the local model and compares it with the stored vector, so a
   fact whose vector already matches is never touched. `--apply` must say what
-  to do with the Korean sentence of a repaired fact: `--fact-kr clear` removes
-  `fact_kr` and its vector (they were written for the old sentence;
-  `scripts/translate-facts.mjs` fills it again, with LLM calls), `--fact-kr
-  keep` leaves them. The old bytes of every changed row go to a backup table
-  first (`reembed_rewritten_backup_<UTC time>`); `--restore TABLE` puts them
-  back for the facts whose sentence has not changed since.
+  to do with the Korean sentence of a repaired fact, and **`--fact-kr keep` is
+  the one to use** unless a translation run follows: it leaves `fact_kr` and
+  its vector as they are (written for the old sentence, but still what a
+  Korean query finds the fact by). `--fact-kr clear` removes both, and only
+  part of them comes back by itself: the consolidation worker restores a
+  Korean sentence only where a merged, deactivated fact still holds one for
+  the same sentence. On a copy of a live database, of 624 rewritten active
+  facts left without a Korean sentence after `clear`, that brought back 71;
+  the 436 whose sentence is English only have no Korean vector until
+  `scripts/translate-facts.mjs` (LLM calls, run by hand) translates them. Use
+  `clear` only when you run that script next. The old bytes of every changed
+  row go to a backup table first (`reembed_rewritten_backup_<UTC time>`);
+  `--restore TABLE` puts them back for the facts whose sentence has not
+  changed since.

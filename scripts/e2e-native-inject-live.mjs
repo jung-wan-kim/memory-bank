@@ -9,8 +9,17 @@ const REPO = process.argv[2] || path.resolve(path.dirname(new URL(import.meta.ur
 const INDEX = path.join(os.homedir(), '.config/superpowers/conversation-index');
 const VERSION = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8')).version;
 const SRC_HASH = fs.readFileSync(path.join(REPO, 'native/inject-client/SRC_HASH'), 'utf8').trim();
-const { injectSocketPathIn } = await import(path.join(REPO, 'dist/version-guard.js'));
+const { injectSocketPathIn, MAX_UNIX_SOCKET_PATH_BYTES } = await import(path.join(REPO, 'dist/version-guard.js'));
 const sock = injectSocketPathIn(INDEX, VERSION);
+// null: no socket name fits a unix socket under this index dir (a long home directory path). The daemon stays off for
+// such a config dir and every prompt is computed by the hook itself — there is no warm path to compare, and nothing
+// below (path.basename(sock), the connect, the wait for the socket file) can run. Said before anything is built or started.
+if (sock === null) {
+  console.log(`ABORT: no inject-daemon socket name fits under ${INDEX} — a unix socket path is at most ${MAX_UNIX_SOCKET_PATH_BYTES} bytes on this platform and `
+    + `${path.join(INDEX, 'inject-daemon.sock')} is ${Buffer.byteLength(path.join(INDEX, 'inject-daemon.sock'))} bytes. The daemon does not start for this config dir `
+    + `(prompts are injected by the hook itself, logged with fallback_reason socket-path-too-long), so this run has no warm path to measure.`);
+  process.exit(1);
+}
 const LOG = path.join(INDEX, 'logs/inject-context.jsonl');
 const out = { head: spawnSync('git', ['-C', REPO, 'rev-parse', '--short=12', 'HEAD'], { encoding: 'utf8' }).stdout.trim(), version: VERSION, src_hash: SRC_HASH, socket: path.basename(sock), steps: {} };
 const say = (m) => console.log(m);

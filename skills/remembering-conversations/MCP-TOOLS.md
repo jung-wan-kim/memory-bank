@@ -19,7 +19,7 @@ The memory-bank plugin registers 11 MCP tools. Their full names are
 | `list_tags` | Browse the user labels, or the facts carrying them. |
 
 Every tool returns errors as text content with `isError: true` (invalid parameters, file not found, a
-range outside the file, a failed search).
+range outside the file, a failed search, and — for `ask_avatar` — an LLM call that failed).
 
 ## search
 
@@ -48,6 +48,9 @@ Search past conversations by meaning, by keyword, or both.
 **What a result line means**
 
 - `N% match` — cosine similarity of a semantic hit. `N% match (semantic + keyword)` — both passes found it.
+  The number is the similarity of the two embeddings, not a confidence: with this model even unrelated text
+  scores about 85-89% and a strong hit about 90%. Use it to compare the hits of one answer with each other;
+  "88%" alone does not mean the result is relevant.
 - `keyword match` — only the keyword pass found it (no similarity exists for it).
 - `Lines A-B in <path>` — pass these to `read` as `path`, `startLine`, `endLine`.
 
@@ -71,10 +74,18 @@ to 300 characters with at most 5 related facts.
 `assistantMessage` clipped to 500 characters), `clipped`, `similarity`, `matchedBy`, `snippet`. The full
 text of an exchange is read with `read`.
 
-**Multi-concept search** — `query: ["authentication", "React Router", "error handling"]` returns, up to
-`limit`: first the exchanges that contain every word of every concept (`every word in one exchange`, one
-per conversation), then the conversations in which every concept has a semantically near exchange
-(`N% avg match`). Each result lists its similarity to every concept. `mode` is ignored.
+**Multi-concept search** — `query: ["authentication", "React Router", "error handling"]` returns at most
+`limit` conversations in ONE ranking made from two lists:
+
+- the exchanges that contain every word of every concept, one per conversation, the ones nearest to the
+  concepts first — shown as `every word in one exchange (N% avg semantic)`;
+- the conversations in which every concept has a semantically near exchange, by average similarity — shown
+  as `N% avg match`.
+
+The two lists are merged rank by rank (reciprocal rank, as in `both`): the best of each comes first, at the
+same rank the keyword match goes ahead, and a conversation on both lists ranks higher and is shown once, as
+its keyword match. So keyword matches no longer fill `limit` before any semantic match is shown. Each result
+lists its similarity to every concept (`n/a` when the exchange has no vector). `mode` is ignored.
 
 ## read
 
@@ -87,14 +98,34 @@ Read a conversation, or a line range of it, as Markdown.
 | `path` | `string` | Yes | Absolute path of the `.jsonl` conversation file, as a search result reports it (a compressed `.jsonl.zst` archive is read through the same `.jsonl` path) |
 | `startLine` | `number` | No | First line (1-indexed, inclusive) |
 | `endLine` | `number` | No | Last line (1-indexed, inclusive) |
+| `startChar` | `number` | No | Characters to skip of the first message shown (default 0) — the value a truncated answer names when it stopped inside one long message |
+| `full` | `boolean` | No | Show tool inputs and tool results whole instead of clipping each (default `false`) |
 
 - Only the requested lines are read (as a stream), so the size of the file does not matter.
-- One call returns at most 40,000 characters. A longer range ends with
-  `Output truncated … Continue with startLine=N` — call again with that `startLine` (and the same `endLine`).
-- A tool input or tool result longer than 2,000 characters is clipped (`…[+N chars not shown]`).
+- One call returns at most 40,000 characters. A longer range ends with a line that names every value the
+  next call needs — pass **all** of them, not only `startLine`:
+
+  ```
+  _Output truncated at the 40000-char limit: lines 1-2 of 4 shown. Continue with startLine=3, endLine=4._
+  ```
+
+- One message longer than a whole answer is read in pieces. The answer stops inside it
+  (`…[message clipped: characters 0-39906 of 90048 shown]`) and the closing line also names `startChar`:
+
+  ```
+  _Output truncated at the 40000-char limit: lines 3-3 of 4 shown, the message at line 3 up to character 39907. Continue with startLine=3, startChar=39907, endLine=4._
+  ```
+
+  Calling again with only `startLine=3` returns the same first piece. The next piece starts with
+  `…[message at line 3 continues from character 39907 of 90048]`.
+- A tool input or tool result longer than 2,000 characters is clipped:
+  `…[+N chars not shown — read again with full: true]`. With `full: true` nothing is clipped (the 40,000
+  characters per call still apply) and the closing line carries `full=true` — a `startChar` counts the text
+  as that call rendered it, so keep `full` the same while following it.
 - A range outside the file is an error that names the file's line count; `startLine` after `endLine` is an
-  error. Neither returns an empty answer.
-- Only files under the conversation archive (and `~/.claude/projects`) can be read.
+  error; a `startChar` past the end of its message is an error. None returns an empty answer.
+- Only files under the conversation archive (and `~/.claude/projects`) can be read. A symlink inside them
+  that leads outside is refused.
 
 ## search_facts
 
@@ -152,11 +183,14 @@ Browse the ontology (Domain → Category → Facts) level by level.
 | `category` | `string` | No | Category name filter (partial, case-insensitive) |
 | `facts_per_category` | `number` | No | Facts shown per category, most confirmed first, 0-50. Default 5 with a `category` filter, otherwise 0 |
 | `max_categories` | `number` | No | Categories listed per domain, largest first, 1-200. Default 8 (200 with a `domain` filter) without facts, 20 with |
+| `category_offset` | `number` | No | Categories to skip per domain, largest first (default 0) — lists the ones behind `max_categories` |
 | `include_relations` | `boolean` | No | Add up to 5 related facts under each fact shown |
 
 - No filter → every domain with its fact and category totals and its largest categories (names and counts,
   no fact text).
-- `domain` → up to 200 of that domain's categories (names and counts).
+- `domain` → up to 200 of that domain's categories (names and counts). A domain with more ends with
+  `…and N more categories (…) — … or list the next ones with category_offset: 200`; call again with that
+  `category_offset` to list them (`Largest first: categories 201-… of …`).
 - `category` (or `facts_per_category` > 0) → the top facts of each matching category, each clipped to 300
   characters, with the count of the facts not shown.
 - One answer is at most 20,000 characters. When the limit is reached the answer says how many categories and
@@ -217,6 +251,11 @@ level. Calls an LLM.
 |-----------|------|----------|-------------|
 | `question` | `string` | Yes | The question |
 | `project` | `string` | No | Project scope |
+
+When the LLM call fails — nobody is logged in or the API key is not accepted, the model refused, or the
+service keeps failing — the answer line says so (a missing login asks for `/login`) and the result is
+returned with `isError: true`. The text keeps the usual layout (confidence 0%), so tell the two apart by
+`isError`: an answer the stored facts cannot support is a normal result, a failed call is an error.
 
 ## tag_fact
 

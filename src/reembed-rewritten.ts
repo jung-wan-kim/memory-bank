@@ -123,8 +123,16 @@ function storedVec(db: Database.Database, table: 'vec_facts' | 'vec_facts_kr', i
 
 /**
  * Give every stale fact its sentence's vector (facts.embedding + vec_facts).
- * `factKr: 'clear'` also removes fact_kr and its vec_facts_kr row — the Korean
- * sentence was written with the old sentence; 'keep' leaves both as they are.
+ * `factKr: 'keep'` leaves fact_kr and its vec_facts_kr row as they are — the
+ * choice to make unless a translation run follows. `'clear'` removes both (the
+ * Korean sentence was written with the old sentence), and that is not undone
+ * by waiting: the consolidation worker's restore (fact-kr-restore.ts) brings
+ * back a Korean sentence only where a merged, deactivated fact still holds one
+ * for the same sentence — on a copy of a live DB 71 of the 624 rewritten
+ * active facts left without one after `clear`; the 436 whose sentence is
+ * English only stay without a Korean vector until scripts/translate-facts.mjs
+ * (LLM, run by hand) translates them. There is no default here on purpose:
+ * the caller always says which.
  * One write transaction, the backup table included: all of it or none.
  */
 export function applyRewrittenFacts(

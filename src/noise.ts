@@ -10,8 +10,9 @@ import { isWorkerPromptMessage } from './paths.js';
  *     every prompt starts with `<observed_from_primary_session>`.
  * Both are matched exactly (equality / leading text) so a person's own message
  * such as "Warmup 순서 알려줘", or the word Warmup on the main chain, is kept.
- * The SQL twin of this predicate is buildNoiseWhere (pollution-predicate.ts);
- * the two are pinned against each other in test/noise.test.ts.
+ * The SQL twin of this predicate is the warmup / observer part of
+ * buildPollutionWhere (pollution-predicate.ts); the two are pinned against
+ * each other in test/noise.test.ts.
  */
 export const WARMUP_MESSAGE = 'Warmup';
 export const OBSERVER_PROMPT_PREFIX = '<observed_from_primary_session>';

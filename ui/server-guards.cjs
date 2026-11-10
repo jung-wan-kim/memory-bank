@@ -14,6 +14,12 @@
  *   HUE_OS_PUBLIC_PORT    second loopback listener that serves the Hue OS chat
  *                         routes and nothing else — the only port a tunnel may
  *                         point at. Needs REPLACEMENT_OS_ACCESS_PASSWORD.
+ *   MEMORY_BANK_UI_TRUST_PROXY
+ *                         `1` = on the dashboard port, count the Hue OS login
+ *                         limit and daily quota per X-Forwarded-For address
+ *                         instead of the connection's own (clientAddress).
+ *                         Only behind a proxy you run: otherwise the caller
+ *                         types the header. The public listener always reads it.
  */
 const crypto = require('crypto');
 const os = require('os');

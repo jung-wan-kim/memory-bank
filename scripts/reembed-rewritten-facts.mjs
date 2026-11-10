@@ -8,21 +8,30 @@
  *
  * The default is a DRY RUN on a read-only handle: it embeds the candidates'
  * sentences with the local model and reports how many are stale; it cannot
- * write. `--apply` writes, and must say what to do with fact_kr:
+ * write. `--apply` writes, and must say what to do with fact_kr (there is no
+ * default — the choice is always typed):
+ *   --fact-kr keep    leave fact_kr and its Korean vector as they are. THE ONE
+ *                     TO USE unless a translation run follows: the Korean
+ *                     sentence was written for the old sentence, but it is what
+ *                     a Korean query still finds the fact by.
  *   --fact-kr clear   remove fact_kr and its Korean vector on every repaired
- *                     fact (it was written with the old sentence; what the
- *                     consolidator now does on a rewrite). Korean-side matching
- *                     for those facts is gone until scripts/translate-facts.mjs
- *                     (LLM) fills fact_kr again and the re-embed worker builds
- *                     the vector.
- *   --fact-kr keep    leave fact_kr and its vector as they are.
+ *                     fact (they describe the old sentence). Only when
+ *                     scripts/translate-facts.mjs (LLM calls, run by hand) is
+ *                     run next — what comes back by itself is a part: the
+ *                     consolidation worker restores a Korean sentence only
+ *                     where a merged, deactivated fact still holds one for the
+ *                     same sentence (src/fact-kr-restore.ts, no LLM). Measured
+ *                     on a copy of a live DB after `clear`: of 624 rewritten
+ *                     active facts left without a Korean sentence it restored
+ *                     71; the 436 whose sentence is English only have no
+ *                     Korean vector until they are translated.
  * Before the first changed row, the old bytes of every changed row go into a
  * backup table in the same transaction (reembed_rewritten_backup_<UTC time>);
  * `--restore TABLE` puts them back. updated_at is never touched.
  *
  * Usage:
  *   node scripts/reembed-rewritten-facts.mjs [--db PATH] [--dry-run]
- *   node scripts/reembed-rewritten-facts.mjs [--db PATH] --apply --fact-kr clear|keep
+ *   node scripts/reembed-rewritten-facts.mjs [--db PATH] --apply --fact-kr keep|clear
  *   node scripts/reembed-rewritten-facts.mjs [--db PATH] --restore TABLE
  */
 
@@ -55,7 +64,9 @@ try {
 const apply = args.flags.has('--apply');
 const factKr = args.values['--fact-kr'];
 if (apply && factKr !== 'clear' && factKr !== 'keep') {
-  fail('--apply needs --fact-kr clear|keep (what to do with the Korean sentence of a repaired fact — see the header)');
+  fail('--apply needs --fact-kr clear|keep (what to do with the Korean sentence of a repaired fact): '
+    + 'keep leaves it and is the one to use unless you run scripts/translate-facts.mjs next; '
+    + 'clear removes it, and only part of the removed sentences comes back without that translation run — see the header');
 }
 const dbPath = args.values['--db'] || process.env.MEMORY_BANK_DB_PATH || path.join(getIndexDir(), 'db.sqlite');
 if (!fs.existsSync(dbPath)) fail(`no database at ${dbPath}`);
@@ -83,7 +94,9 @@ try {
     console.log(`  stale (vector is another sentence's): ${check.stale.length} — ${check.stale.filter((s) => s.hasFactKr).length} of them have a fact_kr`);
     console.log(`  not checked: ${check.skippedNoEmbedding} without a stored embedding, ${check.skippedOldVersion} on an older embedding version (the re-embed worker rebuilds those)`);
     if (!apply) {
-      console.log('dry run — nothing written. Re-run with --apply --fact-kr clear|keep to repair.');
+      console.log('dry run — nothing written. Re-run with --apply --fact-kr keep to repair (keep: the Korean sentences stay as they are).');
+      console.log('--fact-kr clear removes them instead; use it only when scripts/translate-facts.mjs (LLM calls, run by hand) is run next — '
+        + 'without it only part of them comes back (the consolidation worker restores those a merged fact still holds), see the header.');
     } else {
       const r = applyRewrittenFacts(db, check.stale, { factKr });
       console.log(`re-embedded ${r.reembedded} facts; fact_kr removed on ${r.factKrCleared}; ${r.changedSinceCheck} changed during the run and were left for the next one`);

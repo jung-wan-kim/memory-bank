@@ -105,9 +105,21 @@ graph TB
 
 | 도구 | 설명 |
 |------|------|
-| `search` | 대화 시맨틱/텍스트 검색 |
-| `read` | 대화(또는 줄 범위)를 Markdown 으로 읽기 — 한 번에 40,000자까지, 넘으면 이어 읽을 `startLine` 을 알려 줌 |
-| `search_facts` | 카테고리 필터로 팩트 검색 |
+| `search` | 대화 시맨틱/텍스트 검색(결과는 `limit` 개까지, 날짜·에이전트 필터). 개념 2~5개를 배열로 주면 모두에 맞는 대화를 찾아, 낱말 일치와 의미 일치를 한 순위로 섞어 보여 줌 |
+| `read` | 대화(또는 줄 범위)를 Markdown 으로 읽기 — 한 번에 40,000자까지. 넘으면 맺음 줄이 이어 읽을 `startLine` 을(긴 메시지 한 건 안에서 멈췄으면 `startChar` 도) 알려 줌. `full: true` 는 2,000자에서 잘리는 도구 입력·결과를 전부 보여 줌 |
+| `search_facts` | 카테고리·에이전트·태그 필터로 팩트 검색(같은 문장은 한 번만) |
+| `search_ontology` | 온톨로지를 단계별로 보기: 도메인과 분류별 건수 → `category` 필터로 팩트. 분류가 200개를 넘는 도메인은 `category_offset` 으로 이어서 나열 |
+| `ask_avatar` | 과거 결정에 근거해 사용자가 할 법한 답을 받기(LLM 호출). 로그인 없음·거절·장애로 호출이 실패하면 답이 아니라 오류(`isError`)로 돌려줌 |
+| `trace_fact` | 팩트가 나온 대화까지 거슬러 올라가기 |
+| `explore_graph` | 팩트에서 관계를 따라 1~3단계 탐색 |
+| `cross_project_insights` | 다른 프로젝트의 비슷한 결정 찾기 |
+| `graph_stats` | 지식 그래프 통계 |
+| `tag_fact` | 팩트의 사용자 태그 추가·삭제·교체 |
+| `list_tags` | 사용자 태그 목록, 또는 그 태그가 붙은 팩트 |
+
+인자·상한·잘렸을 때 응답이 적는 문구는 [`skills/remembering-conversations/MCP-TOOLS.md`](skills/remembering-conversations/MCP-TOOLS.md) 에 있습니다.
+
+검색 결과의 `N% match` 는 임베딩의 코사인 유사도이지 확신도가 아닙니다. 이 모델에서는 무관한 글도 85~89% 쯤 나오고 잘 맞는 결과가 90% 안팎입니다. 한 응답 안의 결과끼리 견줄 때만 쓰고, "88%" 를 "관련 있음"으로 읽지 마세요.
 
 ### search_facts 예시
 
@@ -193,14 +205,21 @@ export ANTHROPIC_API_KEY=your-key
 # 요약 모델
 export MEMORY_BANK_API_MODEL=opus
 
+# 세션당 팩트 추출 배치 수(기본 12, 고르게 뽑음. 최대 60 — 더 큰 값은 60 으로 읽고,
+# 양의 정수가 아닌 값은 12 로 읽습니다). LLM 호출 수가 아니라 배치 수입니다: 일시적인
+# 이유로 실패한 배치는 다시 시도하고(기본 3회까지), 저장된 팩트의 분류·관계 판정 호출은 별도입니다.
+export MEMORY_BANK_MAX_EXTRACT_CALLS=12
+
 # 백필 추출은 세션이 조용해진 뒤에 합니다: 마지막 대화가 이 분(分) 이상 지난 세션만
 # backfill 이 추출합니다(기본 60, 0 = 기다리지 않음, 10080(7일) 초과나 숫자가 아닌 값은 기본값).
 # 기다리지 않으면 진행 중인 세션을 추출하고 완료로 표시해 버립니다. 대신 SessionEnd 훅 없이
 # 끝난(강제 종료된) 세션은 그만큼 늦게 추출됩니다.
 export BACKFILL_QUIET_MINUTES=60
 
-# 주입 스위치 — 정하지 않으면(기본) 아무것도 바뀌지 않습니다. MCP 서버와 훅이 모두 읽는 곳
-# (settings.json 의 "env")에 둡니다.
+# 주입 스위치 — 정하지 않으면(기본) 아무것도 바뀌지 않습니다. 훅이 데몬에 묻기 전에 직접
+# 읽으므로 훅이 보는 환경에만 있으면 됩니다: settings.json 의 "env", 세션을 띄우는 셸, 또는
+# 한 번의 실행에만(`MEMORY_BANK_INJECT_HEADLESS=0 claude -p …`). MCP 서버가 볼 필요는
+# 없습니다(답하는 데몬은 다른 세션의 것일 수 있습니다).
 #   `claude -p` / Agent SDK 세션(CLAUDE_CODE_ENTRYPOINT 가 sdk-*)에는 주입하지 않기:
 # export MEMORY_BANK_INJECT_HEADLESS=0
 #   Codex 프롬프트에는 주입하지 않기(Codex 는 대화형/비대화형 표시를 보내지 않아 전부 아니면 전무):
@@ -220,6 +239,8 @@ export BACKFILL_QUIET_MINUTES=60
 ```
 
 영문 README 의 Configuration 절에 나머지 설정(백필 상한, 유지보수 주기, 네이티브 클라이언트 등)이 있습니다.
+
+**설정 폴더 경로가 긴 경우.** 프롬프트 주입을 빠르게 해 주는 데몬은 `conversation-index/` 안의 유닉스 소켓으로 답하는데, 유닉스 소켓 경로는 macOS 에서 103바이트, 리눅스에서 107바이트까지입니다. 어떤 소켓 이름도 그 안에 들지 않으면(`conversation-index/` 가 들어 있는 폴더의 경로가 macOS 65바이트·리눅스 69바이트를 넘을 때 — 깊은 `MEMORY_BANK_CONFIG_DIR` / `XDG_CONFIG_HOME`, 임시 폴더) 데몬을 켜지 않습니다. MCP 서버가 stderr 에 `inject daemon off: …` 를 한 번 적고, 프롬프트마다 훅이 직접 계산해 주입합니다 — 훅 프로세스가 매번 임베딩 모델을 불러오는 느린 경로입니다. 이때 `logs/inject-context.jsonl` 의 줄은 `"via":"fallback","fallback_reason":"socket-path-too-long"` 입니다. 설정 폴더 경로를 줄이면 빠른 경로로 돌아옵니다.
 
 ## 아키텍처
 

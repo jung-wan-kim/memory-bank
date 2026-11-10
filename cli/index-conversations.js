@@ -66,8 +66,25 @@ OPTIONS:
 REPAIR OPTIONS:
   --prune-missing    Also delete index rows whose archive file is gone
                      (they are backed up first; without it they are only reported)
-  --yes              Go ahead although the plan is over a threshold
-                     (more than 5% of the index to delete, re-index or summarize)
+  --yes              Go ahead although a count of the plan is over its limit:
+                       rows to delete             5% of the indexed exchanges
+                       conversations to re-index  5% of the conversations that
+                                                  hold something to index
+                       summary (LLM) calls        the same 5%, and never more
+                                                  than 100 calls
+                     (each limit is at least 20). Without --yes the repair
+                     stops before changing anything and prints the count.
+
+REBUILD:
+  Close the other Claude Code sessions before a rebuild. Before anything is
+  cleared it prints what is cleared and how much of it can be re-created
+  ("Cleared: N exchanges, ..." / "at most M of the N cleared exchanges ..."),
+  reads every indexed archive conversation to its end (a file that cannot be
+  read counts as not re-creatable) and, with --allow-index-loss, backs up the
+  rows that will not come back. If another process indexes one of those files
+  while that backup is being written, the rebuild ends with
+  "rebuild stopped — nothing was cleared": close the other sessions and run
+  it again.
 
 REBUILD OPTIONS:
   --allow-index-loss Clear exchanges that cannot be re-created too. A rebuild
@@ -104,8 +121,8 @@ WORKFLOW:
   4. Recovery: index-conversations --repair (if issues found)
 
 SEE ALSO:
-  INDEXING.md - Setup and maintenance guide
-  DEPLOYMENT.md - Production runbook`);
+  docs/index-maintenance.md (in the plugin repository) - what --verify, --repair
+  and --rebuild read, change and refuse to do`);
 }
 
 async function main() {
@@ -147,6 +164,8 @@ async function main() {
         console.log('   stops before changing anything and says how many (--allow-index-loss overrides).');
         console.log('   Facts are preserved — facts, ontology, relations and tags are not touched,');
         console.log('   and a backup of them is written first. Only the conversation index is regenerated.');
+        console.log('   Close the other Claude Code sessions first: if another process indexes while the');
+        console.log('   backup is being written, the rebuild ends with "rebuild stopped — nothing was cleared".');
         const confirmed = await askConfirmation('Are you sure? [yes/NO]: ');
         if (confirmed) {
           await runScript('rebuild', ['--yes', ...args.filter((a) => a !== '--yes')]);
