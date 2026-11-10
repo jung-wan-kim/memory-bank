@@ -667,15 +667,19 @@ function filesUnder(repo, dir, keep = () => true, depth = 0) {
   return out;
 }
 
-/** Files of the embedding model `model` the transformers package can load: its local models folder (read first) and its download cache. */
+/**
+ * Files of the embedding model `model` in the transformers package's local models folder — read before
+ * anything is downloaded, and filled by hand.
+ *
+ * The package's download cache (`.cache/`) is not listed. The library fills it the first time the model is
+ * loaded — by the replay itself, or by any other process — so between two digests of unchanged code its
+ * files appear, and are half-written for a moment. On a fresh clone the report stopped with "code changed
+ * since --replay (…/.cache/…/tokenizer.json)" while another process was downloading the model. A downloaded
+ * model is bound by its id (codeDigest's `embedding-model`).
+ */
 export function embeddingModelFiles(repo, model) {
-  const pkg = path.join(repo, 'node_modules', '@xenova', 'transformers');
-  const out = [];
-  for (const base of ['models', '.cache']) {
-    const dir = path.join(pkg, base, model);
-    if (fs.statSync(dir, { throwIfNoEntry: false })?.isDirectory()) out.push(...filesUnder(repo, dir));
-  }
-  return out.sort();
+  const dir = path.join(repo, 'node_modules', '@xenova', 'transformers', 'models', model);
+  return fs.statSync(dir, { throwIfNoEntry: false })?.isDirectory() ? filesUnder(repo, dir).sort() : [];
 }
 
 const NATIVE_RE = /\.(node|dylib|so|dll)(\.\d+)*$/;
@@ -721,7 +725,8 @@ export function dependencyDigest(repo, roots) {
  * What decides the replayed lines besides the inputs — recorded by --replay, compared by --report:
  * sha256 of every module the replay loads, the packages they import (transitively: versions and native
  * binaries — dependencyDigest), the Node version, the embedding model id (`model`, the resolved
- * EMBEDDING_MODEL) and sha256 of its files.
+ * EMBEDDING_MODEL) and sha256 of the model files placed in the package's local models folder
+ * (embeddingModelFiles — a downloaded model is bound by its id, not by the files in the download cache).
  */
 export function codeDigest(repo, model) {
   const { files, packages } = moduleClosure(repo);
@@ -730,13 +735,11 @@ export function codeDigest(repo, model) {
   Object.assign(out, dependencyDigest(repo, packages));
   out.node = `${process.version} ${process.platform}-${process.arch}`;
   out['embedding-model'] = model;
-  const modelFiles = embeddingModelFiles(repo, model);
-  if (modelFiles.length === 0) out['embedding-model-files'] = 'none on disk';
-  for (const f of modelFiles) out[f] = sha256File(path.join(repo, f));
+  for (const f of embeddingModelFiles(repo, model)) out[f] = sha256File(path.join(repo, f));
   return out;
 }
 
-/** Entries (modules, packages, model files) that differ between the recorded digest and the one now — either side missing counts. */
+/** Entries (modules, packages, placed model files) that differ between the recorded digest and the one now — either side missing counts. */
 export function driftedCode(recorded, now) {
   return [...new Set([...Object.keys(recorded ?? {}), ...Object.keys(now)])].filter((f) => recorded?.[f] !== now[f]).sort();
 }

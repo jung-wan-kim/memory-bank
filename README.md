@@ -466,7 +466,7 @@ open docs/graph-3d.html   # Interactive 3D graph (local)
 
 ```bash
 npm install
-npm test            # works on a fresh clone: dist/ is committed
+npm test            # works on a fresh clone: dist/ is committed (the first run downloads the embedding model, ~130 MB)
 
 # after changing anything under src/
 npm run build       # tsc + the MCP server bundle — commit the regenerated dist/

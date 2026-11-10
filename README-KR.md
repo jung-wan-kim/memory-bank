@@ -260,7 +260,7 @@ export BACKFILL_QUIET_MINUTES=60
 
 ```bash
 npm install
-npm test            # 새로 받은 저장소에서 바로 돕니다: dist/ 가 커밋돼 있습니다
+npm test            # 새로 받은 저장소에서 바로 돕니다: dist/ 가 커밋돼 있습니다 (첫 실행은 임베딩 모델 약 130MB 를 내려받습니다)
 
 # src/ 를 고친 뒤
 npm run build       # tsc + MCP 서버 번들 — 다시 만들어진 dist/ 를 함께 커밋합니다
