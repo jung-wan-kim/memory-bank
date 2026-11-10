@@ -361,10 +361,12 @@ describe('ontology-classifier', () => {
       insertTestFact(db, 'p-0', 'Fact zero', emb);
       insertTestFact(db, 'p-1', 'Fact one', emb);
 
-      (parseJsonResponse as ReturnType<typeof vi.fn>).mockReturnValue([
-        { index: 0, domain: 'Testing', category: 'Framework', is_new_domain: true, is_new_category: true },
-        // index 1 missing entirely
-      ]);
+      (parseJsonResponse as ReturnType<typeof vi.fn>)
+        // the batch of two: index 1 missing entirely — not applied (the one item could be either fact's)
+        .mockReturnValueOnce([{ index: 0, domain: 'Testing', category: 'Framework', is_new_domain: true, is_new_category: true }])
+        // asked alone: p-0 is answered, p-1 is left out again
+        .mockReturnValueOnce([{ index: 0, domain: 'Testing', category: 'Framework', is_new_domain: true, is_new_category: true }])
+        .mockReturnValueOnce([]);
       (callHaiku as ReturnType<typeof vi.fn>).mockResolvedValue('[]');
 
       const result = await classifyFactsBatch(db, [
@@ -374,6 +376,7 @@ describe('ontology-classifier', () => {
 
       expect(result.classified).toEqual(['p-0']);
       expect(result.failed).toEqual(['p-1']);
+      expect(callHaiku).toHaveBeenCalledTimes(3); // the batch, then each fact on its own
     });
 
     it('reports ALL facts failed when the whole response is unparseable', async () => {
@@ -496,18 +499,22 @@ describe('ontology-classifier', () => {
       expect(payload.facts[0].fact).toContain('### Fact 1'); // data, safely escaped inside a JSON string
     });
 
-    it('drops ALL claimants of a duplicated index (pre-emption distrust) + out-of-range/non-integer', async () => {
+    it('a reply with a duplicated, out-of-range or non-integer index is not applied at all; each fact is asked on its own', async () => {
       const emb = new Array(384).fill(0.1);
       insertTestFact(db, 'i-0', 'Fact zero', emb);
       insertTestFact(db, 'i-1', 'Fact one', emb);
 
-      (parseJsonResponse as ReturnType<typeof vi.fn>).mockReturnValue([
-        { index: 0, domain: 'First', category: 'Win', is_new_domain: true, is_new_category: true },
-        { index: 0, domain: 'Second', category: 'Overwrite', is_new_domain: true, is_new_category: true }, // dup → BOTH dropped
-        { index: 1, domain: 'Valid', category: 'Answer', is_new_domain: true, is_new_category: true },
-        { index: 5, domain: 'Range', category: 'Out', is_new_domain: true, is_new_category: true }, // out of range
-        { index: 1.5 as unknown as number, domain: 'Float', category: 'Bad', is_new_domain: true, is_new_category: true }, // non-integer
-      ]);
+      (parseJsonResponse as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce([
+          { index: 0, domain: 'First', category: 'Win', is_new_domain: true, is_new_category: true },
+          { index: 0, domain: 'Second', category: 'Overwrite', is_new_domain: true, is_new_category: true }, // duplicated
+          { index: 1, domain: 'Valid', category: 'Answer', is_new_domain: true, is_new_category: true },
+          { index: 5, domain: 'Range', category: 'Out', is_new_domain: true, is_new_category: true }, // out of range
+          { index: 1.5 as unknown as number, domain: 'Float', category: 'Bad', is_new_domain: true, is_new_category: true }, // non-integer
+        ])
+        .mockReturnValueOnce([{ index: 0, domain: 'Alone', category: 'Zero', is_new_domain: true, is_new_category: true }])
+        // asked alone, the one item is the fact's answer whatever number it carries
+        .mockReturnValueOnce([{ index: 1, domain: 'Alone', category: 'One', is_new_domain: true, is_new_category: true }]);
       (callHaiku as ReturnType<typeof vi.fn>).mockResolvedValue('[]');
 
       const result = await classifyFactsBatch(db, [
@@ -515,11 +522,12 @@ describe('ontology-classifier', () => {
         makeFact({ id: 'i-1', fact: 'Fact one' }),
       ]);
 
-      expect(result.classified).toEqual(['i-1']); // untainted index applies
-      expect(result.failed).toEqual(['i-0']); // duplicated index → all claimants distrusted
-      expect(getDomainByName(db, 'First')).toBeNull(); // neither duplicate applied
-      expect(getDomainByName(db, 'Second')).toBeNull();
-      expect(getDomainByName(db, 'Valid')).toBeTruthy();
+      expect(result.classified).toEqual(['i-0', 'i-1']);
+      expect(result.failed).toEqual([]);
+      // nothing of the untrusted reply was applied — not even the item whose index looked fine
+      for (const name of ['First', 'Second', 'Valid', 'Range', 'Float']) expect(getDomainByName(db, name)).toBeNull();
+      expect(getDomainByName(db, 'Alone')).toBeTruthy();
+      expect(callHaiku).toHaveBeenCalledTimes(3);
     });
 
     it('treats an EMPTY LLM response as transient (SDK stream ended without result)', async () => {

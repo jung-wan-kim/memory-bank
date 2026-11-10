@@ -119,7 +119,9 @@ describe('save-time classification in one call', () => {
 
     const result = await classifyAndLinkFacts(db, items);
 
-    expect(classifyCalls()).toHaveLength(1);
+    // A reply that does not carry every index is not applied (its numbers may be shifted): the facts are asked
+    // again in halves — [one, two] then [three] — and the half still short of an item fact by fact.
+    expect(classifyCalls().map((c) => payloadOf(c).facts.length)).toEqual([3, 2, 1, 1, 1]);
     expect(row(items[0].factId).category).not.toBeNull();
     expect(row(items[2].factId).category).not.toBeNull();
     expect(row(items[1].factId)).toEqual({ category: null, attempts: 1 });
