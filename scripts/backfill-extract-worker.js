@@ -270,7 +270,10 @@ async function main() {
         }
         totalSaved += result.saved;
         if (result.saved > 0) {
-          log(`session ${next.sid} (${project ?? '?'}, ${next.n} exch): saved ${result.saved}`);
+          log(
+            `session ${next.sid} (${project ?? '?'}, ${next.n} exch): saved ${result.saved}`
+            + (result.truncated > 0 ? ` (truncated ${result.truncated} by the session cap)` : ''),
+          );
         }
       } catch (error) {
         // 실패를 3분류한다. 예전에는 어떤 에러든 extraction_log(-2) 로 기록해서

@@ -104,6 +104,17 @@ describe('훅 워커: 추출 전에 그 세션을 색인한다', () => {
     expect(log).toMatch(new RegExp(`session=${SID} extracted=2 saved=2`));
   });
 
+  it('세션 상한으로 잘린 후보 수를 결과 줄에 남긴다 (없으면 적지 않는다)', () => {
+    writeStubs({ result: { extracted: 60, saved: 60, truncated: 36 } });
+    expect(runWorker().log).toMatch(/extracted=60 saved=60 truncated=36/);
+
+    fs.rmSync(path.join(sandbox, 'index', 'fact-extract.log'));
+    writeStubs({ result: { extracted: 3, saved: 3 } });
+    const { log } = runWorker();
+    expect(log).toMatch(/extracted=3 saved=3/);
+    expect(log).not.toMatch(/truncated/);
+  });
+
   it('색인 0건으로 건너뛴 추출은 사유와 색인 단계 결과를 로그에 남긴다', () => {
     writeStubs({ preindex: 'no_transcript', result: { extracted: 0, saved: 0, skipped: 'not_indexed' } });
     const { code, log } = runWorker();

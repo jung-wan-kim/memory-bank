@@ -5,6 +5,8 @@ import {
   normalizeFactText,
   passesConfidenceGate,
   selectSpreadBatches,
+  sessionFactCap,
+  selectFactsAcrossBatches,
 } from '../src/fact-extractor.js';
 
 describe('Fact Extractor', () => {
@@ -61,12 +63,56 @@ describe('Fact Extractor', () => {
       expect(filtered.map(f => f.fact)).toEqual(['High', 'Border']);
     });
 
-    it('should limit to max 20 facts', () => {
-      const extracted = Array.from({ length: 25 }, (_, i) => ({
-        fact: `Fact ${i}`, category: 'knowledge' as const, scope_type: 'project' as const, confidence: 0.9,
-      }));
-      const limited = extracted.slice(0, 20);
-      expect(limited).toHaveLength(20);
+  });
+
+  describe('sessionFactCap', () => {
+    it('keeps the old cap of 20 for sessions of up to four batches', () => {
+      expect([1, 2, 3, 4].map(sessionFactCap)).toEqual([20, 20, 20, 20]);
+    });
+
+    it('grows by five per selected batch', () => {
+      expect([5, 8, 12].map(sessionFactCap)).toEqual([25, 40, 60]);
+    });
+
+    it('never exceeds the absolute cap, however many batches are selected', () => {
+      expect([13, 50, 1000].map(sessionFactCap)).toEqual([60, 60, 60]);
+    });
+  });
+
+  describe('selectFactsAcrossBatches', () => {
+    const f = (id: string, confidence: number) => ({ id, confidence });
+    const ids = (facts: Array<{ id: string }>) => facts.map((x) => x.id);
+
+    it('returns everything in order when the total is within the cap', () => {
+      const perBatch = [[f('a1', 0.7), f('a2', 0.9)], [], [f('c1', 0.8)]];
+      expect(ids(selectFactsAcrossBatches(perBatch, 3))).toEqual(['a1', 'a2', 'c1']);
+    });
+
+    it('takes the most confident of each batch in turn, so no batch is crowded out', () => {
+      const perBatch = [
+        [f('a1', 0.95), f('a2', 0.95), f('a3', 0.95), f('a4', 0.95)],
+        [f('b1', 0.7)],
+        [f('c1', 0.75), f('c2', 0.9)],
+      ];
+      // round 1: a1 b1 c2 · round 2: a2 c1 → cap 5
+      expect(ids(selectFactsAcrossBatches(perBatch, 5))).toEqual(['a1', 'a2', 'b1', 'c1', 'c2']);
+    });
+
+    it('fills a short last round by confidence, the later batch winning a tie', () => {
+      const perBatch = [
+        [f('a1', 0.9), f('a2', 0.8)],
+        [f('b1', 0.9), f('b2', 0.85)],
+        [f('c1', 0.9), f('c2', 0.8)],
+      ];
+      // round 1 takes a1 b1 c1; one slot left among a2(0.8) b2(0.85) c2(0.8)
+      expect(ids(selectFactsAcrossBatches(perBatch, 4))).toEqual(['a1', 'b1', 'b2', 'c1']);
+      // two slots left: b2, then the tie a2/c2 goes to the later batch
+      expect(ids(selectFactsAcrossBatches(perBatch, 5))).toEqual(['a1', 'b1', 'b2', 'c1', 'c2']);
+    });
+
+    it('keeps the earlier fact of a batch when confidences tie', () => {
+      const perBatch = [[f('a1', 0.9), f('a2', 0.9), f('a3', 0.9)], [f('b1', 0.9)]];
+      expect(ids(selectFactsAcrossBatches(perBatch, 3))).toEqual(['a1', 'a2', 'b1']);
     });
   });
 

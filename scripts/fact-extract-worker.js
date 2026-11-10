@@ -70,7 +70,11 @@ async function main() {
     } else if (result.skipped) {
       log(`worker: SKIPPED (${result.skipped}) session=${sessionId} — 처리하지 않음`);
     } else {
-      log(`worker: session=${sessionId} extracted=${result.extracted} saved=${result.saved}`);
+      // truncated: 세션 상한 때문에 저장 대상에서 빠진 후보 수 — 0 이면 적지 않는다.
+      log(
+        `worker: session=${sessionId} extracted=${result.extracted} saved=${result.saved}`
+        + (result.truncated > 0 ? ` truncated=${result.truncated}` : ''),
+      );
     }
   } catch (error) {
     // 이양(handoff)은 실패가 아니다 — 다른 러너가 같은 세션을 인수한 정상 경로다.

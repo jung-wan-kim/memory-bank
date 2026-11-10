@@ -62,7 +62,12 @@ export class ClaimLostError extends Error {
 }
 
 const BATCH_SIZE = 5; // configurable-ok
+// 세션당 저장 상한 = min(절대 상한, max(바닥, 배치당 몫 × 선택 배치 수)).
+// 바닥 20 은 예전 고정 상한이다 — 배치 4개 이하인 세션은 결과가 달라지지 않는다.
 const MAX_FACTS_PER_SESSION = 20; // configurable-ok
+const FACTS_PER_SELECTED_BATCH = 5; // configurable-ok — 단일 배치 세션의 배치당 사실 중앙값(실측 5)
+// MEMORY_BANK_MAX_EXTRACT_CALLS 로 배치 수를 올려도 넘지 않는 상한(저장 뒤 사실마다 분류 LLM 1회).
+const ABSOLUTE_MAX_FACTS_PER_SESSION = 60; // configurable-ok
 const CONFIDENCE_THRESHOLD = 0.7; // configurable-ok
 const DEFAULT_MAX_LLM_CALLS = 12; // configurable-ok — per-session LLM call budget
 
@@ -132,6 +137,45 @@ export function selectSpreadBatches<T>(batches: T[], maxBatches: number): T[] {
   return selected;
 }
 
+/** 세션당 저장 상한 — 선택된 배치 수에 비례하고, 바닥과 절대 상한 사이에 든다. */
+export function sessionFactCap(selectedBatches: number): number {
+  return Math.min(
+    ABSOLUTE_MAX_FACTS_PER_SESSION,
+    Math.max(MAX_FACTS_PER_SESSION, FACTS_PER_SELECTED_BATCH * selectedBatches),
+  );
+}
+
+/**
+ * 배치별 후보에서 `cap` 건을 고른다. 합이 상한 이하면 전부(순서 그대로).
+ * 넘으면 배치마다 신뢰도 높은 것부터 한 건씩 돌아가며 뽑는다 — 어느 배치도 다른
+ * 배치의 후보 때문에 통째로 밀려나지 않는다. 마지막 바퀴에 자리가 모자라면 그 바퀴
+ * 후보 중 신뢰도 높은 것, 같으면 뒤쪽 배치 것을 고른다(긴 세션의 결론은 뒤에 있다).
+ * 결과는 원래 순서(배치 순, 배치 안에서는 LLM 이 낸 순)다.
+ */
+export function selectFactsAcrossBatches<T extends { confidence: number }>(perBatch: T[][], cap: number): T[] {
+  const total = perBatch.reduce((n, batch) => n + batch.length, 0);
+  if (total <= cap) return perBatch.flat();
+
+  const ranked = perBatch.map((batch) =>
+    batch.map((_, i) => i).sort((x, y) => batch[y].confidence - batch[x].confidence || x - y));
+  const keep = perBatch.map(() => new Set<number>());
+  let kept = 0;
+  for (let rank = 0; kept < cap; rank++) {
+    const round: number[] = [];
+    for (let b = 0; b < perBatch.length; b++) if (rank < ranked[b].length) round.push(b);
+    if (round.length === 0) break;
+    const room = cap - kept;
+    const chosen = round.length <= room
+      ? round
+      : [...round]
+        .sort((x, y) => perBatch[y][ranked[y][rank]].confidence - perBatch[x][ranked[x][rank]].confidence || y - x)
+        .slice(0, room);
+    for (const b of chosen) keep[b].add(ranked[b][rank]);
+    kept += chosen.length;
+  }
+  return perBatch.flatMap((batch, b) => batch.filter((_, i) => keep[b].has(i)));
+}
+
 function maxLlmCallsPerSession(): number {
   const parsed = parseInt(process.env.MEMORY_BANK_MAX_EXTRACT_CALLS || '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX_LLM_CALLS;
@@ -168,11 +212,12 @@ export function buildExtractionPrompt(
 /**
  * @param stats 선택적 out-param. deterministic 실패로 **폐기된 배치 수**를 돌려준다
  *   (dead-letter 회계). 선택적이라 기존 호출자는 그대로 동작한다.
+ *   `truncatedFacts` 는 세션 상한 때문에 저장 대상에서 빠진 후보 수다.
  */
 export async function extractFactsFromExchanges(
   db: Database.Database,
   sessionId: string,
-  stats?: { droppedBatches: number },
+  stats?: ExtractionStats,
   /**
    * 배치마다 호출되는 리스 갱신 훅. 리스보다 오래 걸리는 정상 추출이 회수 대상이
    * 되어 다른 워커가 선점하는 것을 막는다(R7 HIGH-1). throw 하면 즉시 중단한다 —
@@ -198,13 +243,18 @@ export async function extractFactsFromExchanges(
   }
   const selectedBatches = selectSpreadBatches(batches, maxLlmCallsPerSession());
 
-  const allFacts: ExtractedFact[] = [];
+  // 🚨 세션 상한은 배치 루프를 **다 돈 뒤에** 적용한다. 예전에는 루프 맨 위에서
+  // "20건이 찼으면 중단"이라, 긴 세션은 앞쪽 2~3개 배치에서 상한이 차고 뒤쪽 배치는
+  // LLM 에 가지도 않았다(실측 2026-11-10: 20건에서 끊긴 74회의 대조된 사실 82.5% 가
+  // 앞 1/5 구간, 뒤 1/5 는 1.7%). selectSpreadBatches 가 고르게 골라도 무효였다.
+  const candidatesPerBatch: ExtractedFact[][] = [];
   const seen = new Set<string>();
   // transient(공급자 장애·빈 응답)로 실패한 배치. >0 이면 이 세션은 "처리 완료"가 아니다.
   const transientFailures: unknown[] = [];
 
   for (let b = 0; b < selectedBatches.length; b++) {
-    if (allFacts.length >= MAX_FACTS_PER_SESSION) break;
+    const batchFacts: ExtractedFact[] = [];
+    candidatesPerBatch.push(batchFacts);
 
     const prompt = buildExtractionPrompt(selectedBatches[b]);
     renewLease?.(); // 배치 직전 갱신 — LLM 왕복이 리스를 넘겨도 회수되지 않는다
@@ -222,12 +272,11 @@ export async function extractFactsFromExchanges(
           // on it and roll back the whole batch.
           if (factRejectReason(fact)) { rejected++; continue; }
           if (!passesConfidenceGate(fact.confidence)) continue;
-          if (allFacts.length >= MAX_FACTS_PER_SESSION) break;
 
           const key = normalizeFactText(fact.fact);
           if (seen.has(key)) continue; // cross-batch duplicate within this session
           seen.add(key);
-          allFacts.push(fact);
+          batchFacts.push(fact);
         }
         if (rejected > 0) console.error(`fact-extractor: dropped ${rejected} template-residue fact(s) from batch ${b + 1}`);
       }
@@ -269,6 +318,18 @@ export async function extractFactsFromExchanges(
     throw new LlmCallError(transientFailures[0]);
   }
 
+  const candidates = candidatesPerBatch.reduce((n, batch) => n + batch.length, 0);
+  const cap = sessionFactCap(selectedBatches.length);
+  const allFacts = selectFactsAcrossBatches(candidatesPerBatch, cap);
+  const truncated = candidates - allFacts.length;
+  if (stats) stats.truncatedFacts = truncated;
+  if (truncated > 0) {
+    console.error(
+      `fact-extractor: session ${sessionId} — 후보 ${candidates}건 중 ${allFacts.length}건만 저장 대상`
+      + `(상한 ${cap}, 배치 ${selectedBatches.length}개), ${truncated}건은 신뢰도순으로 잘림`,
+    );
+  }
+
   return allFacts;
 }
 
@@ -280,7 +341,7 @@ export async function saveExtractedFacts(
   codingAgent?: string,
   /**
    * 🚨 저장 구간은 파이프라인에서 **가장 긴** 단계다 — fact 당 임베딩 2회 +
-   * classifyAndLinkFact(내부에서 callHaiku = 헤드리스 세션 1회)를 최대 20 fact 반복.
+   * classifyAndLinkFact(내부에서 callHaiku = 헤드리스 세션 1회)를 세션 상한(sessionFactCap)까지 반복.
    * 여기가 리스 밖이면 정상 작업이 회수돼 다른 워커가 같은 세션을 저장한다
    * (Codex R8 HIGH: R7 HIGH-1 의 잔존 구간). fact 마다 갱신·소유권 확인한다.
    */
@@ -424,10 +485,19 @@ export function failureConsumesBudget(kind: ExtractionFailureKind): boolean {
   return FAILURE_REPORT[kind].consumesBudget;
 }
 
+/** extractFactsFromExchanges 의 out-param (dead-letter·상한 회계). */
+export interface ExtractionStats {
+  droppedBatches: number;
+  /** 세션 상한 때문에 저장 대상에서 빠진 후보 수 */
+  truncatedFacts?: number;
+}
+
 /** runFactExtraction 의 결과. `skipped` 가 있으면 이 세션은 이번 실행에서 처리되지 않았다. */
 export interface ExtractionRunResult {
   extracted: number;
   saved: number;
+  /** 세션 상한 때문에 잘린 후보 수(0 이면 없음) — 워커가 로그에 남긴다 */
+  truncated?: number;
   skipped?:
     | 'claim_not_acquired' | 'claim_error'
     | 'excluded_project' | 'excluded_project_unmarked'
@@ -629,7 +699,7 @@ export async function runFactExtraction(
     } catch { /* best-effort */ }
   };
 
-  const stats = { droppedBatches: 0 };
+  const stats: ExtractionStats = { droppedBatches: 0 };
   let facts: ExtractedFact[];
   let saved = 0;
   try {
@@ -735,7 +805,10 @@ export async function runFactExtraction(
     }
   }
 
-  return { extracted: facts.length, saved };
+  return {
+    extracted: facts.length, saved,
+    ...(stats.truncatedFacts ? { truncated: stats.truncatedFacts } : {}),
+  };
 }
 
 /**
