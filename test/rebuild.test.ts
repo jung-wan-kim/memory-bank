@@ -482,6 +482,136 @@ describe('rebuildConversationIndex', () => {
     }
   });
 
+  // Under an older build a turn indexed while its answer was still being written got a row per sync, and
+  // facts name those older copies. The re-index makes ONE row per turn (the full one), so after a rebuild the
+  // older ids pointed at nothing — measured on four projects of a live DB: 16,230 of 38,913 source entries,
+  // 540 of 589 facts. The rebuild now moves those entries to the row that stays before it clears anything.
+  describe('facts that name an older copy of a turn', () => {
+    /**
+     * One archived conversation whose second turn was indexed three times as it grew. The rows are
+     * written straight to the tables, as an older build left them (insertExchange removes older copies).
+     */
+    async function seedTurnCopies(): Promise<{ file: string; first: string; copies: string[]; full: string }> {
+      await seed(0);
+      const lines = [
+        line('user', 'first question'), line('assistant', 'first answer'),
+        line('user', 'second question'), line('assistant', 'second answer, part one'),
+        line('assistant', 'second answer, part two'), line('assistant', 'second answer, part three'),
+      ];
+      const file = path.join(archiveDir, 'proj', '11111111-1111-1111-1111-111111111111.jsonl');
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      const { parseConversation } = await import('../src/parser.js');
+      const { initDatabase } = await import('../src/db.js');
+      const db = initDatabase();
+      const seen = new Map<string, { lineStart: number; lineEnd: number }>();
+      try {
+        const ex = db.prepare(`INSERT OR IGNORE INTO exchanges (id, project, timestamp, user_message, assistant_message, archive_path, line_start, line_end, last_indexed, embedding_version)
+          VALUES (?, 'proj', 't', ?, ?, ?, ?, ?, ?, 3)`);
+        const vec = db.prepare('INSERT INTO vec_exchanges (id, embedding) VALUES (?, vec_int8(?))');
+        // What the parser made of the file when it held 4, 5 and all 6 lines.
+        for (const upTo of [4, 5, 6]) {
+          fs.writeFileSync(file, lines.slice(0, upTo).join('\n') + '\n');
+          for (const e of await parseConversation(file, 'proj', file)) {
+            if (seen.has(e.id)) continue;
+            seen.set(e.id, { lineStart: e.lineStart, lineEnd: e.lineEnd });
+            ex.run(e.id, e.userMessage, e.assistantMessage, file, e.lineStart, e.lineEnd, upTo);
+            vec.run(e.id, Buffer.from(new Int8Array(384).fill(1).buffer));
+          }
+        }
+      } finally {
+        db.close();
+      }
+      const byEnd = (end: number) => [...seen].find(([, r]) => r.lineStart === 3 && r.lineEnd === end)![0];
+      const first = [...seen].find(([, r]) => r.lineStart === 1)![0];
+      expect(seen.size).toBe(4); // the first turn once, the second turn under three ids
+      return { file, first, copies: [byEnd(4), byEnd(5)], full: byEnd(6) };
+    }
+    function addFacts(rows: Array<[id: string, sources: string]>): void {
+      const d = new Database(dbPath);
+      try {
+        const fact = d.prepare(`INSERT INTO facts (id, fact, category, scope_type, source_exchange_ids, created_at, updated_at) VALUES (?, ?, 'decision', 'global', ?, 't', 'u')`);
+        for (const [id, sources] of rows) fact.run(id, `fact ${id}`, sources);
+      } finally {
+        d.close();
+      }
+    }
+    const factSources = (file = dbPath) => {
+      const d = new Database(file, { readonly: true });
+      try {
+        return Object.fromEntries((d.prepare(`SELECT id, source_exchange_ids AS s FROM facts WHERE id LIKE 's-%' ORDER BY id`).all() as Array<{ id: string; s: string }>).map((r) => [r.id, r.s]));
+      } finally {
+        d.close();
+      }
+    };
+    const exchangeIds = () => {
+      const d = new Database(dbPath, { readonly: true });
+      try {
+        return (d.prepare('SELECT id FROM exchanges ORDER BY line_start').all() as Array<{ id: string }>).map((r) => r.id);
+      } finally {
+        d.close();
+      }
+    };
+
+    it('are pointed at the row the re-index re-creates, so every source still resolves after the rebuild', async () => {
+      const { first, copies, full } = await seedTurnCopies();
+      addFacts([
+        ['s-short', JSON.stringify([copies[0]])],
+        ['s-mixed', JSON.stringify([first, copies[1], full, copies[0]])],
+        ['s-clean', JSON.stringify([first, full])],
+        ['s-broken', 'not json'],
+      ]);
+      const originals = factSources();
+      const otherColumns = () => {
+        const d = new Database(dbPath, { readonly: true });
+        try { return JSON.stringify(d.prepare('SELECT id, fact, category, created_at, updated_at, is_active, tags FROM facts ORDER BY id').all()); } finally { d.close(); }
+      };
+      const columnsBefore = otherColumns();
+      const { rebuildConversationIndex } = await import('../src/rebuild.js');
+
+      const result = await rebuildConversationIndex({ yes: true });
+
+      // the index: one row per turn, the full copy of the second one — under the id the facts now name
+      expect(exchangeIds()).toEqual([first, full]);
+      expect(result.repointedFacts).toBe(2);
+      expect(factSources()).toEqual({
+        's-short': JSON.stringify([full]),
+        's-mixed': JSON.stringify([first, full]),
+        's-clean': originals['s-clean'],
+        's-broken': 'not json',
+      });
+      // nothing else of a fact moved (updated_at included), and the lists as they were are in the backup
+      expect(otherColumns()).toBe(columnsBefore);
+      expect(factSources(result.backupPath)).toEqual(originals);
+      expect(result.counts.preserved.facts).toBe(3 + 4);
+    });
+
+    it('nothing is re-pointed when the rebuild is not confirmed, or refused', async () => {
+      const { copies, file } = await seedTurnCopies();
+      addFacts([['s-short', JSON.stringify([copies[0]])]]);
+      const before = factLayer();
+      const { rebuildConversationIndex, RebuildNotConfirmedError, RebuildWouldLoseIndexError } = await import('../src/rebuild.js');
+
+      await expect(rebuildConversationIndex()).rejects.toBeInstanceOf(RebuildNotConfirmedError);
+      expect(factLayer()).toBe(before);
+
+      fs.unlinkSync(file); // its rows cannot be re-created now: refused without --allow-index-loss
+      await expect(rebuildConversationIndex({ yes: true })).rejects.toBeInstanceOf(RebuildWouldLoseIndexError);
+      expect(factLayer()).toBe(before);
+      expect(fs.existsSync(backupDir())).toBe(false);
+    });
+
+    it('a rebuild with no such fact changes no fact and says so with 0', async () => {
+      await seed(0);
+      const a = writeArchive('proj-a/11111111-1111-1111-1111-111111111111.jsonl', conversation('how do we deploy'));
+      await indexFile(a, 'proj-a');
+      const before = factLayer();
+      const { rebuildConversationIndex } = await import('../src/rebuild.js');
+      const result = await rebuildConversationIndex({ yes: true });
+      expect(result.repointedFacts).toBe(0);
+      expect(factLayer()).toBe(before);
+    });
+  });
+
   it('resetSummaries also deletes the summary files (and still makes no LLM call)', async () => {
     await seed(0);
     const a = writeArchive('proj-a/11111111-1111-1111-1111-111111111111.jsonl', conversation('how do we deploy'));

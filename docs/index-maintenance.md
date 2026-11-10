@@ -82,7 +82,10 @@ mistyped flag stops the command.
 ## `index-conversations --rebuild [--allow-index-loss] [--reset-summaries]`
 
 Empties the conversation index **in place** and re-creates it from the archive.
-The database file is never deleted, and the fact layer is not written.
+The database file is never deleted. Of the fact layer one thing is written:
+source ids that name an older copy of a turn are moved to the copy that comes
+back (step 6) — no fact, relation, category or tag is added, removed or
+reworded.
 
 **Close the other Claude Code sessions first.** A rebuild clears every row, and
 a session that keeps indexing meanwhile writes rows the rebuild has no copy of
@@ -131,11 +134,29 @@ in one transaction (about 2 seconds on an index of 340,000 exchanges).
    The backups it had written stay (the message names them). A row of such a
    file indexed later, *during* the clear, is cleared without a copy — the
    reason to close the other sessions before starting.
-6. Clears `tool_calls` and `exchanges` in batches of 2,000, pausing for other
+6. Points the facts that name an older copy of a turn at the copy the
+   re-index re-creates. A turn that an older build indexed while its answer
+   was still being written has several rows, each under its own id; the
+   re-index makes one row per turn — the fullest copy — so a source id that
+   names a shorter copy would point at nothing afterwards, and once the rows
+   are cleared nothing says which turn it was. This is the step
+   `dedupe-exchange-snapshots.mjs --apply` does, by the same function (the
+   facts are found without the write lock and written 500 per transaction):
+
+   ```
+   Turns indexed more than once: T (R older copies) — F fact(s) that named an older copy now name the copy the re-index re-creates
+   ```
+
+   Only `facts.source_exchange_ids` changes (`updated_at` stays), and the lists
+   as they were are in the fact-layer backup of step 5. If this step fails the
+   rebuild stops with nothing cleared. Running `dedupe-exchange-snapshots.mjs
+   --apply` before a rebuild is not needed for this; it does the same and also
+   removes the older copies, which the rebuild is about to clear anyway.
+7. Clears `tool_calls` and `exchanges` in batches of 2,000, pausing for other
    writers at least once a second; swaps `vec_exchanges` for an empty table of
    the same definition and rebuilds the text index (two transactions); and
    checks that the fact layer counts did not move.
-7. Re-indexes the archive through the repair path. No summary is written or
+8. Re-indexes the archive through the repair path. No summary is written or
    deleted (`--reset-summaries` deletes them all; sync and `--repair` write
    them back, one LLM call each).
 
