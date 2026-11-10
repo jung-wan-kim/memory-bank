@@ -295,3 +295,52 @@ describe('read: a stop inside a message says what startLine alone does', () => {
     expect(await readConversationRange(followed)).toMatch(/to skip the rest of it instead, start at line 2\. Continue with startLine=1, startChar=\d+\._\n$/);
   });
 });
+
+// R2-SEARCH-3 — one call reads at most 8,000,000 characters of the file. When that ceiling stopped a call it
+// named "the last line read + 1" without knowing whether the file went on, and called it the 40000-char output
+// limit: on the file's last line the named line did not exist and the call the footer asked for was an error.
+describe('read: the ceiling on the file text one call reads', () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'mb-read-rawcap-')); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  // 2 × (a tool call + its 4,100,000-character result): the second result is where the 8,000,000 are passed
+  const heavy = (): string[] => [
+    userLine(1, 'run both'),
+    toolUseLine(2, 'toolu_1', { command: 'cat one.log' }),
+    toolResultLine(3, 'toolu_1', `ONE ${'r'.repeat(4_100_000)}`),
+    toolUseLine(4, 'toolu_2', { command: 'cat two.log' }),
+    toolResultLine(5, 'toolu_2', `TWO ${'r'.repeat(4_100_000)}`),
+  ];
+
+  it('on the last line of the file the answer just ends — no line outside the file is named', async () => {
+    const file = join(dir, 'raw-tail.jsonl');
+    writeFileSync(file, heavy().join('\n') + '\n');
+    const text = await readConversationRange(file);
+    expect(text).toContain('cat two.log');
+    expect(text.length).toBeLessThan(READ_MAX_OUTPUT_CHARS);
+    expect(text).not.toMatch(/Output truncated|Continue with/);
+    // (what the old footer asked for)
+    await expect(readConversationRange(file, { startLine: 6 })).rejects.toThrow(/outside the file: it has 5 lines/);
+  });
+
+  it('before the last line it names the next line, which exists, and says which limit stopped it', async () => {
+    const file = join(dir, 'raw-more.jsonl');
+    writeFileSync(file, [...heavy(), assistantLine(6, 'tail-marker')].join('\n') + '\n');
+    const first = await readConversationRange(file);
+    expect(first).not.toContain('tail-marker');
+    expect(first).toMatch(/\n---\n_Output truncated at the 8000000-char limit: lines 1-5 shown \(the limit is on the file text one call reads, not on this output\)\. Continue with startLine=6\._\n$/);
+
+    const pages = await readAll(file);
+    expect(pages.length).toBe(2);
+    expect(pages[1].text).toContain('tail-marker');
+    expect(pages[1].args).toBeNull();
+  });
+
+  it('with an endLine: nothing is named past it, and the endLine is carried when the range goes on', async () => {
+    const file = join(dir, 'raw-range.jsonl');
+    writeFileSync(file, [...heavy(), assistantLine(6, 'tail-marker'), userLine(7, 'beyond')].join('\n') + '\n');
+    expect(await readConversationRange(file, { startLine: 1, endLine: 5 })).not.toMatch(/Output truncated/);
+    expect(await readConversationRange(file, { startLine: 1, endLine: 6 })).toMatch(/Continue with startLine=6, endLine=6\._\n$/);
+  });
+});

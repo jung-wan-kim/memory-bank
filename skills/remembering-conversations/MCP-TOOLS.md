@@ -122,6 +122,13 @@ Read a conversation, or a line range of it, as Markdown.
   the line the closing line gives for that (here `startLine: 4`); when the message is the last line of the
   range the closing line says that nothing follows it. The next piece starts with
   `…[message at line 3 continues from character 39907 of 90048]`.
+- One call also reads at most 8,000,000 characters of the file itself (a few tool results can be that large
+  while their clipped rendering is short). An answer stopped by that ends the same way and says which limit
+  it was:
+
+  ```
+  _Output truncated at the 8000000-char limit: lines 1-5 shown (the limit is on the file text one call reads, not on this output). Continue with startLine=6._
+  ```
 - A tool input or tool result longer than 2,000 characters is clipped:
   `…[+N chars not shown — read again with full: true]`. With `full: true` nothing is clipped (the 40,000
   characters per call still apply) and the closing line carries `full=true` — a `startChar` counts the text

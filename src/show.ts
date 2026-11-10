@@ -416,7 +416,14 @@ export async function readConversationRange(filePath: string, opts: Conversation
     return line + 1 <= lastCollected || archiveHasLine(filePath, line + 1);
   };
 
-  if (next === null && range.stoppedEarly) next = { line: lastLineRead + 1, char: 0 };
+  // The raw ceiling ended this call with every message it read shown. The footer used to name "last line + 1"
+  // unseen: when the ceiling fell on the file's last line that was a line outside the file, and the call the
+  // footer asked for was an error.
+  let stoppedAtRawCeiling = false;
+  if (next === null && range.stoppedEarly && await lineFollows(lastLineRead)) {
+    next = { line: lastLineRead + 1, char: 0 };
+    stoppedAtRawCeiling = true;
+  }
   const moreToRead = next !== null && (
     next.char > 0
     || ((endLine === undefined || next.line <= endLine) && (range.totalLines === null || next.line <= range.totalLines))
@@ -433,6 +440,8 @@ export async function readConversationRange(filePath: string, opts: Conversation
         + (await lineFollows(next.line)
           ? ` — to skip the rest of it instead, start at line ${next.line + 1}`
           : ' (nothing follows it in the requested range)');
+    } else if (stoppedAtRawCeiling) {
+      shownSoFar = `lines ${firstLine}-${next.line - 1} shown (the limit is on the file text one call reads, not on this output)`;
     } else {
       shownSoFar = `lines ${firstLine}-${next.line - 1}${total} shown`;
     }
@@ -442,7 +451,8 @@ export async function readConversationRange(filePath: string, opts: Conversation
     if (next.char > 0) args.push(`startChar=${next.char}`);
     if (endLine !== undefined) args.push(`endLine=${endLine}`);
     if (opts.full) args.push('full=true');
-    output += `\n---\n_Output truncated at the ${maxChars}-char limit: ${shownSoFar}. Continue with ${args.join(', ')}._\n`;
+    const limitChars = stoppedAtRawCeiling ? READ_MAX_RAW_CHARS : maxChars;
+    output += `\n---\n_Output truncated at the ${limitChars}-char limit: ${shownSoFar}. Continue with ${args.join(', ')}._\n`;
   }
 
   return output;

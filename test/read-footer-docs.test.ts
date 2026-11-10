@@ -55,6 +55,16 @@ describe('the notes shipped with the plugin describe the closing line `read` rea
       userLine(1, 'run it'), toolUseLine(2, 'toolu_1', 'cat big.log'), toolResultLine(3, 'toolu_1', 'r'.repeat(6_000)),
     ].join('\n') + '\n');
     clippedToolAnswer = await readConversationRange(tool);
+
+    // two tool results of 4,100,000 characters: the second is where one call's file text runs out
+    const heavy = path.join(dir, 'heavy.jsonl');
+    fs.writeFileSync(heavy, [
+      userLine(1, 'run both'),
+      toolUseLine(2, 'toolu_1', 'cat one.log'), toolResultLine(3, 'toolu_1', 'r'.repeat(4_100_000)),
+      toolUseLine(4, 'toolu_2', 'cat two.log'), toolResultLine(5, 'toolu_2', 'r'.repeat(4_100_000)),
+      assistantLine(6, 'done'),
+    ].join('\n') + '\n');
+    real.fileText = closingLine(await readConversationRange(heavy));
   });
 
   afterAll(() => { fs.rmSync(dir, { recursive: true, force: true }); });
@@ -125,5 +135,14 @@ describe('the notes shipped with the plugin describe the closing line `read` rea
     expect(kr).toContain('`startLine`');
     expect(kr).toContain('`startChar`');
     expect(kr).toMatch(/알려 준 값을 전부 넘긴다/);
+  });
+
+  // R2-SEARCH-3 — the third kind of closing line: the ceiling on the file text one call reads.
+  it('MCP-TOOLS.md also quotes the closing line of an answer stopped by the file-text ceiling', () => {
+    expect(real.fileText).toMatch(/^_Output truncated at the 8000000-char limit: lines 1-5 shown .*Continue with startLine=6\._$/);
+    const text = doc('skills/remembering-conversations/MCP-TOOLS.md');
+    const quoted = text.split('\n').filter((line) => line.trim().startsWith('_Output truncated')).map(shape);
+    expect(quoted).toContain(shape(real.fileText));
+    expect(text).toMatch(/8,000,000 characters of the file itself/);
   });
 });
