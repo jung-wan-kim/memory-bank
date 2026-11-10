@@ -256,6 +256,9 @@ describe('repairing facts rewritten without a new vector', () => {
       expect(res.status, res.stderr).toBe(0);
       expect(res.stdout).toContain("candidates (active facts holding a revision's sentence): 0");
       expect(res.stdout).toContain('dry run — nothing written');
+      // The closing lines name the choice to make: keep, and clear only before a translation run.
+      expect(res.stdout).toContain('Re-run with --apply --fact-kr keep to repair');
+      expect(res.stdout).toMatch(/--fact-kr clear removes them instead; use it only when scripts\/translate-facts\.mjs/);
       expect(fingerprint(dbPath)).toBe(before);
     }, 40_000);
 
