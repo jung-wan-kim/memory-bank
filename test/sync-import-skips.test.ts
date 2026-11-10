@@ -210,6 +210,24 @@ describe('sync import: 넘긴 줄을 세고 남긴다', () => {
     expect(errors.join('\n')).toMatch(/passed over 1 fact\(s\) whose sentence is already here under another id/);
   });
 
+  // monotonicity-ok: 새로 더하는 시험이다(끄는 시험 없음). Windows 에는 POSIX 권한 비트가 없어 그 플랫폼에서만 건너뛴다 — file-perms.test.ts 와 같은 조건.
+  it.skipIf(process.platform === 'win32')('넘긴 줄의 로그 파일과 logs 폴더는 소유자 전용으로 만든다 (R2-SEC-3)', async () => {
+    const dir = await syncDir();
+    const { importFromSync } = await import('../src/sync-import.js');
+    fs.writeFileSync(path.join(dir, 'facts.jsonl'), [fact('f-1', 'Deploys go through the staging branch first.'), '{"id": "f-torn", "fact": "Sta'].join('\n') + '\n');
+    // 보통의 데스크톱 umask: 권한을 주지 않으면 파일 0644, 폴더 0755 로 만들어진다.
+    const previous = process.umask(0o022);
+    try {
+      const result = await importFromSync();
+      expect(result.malformedLines).toBe(1);
+    } finally {
+      process.umask(previous);
+    }
+    const logs = path.join(tmpDir, 'conversation-index', 'logs');
+    expect(fs.statSync(path.join(logs, 'sync-import.jsonl')).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(logs).mode & 0o777).toBe(0o700);
+  });
+
   it('meta.json 이 말하는 크기와 다른 파일을 알린다 — 가져오기는 멈추지 않는다 (LSO-8)', async () => {
     const dir = await syncDir();
     const { importFromSync } = await import('../src/sync-import.js');
