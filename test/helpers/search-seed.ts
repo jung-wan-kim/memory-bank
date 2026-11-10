@@ -35,7 +35,16 @@ export interface SeedRow {
   project?: string;
 }
 
+/**
+ * insertExchange keeps one row per (file, start line): it removes older snapshots of the turn it
+ * inserts. An index built before that rule still holds such copies, and the search has to fold them,
+ * so the seed must be able to hold them too — each row goes in under a start line of its own and gets
+ * the real one afterwards.
+ */
+const SEED_LINE_BASE = 1_000_000;
+
 export function seedExchanges(db: Database.Database, rows: SeedRow[]): void {
+  const setLineStart = db.prepare('UPDATE exchanges SET line_start = ? WHERE id = ?');
   db.transaction(() => {
     rows.forEach((r, i) => {
       const exchange: ConversationExchange = {
@@ -45,12 +54,14 @@ export function seedExchanges(db: Database.Database, rows: SeedRow[]): void {
         userMessage: r.userMessage ?? `seed question ${r.id}`,
         assistantMessage: r.assistantMessage ?? `seed answer ${r.id}`,
         archivePath: r.archivePath ?? `/seed/archive/${r.id}.jsonl`,
-        lineStart: r.lineStart ?? i * 10 + 1,
+        // Inserted under a start line of its own; the real one is written below.
+        lineStart: SEED_LINE_BASE + i,
         lineEnd: r.lineEnd ?? i * 10 + 5,
         isSidechain: r.isSidechain,
         codingAgent: r.codingAgent,
       };
       insertExchange(db, exchange, vecAt(r.theta, r.axis ?? 1 + (i % 300)));
+      setLineStart.run(r.lineStart ?? i * 10 + 1, r.id);
     });
   })();
 }

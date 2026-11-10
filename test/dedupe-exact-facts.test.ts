@@ -78,11 +78,11 @@ describe('exact-duplicate cleanup', () => {
         db.prepare('UPDATE facts SET created_at = ?, updated_at = ?, consolidated_count = ? WHERE id = ?').run(at, at, o.count ?? 1, id);
         return id;
       };
-      const git = 'The project is a git repository on the main branch';
+      const git = 'The billing worker retries a failed charge three times';
       ids = {
         gitOldest: add(git, day(1), { count: 2, sources: ['ex-1'] }),
-        gitSpaced: add('The  project is a git repository\non the main branch ', day(2), { count: 3, sources: ['ex-2'], kr: true }),
-        gitUpper: add('THE PROJECT IS A GIT REPOSITORY ON THE MAIN BRANCH', day(3), { sources: ['ex-1', 'ex-3'] }),
+        gitSpaced: add('The  billing worker retries a failed charge\nthree times ', day(2), { count: 3, sources: ['ex-2'], kr: true }),
+        gitUpper: add('THE BILLING WORKER RETRIES A FAILED CHARGE THREE TIMES', day(3), { sources: ['ex-1', 'ex-3'] }),
         otherProject: add(git, day(1), { project: '/elsewhere' }),    // same sentence, another project — not a duplicate
         globalSame: add(git, day(1), { project: null }),               // …nor is the global copy
         pairNew: add('Tests run with vitest', day(9), { count: 4 }),
@@ -234,7 +234,7 @@ describe('exact-duplicate cleanup', () => {
       expect(res.stdout).toContain('exact-duplicate groups (same scope, same sentence): 2');
       expect(res.stdout).toContain('facts in those groups: 5 — 3 would be deactivated, 2 stay');
       expect(res.stdout).toContain('largest groups: 3, 2');
-      expect(res.stdout).toContain(`3× keep ${ids.gitOldest} [project /proj] the project is a git repository on the main branch`);
+      expect(res.stdout).toContain(`3× keep ${ids.gitOldest} [project /proj] the billing worker retries a failed charge three times`);
       expect(res.stdout).toContain('dry run — nothing written');
       expect(fingerprint(dbPath)).toBe(before);
     }, 40_000);

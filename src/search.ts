@@ -1,4 +1,5 @@
 import { initDatabase, getVecQuant, embeddingToVecBlob, vecParamSql, normalizeVecDistance, l2DistanceToSimilarity } from './db.js';
+import { OBSERVER_PROMPT_PREFIX, WARMUP_MESSAGE } from './noise.js';
 import type { VecQuant } from './db.js';
 import { getDbPath } from './paths.js';
 import { initEmbeddings, generateEmbedding, EMBEDDING_VERSION } from './embeddings.js';
@@ -87,7 +88,7 @@ export interface SearchOptions {
 }
 
 /** First characters of the prompts another memory plugin's observer session sends — not a person asking. */
-export const NOISE_OBSERVER_PREFIX = '<observed_from_primary_session>';
+export const NOISE_OBSERVER_PREFIX = OBSERVER_PROMPT_PREFIX;
 
 /**
  * SQL condition over `exchanges AS e` that is TRUE for a machine-noise row — the one definition of what the
@@ -98,9 +99,11 @@ export const NOISE_OBSERVER_PREFIX = '<observed_from_primary_session>';
  * returned 16 observer prompts and 2 warm-ups in its 18 results. Rows are only hidden here — nothing is
  * deleted, and a person's own "Warmup" in the main chain stays.
  * substr(), not LIKE: the `_` in the prefix is a LIKE wildcard.
+ * The two texts come from noise.ts — the rule that keeps such turns out of the index (isNoiseExchange) —
+ * so what the index refuses and what the search hides cannot drift apart (test/noise-search-parity.test.ts).
  */
 export const NOISE_EXCHANGE_SQL =
-  `((COALESCE(e.is_sidechain, 0) = 1 AND e.user_message = 'Warmup')` +
+  `((COALESCE(e.is_sidechain, 0) = 1 AND e.user_message = '${WARMUP_MESSAGE}')` +
   ` OR substr(e.user_message, 1, ${NOISE_OBSERVER_PREFIX.length}) = '${NOISE_OBSERVER_PREFIX}')`;
 
 /** sqlite-vec refuses a KNN whose k is above this ("k value in knn query too large … the limit is 4096"). */

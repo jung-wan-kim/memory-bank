@@ -33,6 +33,10 @@ vi.mock('../src/embeddings.js', async (io) => ({
 vi.mock('../src/ontology-classifier.js', async (io) => ({
   ...(await io<typeof import('../src/ontology-classifier.js')>()),
   classifyAndLinkFact: async () => {},
+  classifyAndLinkFacts: async () => ({
+    classified: 0, deterministic: 0, failed: 0, fallback: 0, transient: 0,
+    relations: { judged: 0, created: 0, reverseExisting: 0, siblingSupersedes: 0, reverseSupersedes: 0 },
+  }),
 }));
 
 const SID = 'S-repeat';

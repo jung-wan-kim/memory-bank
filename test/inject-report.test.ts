@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { execFileSync, spawn } from 'child_process';
 import crypto from 'crypto';
@@ -19,6 +19,11 @@ import { EMBEDDING_MODEL } from '../src/embedding-version.js';
  * q0..q4 also show a grade-2 line h<i> in both v0 and family (the gain is family minus v0, not family's count).
  * Every judgment row is bound to its judge message (seed + sha256), rebuilt from the snapshot's facts.
  */
+
+// The slowest tests here run the report script as a child process many times each: 10-16s alone,
+// 14-23s inside the 83-file suite of v1.7.9, and 31s once inside the 143-file suite (2026-11-11) —
+// past the 30s default. Nothing in this file asserts on time, so the file gets a 90s limit.
+vi.setConfig({ testTimeout: 90_000 });
 
 const SCRIPT = fileURLToPath(new URL('../bench/inject-judge.mjs', import.meta.url));
 const REPO = path.resolve(path.dirname(SCRIPT), '..');

@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { SUMMARIZER_CONTEXT_MARKER } from './constants.js';
+import { parseGuarded } from './conversation-guard.js';
 import { getExcludedProjects, getProjectsDir, isExcludedProject } from './paths.js';
 
 /**
@@ -23,14 +23,9 @@ import { getExcludedProjects, getProjectsDir, isExcludedProject } from './paths.
  *    extraction calls that follow in the same worker keep their own setting.
  */
 
-// sync.ts keeps its marker list module-private. This is the same list, built
-// from pieces so that reading this file does not put a marker into the reader's
-// own transcript; test/extraction-index-lag.test.ts fails when the two differ.
-export const INDEX_EXCLUSION_MARKERS: readonly string[] = [
-  ['<INSTRUCTIONS-TO-EPISODIC-MEMORY>', 'DO NOT INDEX THIS CHAT', '</INSTRUCTIONS-TO-EPISODIC-MEMORY>'].join(''),
-  ['Only use', 'NO_INSIGHTS_FOUND'].join(' '),
-  SUMMARIZER_CONTEXT_MARKER,
-];
+// One list, one rule: the markers and the check are conversation-guard.ts's — the same ones sync and
+// the indexer use (only the text of user messages counts).
+export { EXCLUSION_MARKERS as INDEX_EXCLUSION_MARKERS } from './conversation-guard.js';
 
 export type PreindexResult =
   | { status: 'indexed' }             // indexSession ran over this session's transcript
@@ -82,8 +77,9 @@ export async function preindexSession(sessionId: string): Promise<PreindexResult
 
     // A transcript that cannot be read is not indexed here: "could not check"
     // must not become "no marker".
-    const content = fs.readFileSync(transcript, 'utf-8');
-    if (INDEX_EXCLUSION_MARKERS.some((marker) => content.includes(marker))) {
+    const project = path.basename(path.dirname(transcript));
+    const { excluded } = await parseGuarded(transcript, project, transcript);
+    if (excluded) {
       return { status: 'excluded_marker' };
     }
 

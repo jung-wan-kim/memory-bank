@@ -41,9 +41,8 @@ import { formatFactSearch, formatFactTrace, formatCrossProjectInsights, formatGr
 import { clipLine, RELATED_MAX_CHARS } from './related-format.js';
 import { askAvatar } from './avatar-responder.js';
 import path from 'path';
-import fs from 'fs';
 import os from 'os';
-import { resolveArchiveFile } from './archive-io.js';
+import { resolveReadableConversation } from './read-guard.js';
 import { getArchiveDir } from './paths.js';
 
 // Zod Schemas for Input Validation
@@ -557,34 +556,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === 'read') {
       const params = ShowConversationInputSchema.parse(args);
 
-      // Validate path: must be absolute and a .jsonl file (optionally .zst-compressed)
-      const resolvedPath = path.resolve(params.path);
-      if (!resolvedPath.endsWith('.jsonl') && !resolvedPath.endsWith('.jsonl.zst')) {
-        throw new Error(`Invalid file type: only .jsonl files are supported`);
-      }
-
-      // Verify file exists (plain or compressed variant)
-      const resolvedFile = resolveArchiveFile(resolvedPath);
-      if (!resolvedFile) {
-        throw new Error(`File not found: ${resolvedPath}`);
-      }
-
       // Confine reads to conversation storage roots — this tool must not be
       // usable as an arbitrary-file reader (prompt-injected paths like
-      // /tmp/secret.jsonl would otherwise be readable).
-      const realFile = fs.realpathSync(resolvedFile);
-      const allowedRoots = [
+      // /tmp/secret.jsonl would otherwise be readable). The roots are checked
+      // before any existence test, so a path outside them gets one answer
+      // whether or not a file is there (read-guard.ts). A reversed or out-of-file
+      // line range is reported by readConversationRange below.
+      const realFile = resolveReadableConversation(params.path, [
         getArchiveDir(),
         path.join(os.homedir(), '.claude', 'projects'),
-      ].map(root => {
-        try { return fs.realpathSync(root); } catch { return path.resolve(root); }
-      });
-      const isAllowed = allowedRoots.some(
-        root => realFile === root || realFile.startsWith(root + path.sep),
-      );
-      if (!isAllowed) {
-        throw new Error('Access denied: path is outside the conversation archive');
-      }
+      ]);
 
       // Read and format the requested line range as a stream: the cost follows
       // the range, not the file (whole-file reads failed on files over 512MB),

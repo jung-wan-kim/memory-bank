@@ -15,8 +15,13 @@ import type { ConversationExchange } from '../src/types.js';
  * Vector space of the seed (384 dims, unit vectors): axis 0 = "React",
  * axis 1 = "Router", axes 2-3 = two concepts no exchange mentions, axis 4 =
  * "Database", axes 10+ = one private noise axis per filler exchange. An exchange's similarity is
- * `1 - L2 distance` (search.ts): 1 for the same direction, 1 - √2 ≈ -0.41 for
- * an orthogonal one, 1 - √(2 - √2) ≈ 0.23 for the halfway vector.
+ * the cosine (`l2DistanceToSimilarity`, db.ts): 1 for the same direction, 0 for an orthogonal
+ * one, √½ ≈ 0.71 for the halfway vector.
+ *
+ * A multi-concept search answers in two parts (search.ts): exchanges that contain every word of
+ * every concept come first, then the conversations in which every concept has a near exchange.
+ * The seed keeps the two apart: only the exchange in KEYWORD_ONLY has the words of two concepts
+ * in one text, and its vector is near neither.
  */
 
 const DIM = 384;
@@ -53,11 +58,12 @@ vi.mock('../src/embeddings.js', async (importOriginal) => {
 
 const BOTH_STRONG = '/archive/demo/conv-both-strong.jsonl';
 const BOTH_WEAK = '/archive/demo/conv-both-weak.jsonl';
+const KEYWORD_ONLY = '/archive/demo/conv-keyword-only.jsonl';
 
 let tmpDir: string;
 const saved: Record<string, string | undefined> = {};
 
-function exchange(id: string, archivePath: string, userMessage: string): ConversationExchange {
+function exchange(id: string, archivePath: string, userMessage: string, lineStart = 1): ConversationExchange {
   return {
     id,
     project: 'demo',
@@ -65,8 +71,8 @@ function exchange(id: string, archivePath: string, userMessage: string): Convers
     userMessage,
     assistantMessage: `answer to: ${userMessage}`,
     archivePath,
-    lineStart: 1,
-    lineEnd: 2,
+    lineStart,
+    lineEnd: lineStart + 1,
   };
 }
 
@@ -81,9 +87,14 @@ beforeAll(async () => {
   try {
     // One conversation with an exchange squarely on each concept: similarity 1 to both.
     insertExchange(db, exchange('a1', BOTH_STRONG, 'React component state'), unit({ [AXIS.react]: 1 }));
-    insertExchange(db, exchange('a2', BOTH_STRONG, 'Router configuration'), unit({ [AXIS.router]: 1 }));
-    // One exchange halfway between the two concepts: similarity ≈ 0.23 to each.
-    insertExchange(db, exchange('b1', BOTH_WEAK, 'React Router together'), unit({ [AXIS.react]: 1, [AXIS.router]: 1 }));
+    // A second turn of the same file (another start line): insertExchange keeps one row per
+    // (file, start line) and would drop a1 as an older snapshot of the same turn otherwise.
+    insertExchange(db, exchange('a2', BOTH_STRONG, 'Router configuration', 3), unit({ [AXIS.router]: 1 }));
+    // One exchange halfway between the two concepts: similarity ≈ 0.71 to each. Its text names
+    // neither word, so it is found by its vector only.
+    insertExchange(db, exchange('b1', BOTH_WEAK, 'Navigation between the pages of a single-page app'), unit({ [AXIS.react]: 1, [AXIS.router]: 1 }));
+    // One exchange whose text has the words of two concepts but whose vector is near neither.
+    insertExchange(db, exchange('k1', KEYWORD_ONLY, 'Database xyzabc123 migration notes'), unit({ 50: 1 }));
     // Five conversations about React only and five about Router only: nearer to their own
     // concept than the halfway exchange (cosine 0.87-0.94 against 0.71), orthogonal to the
     // other. They fill the top of each single-concept list.
@@ -132,16 +143,17 @@ describe('multi-concept search', () => {
 
   it('orders matches by average similarity, highest first', async () => {
     const { searchMultipleConcepts } = await import('../src/search.js');
-    // limit 5 → 25 nearest per concept, which is every seeded exchange: all 17
-    // conversations are candidates and the order is decided by the averages.
+    // limit 5 → 25 nearest per concept, which is every seeded exchange: every
+    // conversation is a candidate and the order is decided by the averages.
     const results = await searchMultipleConcepts(['React', 'Router'], { limit: 5 });
 
     expect(results).toHaveLength(5);
     expect(results[0].exchange.archivePath).toBe(BOTH_STRONG);
     expect(results[1].exchange.archivePath).toBe(BOTH_WEAK);
-    expect(results[1].averageSimilarity).toBeCloseTo(1 - Math.sqrt(2 - Math.SQRT2), 2);
-    // A single-concept filler averages its own concept (≈0.6) with the orthogonal one (≈-0.41).
-    expect(results[2].averageSimilarity).toBeLessThan(0.2);
+    expect(results[1].averageSimilarity).toBeCloseTo(Math.SQRT1_2, 2);
+    // A single-concept filler averages its own concept (0.88-0.94) with the orthogonal one (0).
+    expect(results[2].averageSimilarity).toBeLessThan(0.5);
+    expect(results.every((r) => r.matchedBy === 'semantic')).toBe(true);
     const averages = results.map((r) => r.averageSimilarity);
     expect(averages).toEqual([...averages].sort((a, b) => b - a));
     for (const r of results) {
@@ -164,8 +176,23 @@ describe('multi-concept search', () => {
 
     // Every seeded vector is orthogonal to both unknown concepts.
     expect(unrelated).toHaveLength(5);
-    expect(unrelated[0].averageSimilarity).toBeCloseTo(1 - Math.SQRT2, 1);
+    expect(unrelated[0].averageSimilarity).toBeCloseTo(0, 1);
     expect(unrelated[0].averageSimilarity).toBeLessThan(related[0].averageSimilarity);
+  });
+
+  it('puts an exchange that contains every word of every concept first, with its real similarities', async () => {
+    const { searchMultipleConcepts } = await import('../src/search.js');
+    const results = await searchMultipleConcepts(['Database', 'xyzabc123'], { limit: 3 });
+
+    expect(results[0].exchange.archivePath).toBe(KEYWORD_ONLY);
+    expect(results[0].matchedBy).toBe('keyword');
+    // Found by its words, not its vector: the vector is orthogonal to both concepts.
+    expect(results[0].conceptSimilarities).toHaveLength(2);
+    expect(results[0].conceptSimilarities[0]).toBeCloseTo(0, 1);
+    expect(results[0].conceptSimilarities[1]).toBeCloseTo(0, 1);
+    // No conversation is listed twice.
+    const paths = results.map((r) => r.exchange.archivePath);
+    expect(new Set(paths).size).toBe(paths.length);
   });
 
   it('returns nothing for an empty concept list', async () => {

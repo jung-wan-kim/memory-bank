@@ -35,6 +35,10 @@ vi.mock('../src/embeddings.js', async (io) => ({
 vi.mock('../src/ontology-classifier.js', async (io) => ({
   ...(await io<typeof import('../src/ontology-classifier.js')>()),
   classifyAndLinkFact: async () => {},
+  classifyAndLinkFacts: async () => ({
+    classified: 0, deterministic: 0, failed: 0, fallback: 0, transient: 0,
+    relations: { judged: 0, created: 0, reverseExisting: 0, siblingSupersedes: 0, reverseSupersedes: 0 },
+  }),
 }));
 
 const SID = '4b1d6f0e-7a3c-4e52-9d18-6c0f2a9b5e71';
@@ -178,18 +182,14 @@ describe('추출 전 색인 (preindexSession)', () => {
     expect(calls).toBe(0);
   });
 
-  it('제외 마커 목록이 sync.ts 의 목록과 같다', async () => {
+  it('제외 마커 목록은 conversation-guard.ts 의 목록 그 자체다(사본 없음)', async () => {
     const { INDEX_EXCLUSION_MARKERS } = await import('../src/session-preindex.js');
-    const { SUMMARIZER_CONTEXT_MARKER } = await import('../src/constants.js');
-    const syncSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'sync.ts'), 'utf8');
-    const block = /const EXCLUSION_MARKERS = \[([\s\S]*?)\];/.exec(syncSource);
-    expect(block, 'sync.ts 의 제외 마커 정의 모양이 바뀌었다 — session-preindex.ts 의 사본과 이 테스트를 그 정의에 맞출 것').not.toBeNull();
-    const body = block![1];
-    const literals = [...body.matchAll(/'((?:[^'\\]|\\.)*)'/g)].map((m) => m[1]);
-    // 문자열 리터럴을 지우고 남는 항목은 상수 이름뿐이어야 한다(모르는 항목이 있으면 사본을 만들 수 없다).
-    const rest = body.replace(/'(?:[^'\\]|\\.)*'/g, '').split(',').map((s) => s.trim()).filter(Boolean);
-    expect(rest).toEqual(['SUMMARIZER_CONTEXT_MARKER']);
-    expect([...INDEX_EXCLUSION_MARKERS].sort()).toEqual([...literals, SUMMARIZER_CONTEXT_MARKER].sort());
+    const { EXCLUSION_MARKERS } = await import('../src/conversation-guard.js');
+    expect(INDEX_EXCLUSION_MARKERS).toBe(EXCLUSION_MARKERS);
+    expect(EXCLUSION_MARKERS.length).toBeGreaterThan(0);
+    // 선색인 소스에 목록의 사본(문자열 배열)이 다시 생기지 않게 한다.
+    const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'session-preindex.ts'), 'utf8');
+    expect(source).not.toMatch(/INDEX_EXCLUSION_MARKERS[^\n]*=\s*\[/);
   });
 
   it('색인 모듈을 불러와도 프로세스의 출력 토큰 상한 설정이 바뀌지 않는다', async () => {

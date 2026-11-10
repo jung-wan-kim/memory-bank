@@ -147,6 +147,18 @@ describe('MCP server over stdio', () => {
       expect(isError).toBe(true);
       expect(text).toMatch(/outside the conversation archive/);
     });
+
+    it('answers the same for a path outside the archive whether or not a file is there', async () => {
+      const present = path.join(configDir, 'probe-present.jsonl');
+      fs.writeFileSync(present, conversation(1));
+      const absent = path.join(configDir, 'probe-absent.jsonl');
+      const a = await call('read', { path: present });
+      const b = await call('read', { path: absent });
+      expect(a.isError).toBe(true);
+      expect(b.isError).toBe(true);
+      // The answer must not tell the caller which *.jsonl files exist on the machine.
+      expect(a.text).toBe(b.text);
+    });
   });
 
   describe('search_ontology', () => {
