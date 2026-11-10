@@ -125,6 +125,7 @@ Every user prompt (≥20 chars) triggers the `UserPromptSubmit` hook, which vect
 
   Node-level crashes (missing `node_modules`, import failures) land in `logs/inject-context.err.log` instead of being discarded — the client's lines there carry the time and the plugin version, a cold fallback that dies while importing also writes a `"status":"error"` line to the JSONL log, and the file is rotated to `.old` at 1MB.
 - **Native thin client (v1.7.9, optional)** — when `cargo` is installed, SessionStart builds `native/inject-client` (Rust) once into `~/.config/superpowers/conversation-index/bin/` and the hook wrapper runs it instead of the node script whenever its recorded source hash equals the plugin's `native/inject-client/SRC_HASH`. It is the warm path of `scripts/inject-context.js` field for field (same stdout bytes, ledger, request keys and skipped-log fields). Measured on one machine: against an instantly answering fake daemon the client itself costs ~3.4ms where the node client needs ~75ms to start; against the real daemon the hook's end-to-end median was 32.5ms native vs 112ms node, of which the daemon's own search is ~17ms in both. When the daemon does not answer it hands the prompt to the node client with the reason in `MEMORY_BANK_INJECT_DAEMON_FAILED` and the same `MEMORY_BANK_INJECT_REQ_ID`. Without cargo nothing changes. Each log line now says which client asked (`client_impl`: `native` | `node`).
+- **Deep config directory (v1.8.0)** — the warm daemon listens on a unix socket inside `conversation-index/`, and a unix socket path is at most 103 bytes on macOS and 107 on Linux. When no socket name fits (the path of the folder that holds `conversation-index/` is longer than 65 bytes on macOS or 69 on Linux — a deep `MEMORY_BANK_CONFIG_DIR` / `XDG_CONFIG_HOME`, a temp dir), the daemon is not started: the MCP server says `inject daemon off: …` once on stderr, and every prompt is injected by the hook's own computation — the slow path, which loads the embedding model in the hook process each time. Those log lines read `"via":"fallback","fallback_reason":"socket-path-too-long"`. A shorter config directory turns the fast path back on.
 
 **Injection replay bench (v1.7.8)** — replays prompts the hook really saw (inject log ∩ indexed conversation, as of each prompt's moment) through selection variants and has an isolated LLM judge score each injected line 0/1/2 against random-fact controls:
 
@@ -174,7 +175,7 @@ Extraction quality/cost controls (v1.2.0):
 - Trivial exchanges (bare slash commands, harness artifacts, short acknowledgements) are filtered before any LLM call
 - Duplicate facts within a session are dropped across batches (normalized comparison)
 - Facts without a valid numeric confidence ≥ 0.7 are rejected
-- Long sessions cap LLM calls with evenly-spread batch sampling (`MEMORY_BANK_MAX_EXTRACT_CALLS`, default 12)
+- Long sessions cap the extraction batches with evenly-spread sampling (`MEMORY_BANK_MAX_EXTRACT_CALLS`, default 12, at most 60 — a larger value is read as 60). It bounds the batches, not every LLM call of a session: a batch whose call fails for a transient reason is tried again (3 attempts by default), and the ontology classification (one call per 20 stored facts) and relation check (one call per stored fact) come on top
 
 | Category | Example |
 |----------|---------|
@@ -227,11 +228,11 @@ Project A sees: Project A facts + Global facts (never Project B). Since v1.7.8 t
 
 | Tool | Description |
 |------|-------------|
-| `search` | Semantic + keyword search (at most `limit` results; date/agent filters; machine-generated turns left out unless `include_noise`) + related facts attached |
-| `read` | Read a conversation or a line range of it (streamed — any file size; 40,000 characters per call with a `startLine` to continue from) |
+| `search` | Semantic + keyword search (at most `limit` results; date/agent filters; machine-generated turns left out unless `include_noise`) + related facts attached. An array of 2-5 concepts returns the conversations matching all of them, keyword and semantic matches in one ranking |
+| `read` | Read a conversation or a line range of it (streamed — any file size; 40,000 characters per call — the closing line names the `startLine`, and inside one long message the `startChar`, to continue from; `full: true` shows tool inputs/results over 2,000 characters whole) |
 | `search_facts` | Query facts with ontology context + graph relations (category/agent/tag filters; identical sentences folded) |
-| `search_ontology` | Browse the ontology level by level: domains and category counts first, facts with a `category` filter (bounded output) |
-| `ask_avatar` | Ask your technical alter ego — answers grounded in past decisions |
+| `search_ontology` | Browse the ontology level by level: domains and category counts first, facts with a `category` filter (bounded output; `category_offset` lists a domain's categories past the first 200) |
+| `ask_avatar` | Ask your technical alter ego — answers grounded in past decisions (calls an LLM; a failed call — no login, a refusal, an outage — comes back as an error, `isError`) |
 | `trace_fact` | Trace a fact back to its source conversations |
 | `explore_graph` | Multi-hop graph traversal (1-3 hops) from any fact |
 | `cross_project_insights` | Find similar decisions from other projects |
@@ -240,6 +241,8 @@ Project A sees: Project A facts + Global facts (never Project B). Since v1.7.8 t
 | `list_tags` | Browse user tags, or the facts carrying them |
 
 Parameters, limits and what each answer says when it is cut short: [`skills/remembering-conversations/MCP-TOOLS.md`](skills/remembering-conversations/MCP-TOOLS.md).
+
+A search result's `N% match` is the cosine similarity of the embeddings, not a confidence: with this model even unrelated text scores about 85-89% and a strong hit about 90%. Compare the hits of one answer with each other; do not read "88%" as "relevant".
 
 ### Knowledge Graph Tools
 
@@ -336,7 +339,11 @@ export ANTHROPIC_API_KEY=your-key
 # Summarization model
 export MEMORY_BANK_API_MODEL=opus
 
-# Fact extraction LLM call budget per session (default: 12, evenly-spread batches)
+# Fact extraction batches per session (default 12, evenly spread; at most 60 — a
+# larger value is read as 60, anything that is not a positive integer as 12).
+# This is the number of batches, not of LLM calls: a batch that fails for a
+# transient reason is retried (3 attempts by default), and the ontology
+# classification and relation calls for the facts it stores are separate.
 export MEMORY_BANK_MAX_EXTRACT_CALLS=12
 
 # Decompression cap for .zst archives (bytes; lowering only, default 256 MiB)
@@ -381,8 +388,11 @@ export MEMORY_BANK_MAINTENANCE_INTERVAL_MIN=360
 # left, and stops itself (one log line) when it runs out.
 # export MEMORY_BANK_INJECT_HOOK_BUDGET_MS=30000
 
-# Injection switches — unset (the default) nothing changes. Set them where both the
-# MCP server and the hooks see them (settings.json "env").
+# Injection switches — unset (the default) nothing changes. The hook reads them
+# itself, before it asks the daemon, so the hook's environment is enough:
+# settings.json "env", the shell the session starts from, or one run only
+# (`MEMORY_BANK_INJECT_HEADLESS=0 claude -p …`). They do not have to be visible
+# to the MCP server (the daemon that answers may belong to another session).
 #   no injection for `claude -p` / Agent SDK sessions (CLAUDE_CODE_ENTRYPOINT sdk-*):
 # export MEMORY_BANK_INJECT_HEADLESS=0
 #   no injection for Codex prompts (Codex sends no interactive/headless marker — all or none):
