@@ -36,24 +36,29 @@ export function clipLine(text: string, maxChars: number): string {
 const BELIEF_FIRST: Record<string, number> = { CONTRADICTS: 0, SUPERSEDES: 1 };
 
 /**
- * The neighbours to print for one fact: CONTRADICTS and SUPERSEDES first, then the caller's order
- * (getRelatedFacts returns most relevant first), cut to `maxItems`, each clipped to `maxChars`.
+ * The neighbours kept for one fact: CONTRADICTS and SUPERSEDES first, then the caller's order
+ * (getRelatedFacts returns most relevant first), cut to `maxItems`.
  */
-export function summarizeRelated(
-  related: ReadonlyArray<{ fact: { fact: string }; relation: { relation_type: string } }>,
-  opts: { maxItems?: number; maxChars?: number } = {},
-): RelatedSummary {
-  const maxItems = opts.maxItems ?? RELATED_MAX_ITEMS;
-  const maxChars = opts.maxChars ?? RELATED_MAX_CHARS;
+export function pickRelated<T extends { relation: { relation_type: string } }>(
+  related: ReadonlyArray<T>,
+  maxItems: number = RELATED_MAX_ITEMS,
+): { picked: T[]; omitted: number } {
   const ordered = related
     .map((r, index) => ({ r, index, rank: BELIEF_FIRST[r.relation.relation_type] ?? 2 }))
     .sort((a, b) => a.rank - b.rank || a.index - b.index)
     .map(({ r }) => r);
+  return { picked: ordered.slice(0, maxItems), omitted: Math.max(0, ordered.length - maxItems) };
+}
+
+/** The neighbours to print for one fact: pickRelated, each text clipped to `maxChars`. */
+export function summarizeRelated(
+  related: ReadonlyArray<{ fact: { fact: string }; relation: { relation_type: string } }>,
+  opts: { maxItems?: number; maxChars?: number } = {},
+): RelatedSummary {
+  const maxChars = opts.maxChars ?? RELATED_MAX_CHARS;
+  const { picked, omitted } = pickRelated(related, opts.maxItems ?? RELATED_MAX_ITEMS);
   return {
-    shown: ordered.slice(0, maxItems).map((r) => ({
-      relationType: r.relation.relation_type,
-      text: clipLine(r.fact.fact, maxChars),
-    })),
-    omitted: Math.max(0, ordered.length - maxItems),
+    shown: picked.map((r) => ({ relationType: r.relation.relation_type, text: clipLine(r.fact.fact, maxChars) })),
+    omitted,
   };
 }

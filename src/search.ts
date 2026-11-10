@@ -4,6 +4,7 @@ import { getDbPath } from './paths.js';
 import { initEmbeddings, generateEmbedding, EMBEDDING_VERSION } from './embeddings.js';
 import { searchSimilarFacts } from './fact-db.js';
 import { getRelatedFacts } from './ontology-db.js';
+import { clipLine, summarizeRelated } from './related-format.js';
 import { SearchResult, ConversationExchange, MultiConceptResult } from './types.js';
 import type DatabaseType from 'better-sqlite3';
 import fs from 'fs';
@@ -76,13 +77,72 @@ export interface SearchOptions {
   after?: string;  // ISO date string
   before?: string; // ISO date string
   coding_agent?: string; // Filter by coding agent (e.g., 'claude-code', 'codex', 'opencode')
+  /** Also return machine-generated turns (NOISE_EXCHANGE_SQL). Default false. */
+  include_noise?: boolean;
 }
+
+/** First characters of the prompts another memory plugin's observer session sends — not a person asking. */
+export const NOISE_OBSERVER_PREFIX = '<observed_from_primary_session>';
+
+/**
+ * SQL condition over `exchanges AS e` that is TRUE for a machine-noise row — the one definition of what the
+ * conversation search leaves out unless SearchOptions.include_noise is set:
+ *  - a sub-agent warm-up turn: a sidechain row whose user message is exactly "Warmup";
+ *  - an observer prompt of another memory plugin: the user message starts with NOISE_OBSERVER_PREFIX.
+ * On the live index these are 150,715 + 131,638 of 341,817 rows (82.6%); a search for a real question
+ * returned 16 observer prompts and 2 warm-ups in its 18 results. Rows are only hidden here — nothing is
+ * deleted, and a person's own "Warmup" in the main chain stays.
+ * substr(), not LIKE: the `_` in the prefix is a LIKE wildcard.
+ */
+export const NOISE_EXCHANGE_SQL =
+  `((COALESCE(e.is_sidechain, 0) = 1 AND e.user_message = 'Warmup')` +
+  ` OR substr(e.user_message, 1, ${NOISE_OBSERVER_PREFIX.length}) = '${NOISE_OBSERVER_PREFIX}')`;
 
 /** sqlite-vec refuses a KNN whose k is above this ("k value in knn query too large … the limit is 4096"). */
 export const VEC_KNN_K_MAX = 4096;
 
 /** Reciprocal-rank-fusion constant for merging the vector and keyword passes in `both` mode. */
 const RRF_K = 60;
+
+/** Most keyword matches one look-ahead reads to find `limit` rows that are not machine noise. */
+const TEXT_LOOKAHEAD_MAX = 4096;
+
+/** The turn a row belongs to. A growing session is re-indexed with the same turn under a new id each time. */
+const turnKey = (row: { archive_path: string; line_start: number }): string => `${row.archive_path}\u0000${row.line_start}`;
+
+/**
+ * One entry per turn, in first-seen order (the best-ranked snapshot decides the position). `rep` is the
+ * snapshot with the largest line_end — the most complete copy of the turn; `first` is the best-ranked one.
+ */
+function foldTurns<T extends { archive_path: string; line_start: number; line_end: number }>(
+  rows: T[],
+): Array<{ rep: T; first: T; members: number }> {
+  const turns = new Map<string, { rep: T; first: T; members: number }>();
+  for (const row of rows) {
+    const key = turnKey(row);
+    const turn = turns.get(key);
+    if (!turn) {
+      turns.set(key, { rep: row, first: row, members: 1 });
+    } else {
+      turn.members++;
+      if (row.line_end > turn.rep.line_end) turn.rep = row;
+    }
+  }
+  return [...turns.values()];
+}
+
+/**
+ * Whether a stored "summary" is not one: empty, an LLM/CLI failure message that was written out as the
+ * result ("Invalid API key · Please run /login", "API Error: Rate limit reached" — 1,907 of the 3,005 short
+ * summaries on the live disk), or a worker's JSON reply. Such a file is never shown as a conversation summary.
+ */
+export function isErrorSummary(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  if (/^(Invalid API key|API Error\b|Your account does not have access to Claude Code)/i.test(t)) return true;
+  if (/^```(?:json)?\s*[{[]/.test(t) || /^[{[]\s*"/.test(t)) return true;
+  return false;
+}
 
 /** How a search ran — what a caller needs to tell "nothing matched" from "the search was cut short". */
 export interface SearchMeta {
@@ -92,6 +152,13 @@ export interface SearchMeta {
    * rows passed (the index held more candidates that were never looked at).
    */
   vector?: { k: number; candidates: number; matched: number; truncated: boolean };
+  /**
+   * Keyword pass: whether it used the FTS index or a full LIKE scan of every exchange (and why), and
+   * whether its look-ahead past machine-noise matches ended before `limit` rows were found.
+   */
+  text?: { path: 'fts' | 'like-scan'; reason?: string; truncated: boolean };
+  /** Snapshot copies of a turn that were folded into the turn's one result. */
+  folded?: number;
 }
 
 export type SearchHit = SearchResult & { summary?: string };
@@ -133,14 +200,15 @@ export async function searchConversationsDetailed(
   query: string,
   options: SearchOptions = {}
 ): Promise<{ results: SearchHit[]; meta: SearchMeta }> {
-  const { limit = 10, mode = 'both', after, before, coding_agent } = options;
+  const { limit = 10, mode = 'both', after, before, coding_agent, include_noise = false } = options;
 
   // Validate date parameters
   if (after) validateISODate(after, '--after');
   if (before) validateISODate(before, '--before');
 
   const db = getSearchDb();
-  const meta: SearchMeta = {};
+  const meta: SearchMeta = { folded: 0 };
+  let folded = 0;
   let vectorRows: ExchangeRow[] = [];
   let textRows: ExchangeRow[] = [];
 
@@ -173,6 +241,10 @@ export async function searchConversationsDetailed(
     }
     const timeClause = filterParts.length > 0 ? `AND ${filterParts.join(' AND ')}` : '';
     const timeParams = filterParams;
+    // Machine-noise rows are left out unless asked for (NOISE_EXCHANGE_SQL carries no parameter).
+    const noiseClause = include_noise ? '' : `AND NOT ${NOISE_EXCHANGE_SQL}`;
+    // Every condition on the exchange row: the caller's filters plus the noise exclusion.
+    const rowClause = [timeClause, noiseClause].filter(Boolean).join(' ');
 
     /** Display rows of the given ids (the full message text is read only here). */
     const fetchRows = (ids: string[]): Map<string, ExchangeRow> => {
@@ -204,13 +276,17 @@ export async function searchConversationsDetailed(
       // gone still counts toward "did the index run out"), and k grows until
       // `limit` rows pass, the index is exhausted, or the sqlite-vec ceiling is
       // reached — in which case the result says so (meta.vector.truncated).
-      // The heavy text columns are read only for the winners.
-      const vecQuery = (vecQuant: VecQuant): { rows: ExchangeRow[]; stats: NonNullable<SearchMeta['vector']> } => {
+      // Snapshot copies of one turn count once (foldTurns), so they cannot use
+      // up the limit. The heavy text columns are read only for the winners.
+      const vecQuery = (vecQuant: VecQuant): { rows: ExchangeRow[]; folded: number; stats: NonNullable<SearchMeta['vector']> } => {
         const stmt = db.prepare(`
           SELECT
             vec.id AS id,
             vec.distance AS distance,
-            (e.id IS NOT NULL AND e.embedding_version = ? ${timeClause}) AS pass
+            e.archive_path AS archive_path,
+            e.line_start AS line_start,
+            e.line_end AS line_end,
+            (e.id IS NOT NULL AND e.embedding_version = ? ${rowClause}) AS pass
           FROM vec_exchanges AS vec
           LEFT JOIN exchanges AS e ON e.id = vec.id
           WHERE vec.embedding MATCH ${vecParamSql(vecQuant)}
@@ -223,26 +299,32 @@ export async function searchConversationsDetailed(
         // has not upgraded yet (newest sessions are upgraded first).
         const blob = embeddingToVecBlob(queryEmbedding, vecQuant);
         const want = Math.min(limit, VEC_KNN_K_MAX);
-        let k = timeClause ? Math.min(VEC_KNN_K_MAX, Math.max(want * 8, 64)) : want;
+        let k = rowClause ? Math.min(VEC_KNN_K_MAX, Math.max(want * 8, 64)) : want;
+        type Candidate = { id: string; distance: number; archive_path: string; line_start: number; line_end: number; pass: number };
         for (;;) {
-          const candidates = stmt.all(EMBEDDING_VERSION, ...timeParams, blob, k) as Array<{ id: string; distance: number; pass: number }>;
+          const candidates = stmt.all(EMBEDDING_VERSION, ...timeParams, blob, k) as Candidate[];
           const passing = candidates.filter((c) => c.pass);
+          const turns = foldTurns(passing);
           const exhausted = candidates.length < k;
-          if (passing.length >= want || exhausted || k >= VEC_KNN_K_MAX) {
-            const winners = passing.slice(0, want);
-            const full = fetchRows(winners.map((w) => w.id));
+          if (turns.length >= want || exhausted || k >= VEC_KNN_K_MAX) {
+            const winners = turns.slice(0, want);
+            const full = fetchRows(winners.map((w) => w.rep.id));
             const rows: ExchangeRow[] = [];
+            let foldedHere = 0;
             for (const w of winners) {
-              const row = full.get(w.id);
-              if (row) rows.push({ ...row, distance: normalizeVecDistance(w.distance, vecQuant) });
+              const row = full.get(w.rep.id);
+              // The turn's row is its most complete snapshot; its distance is the best snapshot's.
+              if (row) rows.push({ ...row, distance: normalizeVecDistance(w.first.distance, vecQuant) });
+              foldedHere += w.members - 1;
             }
             return {
               rows,
+              folded: foldedHere,
               stats: {
                 k,
                 candidates: candidates.length,
                 matched: passing.length,
-                truncated: !exhausted && (passing.length < want || limit > want),
+                truncated: !exhausted && (turns.length < want || limit > want),
               },
             };
           }
@@ -264,6 +346,7 @@ export async function searchConversationsDetailed(
         vec = vecQuery(vecQuant);
       }
       vectorRows = vec.rows;
+      folded += vec.folded;
       meta.vector = vec.stats;
     }
 
@@ -324,6 +407,10 @@ export async function searchConversationsDetailed(
       // the most selective one — small enough to BM25-rank meaningfully.
 
       let usedFts = false;
+      // Why the keyword pass is about to scan every exchange with LIKE instead of using the index — it used
+      // to switch without a word (seconds per query on a large index), so the reason travels with the result.
+      let likeReason: string | null = ftsExpr ? null : 'the query has no letter or digit to look up in the keyword index';
+      let textTruncated = false;
       if (ftsExpr) {
         try {
           // Readiness flag (set in db.ts / backfill-fts.mjs). On a fresh upgrade
@@ -332,7 +419,9 @@ export async function searchConversationsDetailed(
           // use an explicit '1' flag and fall back to LIKE until it is set — never
           // silently hiding historical text matches.
           const built = db.prepare(`SELECT value FROM fts_meta WHERE key='exchanges_fts_built'`).get() as { value: string } | undefined;
-          if (built?.value === '1') {
+          if (built?.value !== '1') {
+            likeReason = 'the keyword index has not been built yet (scripts/backfill-fts.mjs builds it)';
+          } else {
             // Unfiltered queries: sort + LIMIT happen INSIDE a subquery on
             // the FTS table and only the k winners are joined to `exchanges`
             // — joining before the sort materializes the FULL conversation
@@ -343,17 +432,33 @@ export async function searchConversationsDetailed(
             // inner-limit over-fetch was reproduced hiding a valid old row
             // behind 250 newer matches) — so they use the join-then-sort
             // form; filters shrink the materialized set instead.
-            const mkFtsStmt = timeClause
-              ? (orderBy: string) => db.prepare(`
+            //
+            // No caller filter, machine noise left out (the default): the cheap
+            // inner-limit form is kept, but it reads AHEAD of `limit` and marks
+            // each row noise-or-not, growing the look-ahead until `limit` rows
+            // pass, the matches run out, or TEXT_LOOKAHEAD_MAX is reached (then
+            // the result says the keyword pass was cut short). Putting the noise
+            // condition into the join-then-sort form instead would bring back
+            // the full-text materialization above for every unfiltered query.
+            const ftsStatements = new Map<string, DatabaseType.Statement>();
+            const ftsStatement = (key: string, sql: () => string): DatabaseType.Statement => {
+              let stmt = ftsStatements.get(key);
+              if (!stmt) {
+                stmt = db.prepare(sql());
+                ftsStatements.set(key, stmt);
+              }
+              return stmt;
+            };
+            const filteredSql = (orderBy: string) => `
                   SELECT ${cols}, 0 as distance
                   FROM exchanges_fts AS fts
                   JOIN exchanges AS e ON e.rowid = fts.rowid
                   WHERE exchanges_fts MATCH ?
-                    ${timeClause}
+                    ${rowClause}
                   ORDER BY ${orderBy.replace('rowid', 'fts.rowid')}
                   LIMIT ?
-                `)
-              : (orderBy: string) => db.prepare(`
+                `;
+            const innerLimitSql = (orderBy: string) => `
                   SELECT ${cols}, 0 as distance
                   FROM (
                     SELECT rowid FROM exchanges_fts
@@ -363,9 +468,17 @@ export async function searchConversationsDetailed(
                   ) AS fts
                   JOIN exchanges AS e ON e.rowid = fts.rowid
                   LIMIT ?
-                `);
-            const rankedStmt = mkFtsStmt('rank');
-            const recentStmt = mkFtsStmt('rowid DESC');
+                `;
+            const lookAheadSql = (orderBy: string) => `
+                  SELECT e.id AS id, (NOT ${NOISE_EXCHANGE_SQL}) AS pass
+                  FROM (
+                    SELECT rowid FROM exchanges_fts
+                    WHERE exchanges_fts MATCH ?
+                    ORDER BY ${orderBy}
+                    LIMIT ?
+                  ) AS fts
+                  JOIN exchanges AS e ON e.rowid = fts.rowid
+                `;
             // BM25 (ORDER BY rank) scores EVERY matching document, and under
             // detail=column with external content each bm25() call RE-READS
             // AND RE-TOKENIZES the source text (term frequencies are not in
@@ -383,35 +496,53 @@ export async function searchConversationsDetailed(
             const countStmt = db.prepare(
               `SELECT count(*) c FROM exchanges_fts WHERE exchanges_fts MATCH ?`
             );
-            const ftsStmt = {
-              all: (expr: string, ...rest: unknown[]): unknown[] => {
-                const n = (countStmt.get(expr) as { c: number }).c;
-                if (n === 0) return [];
-                const lim = rest[rest.length - 1] as number;
-                const params = rest.slice(0, -1); // timeParams
-                const stmt = n <= RANK_BUDGET ? rankedStmt : recentStmt;
-                // filtered form: (expr, ...timeParams, limit)
-                // unfiltered subquery form: (expr, innerLimit, outerLimit)
-                if (timeClause) return stmt.all(expr, ...params, lim);
-                const rows = stmt.all(expr, lim, lim);
+            // Join-before-limit: correct even when the index holds orphan rowids.
+            const healRows = (expr: string, lim: number): ExchangeRow[] => db.prepare(`
+                    SELECT ${cols}, 0 as distance
+                    FROM exchanges_fts AS fts
+                    JOIN exchanges AS e ON e.rowid = fts.rowid
+                    WHERE exchanges_fts MATCH ?
+                      ${noiseClause}
+                    ORDER BY fts.rowid DESC
+                    LIMIT ?
+                  `).all(expr, lim) as ExchangeRow[];
+            /** At most `lim` rows matching `expr`, under the caller's filters and the noise exclusion. */
+            const ftsRows = (expr: string, lim: number): ExchangeRow[] => {
+              const n = (countStmt.get(expr) as { c: number }).c;
+              if (n === 0) return [];
+              const orderBy = n <= RANK_BUDGET ? 'rank' : 'rowid DESC';
+              if (timeClause) {
+                return ftsStatement(`filtered:${orderBy}`, () => filteredSql(orderBy)).all(expr, ...timeParams, lim) as ExchangeRow[];
+              }
+              if (!noiseClause) {
+                const rows = ftsStatement(`inner:${orderBy}`, () => innerLimitSql(orderBy)).all(expr, lim, lim) as ExchangeRow[];
                 // Self-heal on index desync: every legit FTS rowid joins to an
                 // exchanges row (triggers keep them in sync), so a shortfall
                 // vs the counted matches means the inner LIMIT picked stale/
                 // orphan rowids that the join then dropped. Retry once with
                 // join-before-limit, which is correct even with orphans.
-                if (rows.length < Math.min(n, lim)) {
-                  const healStmt = db.prepare(`
-                    SELECT ${cols}, 0 as distance
-                    FROM exchanges_fts AS fts
-                    JOIN exchanges AS e ON e.rowid = fts.rowid
-                    WHERE exchanges_fts MATCH ?
-                    ORDER BY fts.rowid DESC
-                    LIMIT ?
-                  `);
-                  return healStmt.all(expr, lim);
-                }
+                if (rows.length < Math.min(n, lim)) return healRows(expr, lim);
                 return rows;
-              },
+              }
+              const lookAhead = ftsStatement(`ahead:${orderBy}`, () => lookAheadSql(orderBy));
+              let inner = Math.min(n, Math.max(lim * 4, 64));
+              for (;;) {
+                const candidates = lookAhead.all(expr, inner) as Array<{ id: string; pass: number }>;
+                // Same desync signal as above: fewer joined rows than rowids asked for.
+                if (candidates.length < Math.min(n, inner)) return healRows(expr, lim);
+                const passing = candidates.filter((c) => c.pass).slice(0, lim);
+                if (passing.length >= lim || inner >= n || inner >= TEXT_LOOKAHEAD_MAX) {
+                  if (passing.length < lim && inner < n) textTruncated = true;
+                  const full = fetchRows(passing.map((c) => c.id));
+                  const rows: ExchangeRow[] = [];
+                  for (const c of passing) {
+                    const row = full.get(c.id);
+                    if (row) rows.push(row);
+                  }
+                  return rows;
+                }
+                inner = Math.min(n, inner * 4, TEXT_LOOKAHEAD_MAX);
+              }
             };
             // Rarest-token AND ladder (see comment above orTokens): walk AND
             // of the 4→3→2→1 rarest candidate tokens and ACCUMULATE rungs
@@ -444,7 +575,7 @@ export async function searchConversationsDetailed(
               const perRung: ExchangeRow[][] = [];
               for (const expr of rungs) {
                 if (expr === ftsExpr) continue; // identical to the AND pass
-                perRung.push(ftsStmt.all(expr, ...timeParams, lim) as ExchangeRow[]);
+                perRung.push(ftsRows(expr, lim));
                 const distinct = new Set(perRung.flat().map((r) => r.id));
                 if (distinct.size >= lim * 2) break; // enough material
               }
@@ -472,7 +603,7 @@ export async function searchConversationsDetailed(
             if (ftsTokens.length <= MAX_FTS_TOKENS) {
               // Short query: AND first (precision — identical to original
               // behavior), ladder fallback only when AND matches nothing.
-              textResults = ftsStmt.all(ftsExpr, ...timeParams, limit) as ExchangeRow[];
+              textResults = ftsRows(ftsExpr, limit);
               if (textResults.length === 0 && ftsTokens.length > 1) {
                 textResults = orFallbackRows(limit);
               }
@@ -483,7 +614,7 @@ export async function searchConversationsDetailed(
               // FIRST: an exact all-token match can never be hidden by
               // partial-token hits. The ladder rescues the ~84% of long
               // queries the full AND cannot match.
-              textResults = ftsStmt.all(ftsExpr, ...timeParams, limit) as ExchangeRow[];
+              textResults = ftsRows(ftsExpr, limit);
               if (textResults.length < limit) {
                 const orResults = orFallbackRows(limit);
                 const seenText = new Set(textResults.map((r) => r.id));
@@ -496,8 +627,12 @@ export async function searchConversationsDetailed(
             }
             usedFts = true;
           }
-        } catch {
-          usedFts = false; // FTS table missing/unsupported → LIKE fallback below
+        } catch (error) {
+          // FTS table missing/unsupported → LIKE fallback below, said out loud.
+          usedFts = false;
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`memory-bank search: keyword index query failed, scanning every exchange instead: ${message}`);
+          likeReason = `the keyword index query failed: ${message}`;
         }
       }
 
@@ -509,14 +644,21 @@ export async function searchConversationsDetailed(
           SELECT ${cols}, 0 as distance
           FROM exchanges AS e
           WHERE (e.user_message LIKE ? ESCAPE '\\' OR e.assistant_message LIKE ? ESCAPE '\\')
-            ${timeClause}
+            ${rowClause}
           ORDER BY e.timestamp DESC
           LIMIT ?
         `);
         textResults = textStmt.all(likePattern, likePattern, ...timeParams, limit) as ExchangeRow[];
       }
 
-      textRows = textResults;
+      meta.text = usedFts
+        ? { path: 'fts', truncated: textTruncated }
+        : { path: 'like-scan', reason: likeReason ?? 'the keyword index was not usable', truncated: false };
+
+      // One row per turn here too (the longest snapshot among the hits).
+      const textTurns = foldTurns(textResults);
+      textRows = textTurns.map((turn) => turn.rep);
+      folded += textResults.length - textTurns.length;
     }
   }
   // NOTE: no db.close() — the cached connection is reused across calls (see
@@ -527,21 +669,27 @@ export async function searchConversationsDetailed(
   // `limit` 10 returned up to 20 rows, and a row both passes agreed on was not
   // ranked any higher for it. A keyword hit has no distance — it carries no
   // similarity (it was printed as "100% match" when it borrowed distance 0).
+  // The key is the turn, not the row id: the two passes can reach one turn through different snapshots.
   type Merged = { row: ExchangeRow; matchedBy: 'vector' | 'text' | 'both'; distance?: number; score: number };
   const merged = new Map<string, Merged>();
   vectorRows.forEach((row, rank) => {
-    merged.set(row.id, { row, matchedBy: 'vector', distance: row.distance, score: 1 / (RRF_K + rank + 1) });
+    merged.set(turnKey(row), { row, matchedBy: 'vector', distance: row.distance, score: 1 / (RRF_K + rank + 1) });
   });
   textRows.forEach((row, rank) => {
     const score = 1 / (RRF_K + rank + 1);
-    const hit = merged.get(row.id);
+    const hit = merged.get(turnKey(row));
     if (hit) {
       hit.matchedBy = 'both';
       hit.score += score;
+      if (row.id !== hit.row.id) {
+        folded++;
+        if (row.line_end > hit.row.line_end) hit.row = row;
+      }
     } else {
-      merged.set(row.id, { row, matchedBy: 'text', score });
+      merged.set(turnKey(row), { row, matchedBy: 'text', score });
     }
   });
+  meta.folded = folded;
   // Stable sort: at equal score the vector row (inserted first) stays ahead.
   const ranked = [...merged.values()].sort((a, b) => b.score - a.score).slice(0, limit);
 
@@ -562,6 +710,8 @@ export async function searchConversationsDetailed(
     const summaryPath = row.archive_path.replace('.jsonl', '-summary.txt');
     let summary: string | undefined;
     try { summary = readArchiveFile(summaryPath).trim(); } catch { /* absent */ }
+    // A failed summary call that was written out as the summary is not shown as one.
+    if (summary !== undefined && isErrorSummary(summary)) summary = undefined;
 
     // Create snippet (first 200 chars, collapse newlines)
     const snippetText = exchange.userMessage.substring(0, 200).replace(/\s+/g, ' ').trim();
@@ -591,7 +741,84 @@ export function searchNotes(meta: SearchMeta | undefined): string[] {
       `(sqlite-vec ceiling) and ${meta.vector.matched} passed the filters — narrow the query or relax the date/agent filter.`
     );
   }
+  if (meta?.text?.truncated) {
+    notes.push(
+      `Keyword results are incomplete: the first ${TEXT_LOOKAHEAD_MAX} keyword matches were mostly machine-generated turns ` +
+      `and were skipped; older matches were not examined — add a date filter or more specific words.`
+    );
+  }
+  if (meta?.text?.path === 'like-scan') {
+    notes.push(`Keyword pass ran as a full scan (${meta.text.reason}) — slow on a large index.`);
+  }
   return notes;
+}
+
+/** Characters of each message a json search result carries — the full exchange is one `read` away. */
+export const SEARCH_JSON_MESSAGE_CHARS = 500;
+
+const JSON_READ_HINT =
+  `Messages are clipped to ${SEARCH_JSON_MESSAGE_CHARS} characters. Read a full exchange with the read tool: ` +
+  'path = exchange.archivePath, startLine = exchange.lineStart, endLine = exchange.lineEnd.';
+
+function clipMessage(text: string): string {
+  if (text.length <= SEARCH_JSON_MESSAGE_CHARS) return text;
+  let cut = text.slice(0, SEARCH_JSON_MESSAGE_CHARS);
+  if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+  return cut + '…';
+}
+
+/** The fields of an exchange a json result carries: where it is, and a clipped look at both messages. */
+function exchangeForJson(exchange: ConversationExchange): { exchange: Record<string, unknown>; clipped: boolean } {
+  const userMessage = clipMessage(exchange.userMessage);
+  const assistantMessage = clipMessage(exchange.assistantMessage);
+  return {
+    exchange: {
+      id: exchange.id,
+      project: exchange.project,
+      timestamp: exchange.timestamp,
+      codingAgent: exchange.codingAgent,
+      archivePath: exchange.archivePath,
+      lineStart: exchange.lineStart,
+      lineEnd: exchange.lineEnd,
+      userMessage,
+      assistantMessage,
+    },
+    clipped: userMessage !== exchange.userMessage || assistantMessage !== exchange.assistantMessage,
+  };
+}
+
+/**
+ * The `search` tool's json answer. It used to serialize every exchange in full (limit 10 → up to 165K
+ * characters, limit 50 → 272K); a result now carries the location, the match and a clipped look.
+ */
+export function searchResultsToJson(results: SearchHit[], meta: SearchMeta | undefined, mode: string): string {
+  return JSON.stringify({
+    results: results.map((r) => ({
+      ...exchangeForJson(r.exchange),
+      similarity: r.similarity,
+      matchedBy: r.matchedBy,
+      snippet: r.snippet,
+    })),
+    count: results.length,
+    mode,
+    notes: searchNotes(meta),
+    hint: JSON_READ_HINT,
+  });
+}
+
+/** The json answer of a multi-concept search, clipped the same way. */
+export function multiConceptResultsToJson(results: MultiConceptResult[], concepts: string[]): string {
+  return JSON.stringify({
+    results: results.map((r) => ({
+      ...exchangeForJson(r.exchange),
+      snippet: r.snippet,
+      conceptSimilarities: r.conceptSimilarities,
+      averageSimilarity: r.averageSimilarity,
+    })),
+    count: results.length,
+    concepts,
+    hint: JSON_READ_HINT,
+  });
 }
 
 // Helper function to count lines in a file efficiently
@@ -788,8 +1015,13 @@ export interface KnowledgeContext {
       fact: string;
       relationType: string;
     }>;
+    /** Neighbours not listed in relatedFacts (the per-fact cap). */
+    relatedOmitted?: number;
   }>;
 }
+
+/** Characters of a fact in the Related Knowledge section — the full text is one search_facts away. */
+export const KNOWLEDGE_FACT_CHARS = 300;
 
 /**
  * Enrich search results with knowledge graph context.
@@ -831,20 +1063,21 @@ export async function getKnowledgeContext(
     const domainName = catInfo ? (catInfo.domainName ?? 'Unclassified') : 'Unclassified';
     const catName = catInfo ? catInfo.categoryName : 'Unclassified';
 
-    // Expand via 1-hop graph traversal
-    const related = getRelatedFacts(db, fact.id, 1);
-    const relatedFacts = related.map(({ fact: relFact, relation }) => ({
-      fact: relFact.fact,
-      relationType: relation.relation_type,
+    // Expand via 1-hop graph traversal — a few neighbours, short (a hub fact has had 106 of them, 76K chars).
+    const related = summarizeRelated(getRelatedFacts(db, fact.id, 1));
+    const relatedFacts = related.shown.map((line) => ({
+      fact: line.text,
+      relationType: line.relationType,
     }));
 
     enrichedFacts.push({
-      fact: fact.fact,
+      fact: clipLine(fact.fact, KNOWLEDGE_FACT_CHARS),
       category: fact.category,
       domain: domainName,
       categoryName: catName,
       similarity,
       relatedFacts,
+      relatedOmitted: related.omitted,
     });
   }
 
@@ -863,6 +1096,9 @@ export function formatKnowledgeContext(context: KnowledgeContext): string {
     output += `- **[${fact.domain}/${fact.categoryName}]** ${fact.fact} _(${fact.category}, ${Math.round(fact.similarity * 100)}% relevant)_\n`;
     for (const rel of fact.relatedFacts) {
       output += `  - ${rel.relationType}: ${rel.fact}\n`;
+    }
+    if (fact.relatedOmitted) {
+      output += `  - _…and ${fact.relatedOmitted} more related facts_\n`;
     }
   }
 
