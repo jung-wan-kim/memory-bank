@@ -155,7 +155,8 @@ const MAX_UNIX_SOCKET_PATH_BYTES = 103;
  * socket BY NAME when its server closes, including at process exit, so the old
  * owner would delete the new owner's file on its way out (measured). One
  * socket per version keeps client and daemon on the same code and never
- * touches another version's file.
+ * touches another version's live socket (a dead file a killed server left
+ * behind is removed — inject-daemon.ts removeDeadSockets).
  *
  * The legacy name is kept for an unusable version string, and for a path too
  * long for a unix socket — there a versioned name would fail to bind and leave

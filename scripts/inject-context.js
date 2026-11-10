@@ -25,7 +25,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { injectionQuery } from '../dist/prompt-gate.js';
-import { appendInjectLog } from '../dist/inject-log.js';
+import { appendInjectLog, pluginVersion, sessionKey } from '../dist/inject-log.js';
 import { injectSocketPathIn, ownPackageVersion } from '../dist/version-guard.js';
 import { selfHealDeps } from '../dist/deps-heal.js';
 import { loadLedger, appendLedger } from '../dist/inject-ledger.js';
@@ -48,9 +48,30 @@ const SOCKET_WARMING_TIMEOUT_MS = 20000;
 // discarding its output. MEMORY_BANK_INJECT_HOOK_BUDGET_MS follows a changed
 // hook timeout. Margin 3s: logging is one appendFileSync; the rest absorbs node
 // start-up before process.uptime() begins and a busy machine.
+// hooks/hooks.json states the same 30s as the hook's `timeout` (test/inject-fallback-budget.test.ts
+// keeps the two, and the native client's constant, equal).
 const DEFAULT_HOOK_BUDGET_MS = 30_000;
 const LOG_MARGIN_MS = 3_000;
 const MIN_RERUN_MS = 3_000; // the cold path measured ~2.3s
+
+/**
+ * The hook's time budget and what is left of it for work this process still has
+ * to start: budget − log margin − this process's time so far (the daemon wait
+ * included). `leftMs` is null when that is under MIN_RERUN_MS — not enough to
+ * finish a cold computation. When the native client handed the prompt over, the
+ * budget in the environment is already reduced by the time it spent.
+ */
+function hookBudget() {
+  const envBudget = Number(process.env.MEMORY_BANK_INJECT_HOOK_BUDGET_MS);
+  const budgetMs = Number.isFinite(envBudget) && envBudget > 0 ? envBudget : DEFAULT_HOOK_BUDGET_MS;
+  const elapsedMs = Math.round(process.uptime() * 1000);
+  return { budgetMs, elapsedMs, leftMs: rerunBudgetMs(elapsedMs, { budgetMs, marginMs: LOG_MARGIN_MS, minMs: MIN_RERUN_MS }) };
+}
+
+/** One stderr line with the time and the plugin version — the wrapper appends stderr to an undated error log. */
+function logError(message) {
+  process.stderr.write(`[${new Date().toISOString()} v${pluginVersion() ?? '?'}] inject-context: error: ${message}\n`);
+}
 
 function injectSocketPath() {
   // Mirrors paths.ts getSuperpowersDir() without importing the heavy dist chain:
@@ -249,6 +270,21 @@ async function main() {
     await deliver(answer.context, sessionId, answer.ledgerKeys);
     return;
   }
+  // Lines this client writes about the fallback itself (computeInjectResult writes the computation's own line).
+  const fallbackLog = (entry) => appendInjectLog({
+    project: cwd, prompt_len: prompt.length, via: 'fallback', fallback_reason: String(answer.failed),
+    has_session: Boolean(sessionId), session_key: sessionKey(sessionId), plugin_version: pluginVersion(), ...meta, ...entry,
+  });
+
+  // 'daemon-timeout' = a daemon is there but did not answer in time: the machine is busy, or its MCP server is.
+  // The cold computation below then starts the same work from zero in a second process (measured 2026-11-10:
+  // 5 such prompts held 9–26s, where the daemon alone answered after 5–25s). It still runs by default — when the
+  // MCP server is stuck, it is the only path that injects. MEMORY_BANK_INJECT_COLD_ON_TIMEOUT=0 skips it:
+  // the prompt goes on after the daemon wait, without injected context, and the log says why.
+  if (answer.failed === 'daemon-timeout' && process.env.MEMORY_BANK_INJECT_COLD_ON_TIMEOUT === '0') {
+    fallbackLog({ status: 'skipped', reason: 'daemon-timeout' });
+    return;
+  }
 
   // The cold path loads better-sqlite3. If this node cannot (ABI mismatch —
   // see dist/node-abi.js), compute under a node that can, feeding it the stdin
@@ -258,10 +294,7 @@ async function main() {
     const node = compatibleNode('inject-context');
     if (node && node !== process.execPath) {
       const started = Date.now();
-      const envBudget = Number(process.env.MEMORY_BANK_INJECT_HOOK_BUDGET_MS);
-      const budgetMs = Number.isFinite(envBudget) && envBudget > 0 ? envBudget : DEFAULT_HOOK_BUDGET_MS;
-      const elapsedMs = Math.round(process.uptime() * 1000);
-      const timeoutMs = rerunBudgetMs(elapsedMs, { budgetMs, marginMs: LOG_MARGIN_MS, minMs: MIN_RERUN_MS });
+      const { budgetMs, elapsedMs, leftMs: timeoutMs } = hookBudget();
       const failure = timeoutMs === null
         ? `no time left in the ${budgetMs}ms hook budget (${elapsedMs}ms used, needs ${MIN_RERUN_MS}ms + ${LOG_MARGIN_MS}ms margin)`
         : rerunWithInput(node, fileURLToPath(import.meta.url), raw, { MEMORY_BANK_INJECT_FALLBACK_REASON: String(answer.failed) }, timeoutMs);
@@ -275,19 +308,43 @@ async function main() {
     }
   }
 
-  // COLD FALLBACK — compute locally (heavy imports load only here).
+  // COLD FALLBACK — compute locally (heavy imports load only here), inside what is left of the hook's budget.
+  // The host cancels the hook at its timeout and discards the output, and a cancelled process writes no log
+  // line — so a computation that cannot finish in time is not started, and one that runs out of time stops
+  // itself and says so. (Before, the budget was checked for the native-ABI re-run only.)
+  const { budgetMs, elapsedMs, leftMs } = hookBudget();
+  if (leftMs === null) {
+    fallbackLog({ status: 'skipped', reason: 'hook-budget', duration_ms: elapsedMs });
+    return;
+  }
+  // Fires only while the computation is still pending (model load is asynchronous; a synchronous stretch can
+  // delay it). unref: it never keeps the process alive once the work is done.
+  const deadline = setTimeout(() => {
+    fallbackLog({
+      status: 'error', duration_ms: leftMs,
+      error: `cold fallback not finished after ${leftMs}ms — stopped inside the ${budgetMs}ms hook budget, nothing injected`,
+    });
+    process.exit(0);
+  }, leftMs);
+  deadline.unref();
   try {
     const { computeInjectResult } = await import(path.join(__dirname, '../dist/inject-core.js'));
     const { context, ledgerKeys } = await computeInjectResult(prompt, cwd, 'fallback', sessionId || undefined,
       { ...meta, fallback_reason: answer.failed });
     await deliver(context, sessionId, ledgerKeys);
   } catch (error) {
+    // computeInjectResult logs its own failures; what lands here died before or outside it — the import of the
+    // heavy modules above all (a broken sharp/onnxruntime install: 497 such blocks in the error log, none in the
+    // injection log). Record it where the error rate is read.
     const msg = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`inject-context: error: ${msg}\n`);
+    logError(msg);
+    fallbackLog({ status: 'error', error: msg.slice(0, 300), duration_ms: Math.round(process.uptime() * 1000) - elapsedMs });
     // deps 누락(plugin update 미설치 / cc-sync 로 받은 캐시)이면 1회 자가치유
     if (/Cannot find (package|module)|ERR_MODULE_NOT_FOUND/.test(msg)) {
       selfHealDeps(path.join(__dirname, '..'), 'inject-context');
     }
+  } finally {
+    clearTimeout(deadline);
   }
 }
 

@@ -85,4 +85,31 @@ describe('hooks/inject-context.sh picks the native client only when it is safe t
     expect(r.stdout).toBe('');
     expect(r.errLog).toContain('boom');
   });
+
+  it('an oversized error log is moved to .old (replacing the previous one), not emptied — what had been failing stays readable', () => {
+    const logDir = path.join(tmp, 'conversation-index', 'logs');
+    fs.mkdirSync(logDir, { recursive: true });
+    const errLog = path.join(logDir, 'inject-context.err.log');
+    fs.writeFileSync(errLog, 'FIRST-FAILURE-MARKER\n' + 'x'.repeat(1024 * 1024 + 10) + '\n');
+    fs.writeFileSync(`${errLog}.old`, 'previous rotation\n');
+    const bin = path.join(tmp, 'crash');
+    fs.writeFileSync(bin, '#!/bin/sh\necho boom >&2\nexit 3\n'); fs.chmodSync(bin, 0o755); fs.writeFileSync(`${bin}.srchash`, SRC_HASH + '\n');
+    const r = runWrapper(bin);
+    expect(r.status).toBe(0);
+    const old = fs.readFileSync(`${errLog}.old`, 'utf8');
+    expect(old.startsWith('FIRST-FAILURE-MARKER\n'), 'the oversized log is kept as .old').toBe(true);
+    expect(old).not.toContain('previous rotation');
+    expect(r.errLog, 'the new log starts with this run only').toBe('boom\n');
+  });
+
+  it('an error log under the limit is appended to, and no .old appears', () => {
+    const logDir = path.join(tmp, 'conversation-index', 'logs');
+    fs.mkdirSync(logDir, { recursive: true });
+    const errLog = path.join(logDir, 'inject-context.err.log');
+    fs.writeFileSync(errLog, 'earlier line\n');
+    const bin = path.join(tmp, 'crash');
+    fs.writeFileSync(bin, '#!/bin/sh\necho boom >&2\nexit 3\n'); fs.chmodSync(bin, 0o755); fs.writeFileSync(`${bin}.srchash`, SRC_HASH + '\n');
+    expect(runWrapper(bin).errLog).toBe('earlier line\nboom\n');
+    expect(fs.existsSync(`${errLog}.old`)).toBe(false);
+  });
 });

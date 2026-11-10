@@ -36,6 +36,33 @@ export interface InjectRequestMeta {
 }
 
 /**
+ * Hosts the user switched injection off for, by who made the request:
+ *  - MEMORY_BANK_INJECT_HEADLESS=0 — Claude Code's non-interactive entry points
+ *    (`claude -p`, the Agent SDK: CLAUDE_CODE_ENTRYPOINT `sdk-*`), reason 'headless'.
+ *  - MEMORY_BANK_INJECT_CODEX=0 — the Codex hook client, reason 'codex-off'. Codex
+ *    sends no interactive/headless marker, so this is all of Codex or none.
+ * Unset (the default) both are injected as before. Why the switches exist: since
+ * 2026-10-08 interactive Claude Code received 5% of the injected characters
+ * (Codex 72.9%, headless 21.4% — measured 2026-11-10); those sessions are new
+ * every time, so the per-session ledger never stops the same block from going
+ * out again (one 5,223-char prompt template received the same 882-char block
+ * 1,133 times). Whether that injection is worth its tokens is the user's call.
+ *
+ * The variables are read where the block is computed: the MCP server's
+ * environment for the warm daemon, the hook's own for the cold fallback — set
+ * them where both see them (settings.json `env`), like MEMORY_BANK_REPEAT_DETECT.
+ * Returns the skip reason, or null to go on.
+ */
+export function hostSkipReason(
+  meta: Pick<InjectRequestMeta, 'client' | 'entrypoint'>,
+  env: Record<string, string | undefined> = process.env,
+): 'headless' | 'codex-off' | null {
+  if (env.MEMORY_BANK_INJECT_HEADLESS === '0' && (meta.entrypoint ?? '').startsWith('sdk-')) return 'headless';
+  if (env.MEMORY_BANK_INJECT_CODEX === '0' && meta.client === 'codex') return 'codex-off';
+  return null;
+}
+
+/**
  * The block plus the ledger keys (fact id + text key per injected fact) that
  * mark it as shown in this session. Committing those keys is the job of
  * whoever DELIVERS the block: the daemon only computes it, and a client that
@@ -94,6 +121,12 @@ export async function computeInjectResult(
   const gate = injectionQuery(userPrompt);
   if (gate.reason !== null) {
     appendInjectLog({ ...base, status: 'skipped', reason: gate.reason });
+    return { context: '', ledgerKeys: [] };
+  }
+  // A host the user turned injection off for (off by default — hostSkipReason): no search, logged like any skip.
+  const hostSkip = hostSkipReason(meta);
+  if (hostSkip !== null) {
+    appendInjectLog({ ...base, status: 'skipped', reason: hostSkip });
     return { context: '', ledgerKeys: [] };
   }
   // Usually the prompt itself; the arguments of an expanded slash command or the

@@ -41,6 +41,8 @@ The build is two-step: `tsc` compiles `src/` → `dist/`, then `esbuild` bundles
 | `inject-select.ts` | Which facts a prompt's block carries (KNN → baseline gate → 1-hop) — shared by the live hook and the replay bench; `PRODUCTION_SELECT_OPTIONS` is the bench's decision |
 | `project-family.ts` | Repository family of a cwd (git top-level + linked worktree's main repo, fs only) and the scope predicate both searches use |
 | `inject-log.ts` | `inject-context.jsonl` lines: status, timings, margins, gated/injected ids, session_key, plugin_version, SessionStart lines |
+| `inject-ledger.ts` | Per-session "already injected" keys (id + text key); cleared for that session after a compaction (`scripts/ledger-reset-hook.js`, SessionStart `compact`) |
+| `inject-daemon.ts` | Warm unix-socket sidecar in the MCP server: one owner per plugin version, the others re-check every 45s and take over when it leaves; dead socket files are removed |
 | `embeddings.ts` | Local embedding generation using `@xenova/transformers` |
 | `llm.ts` | Anthropic API wrapper for Haiku calls (fact extraction/consolidation) |
 | `parser.ts` | JSONL conversation file parser |
@@ -73,7 +75,7 @@ its decisions block pins `PRODUCTION_SELECT_OPTIONS` (test/inject-select.test.ts
 
 ```
 .claude-plugin/plugin.json  # Plugin manifest (MCP server config, agents)
-hooks/hooks.json            # SessionStart hook: background sync
+hooks/hooks.json            # SessionStart (startup|resume: sync, key facts, drift check; compact: ledger reset), SessionEnd, UserPromptSubmit
 agents/                     # Agent definitions for Claude Code
 commands/                   # Slash command definitions
 skills/                     # Skill definitions
@@ -115,7 +117,12 @@ Consolidation relations: `DUPLICATE` (merge), `CONTRADICTION` (replace), `EVOLUT
 | `TEST_ARCHIVE_DIR` | Override archive directory for tests |
 | `MEMORY_BANK_MAINTENANCE_INTERVAL_MIN` | Session-start maintenance interval in minutes (default 360, 0 = every start; a partial run retries after 60) |
 | `MEMORY_BANK_NODE` | Node binary for hooks when the default node's ABI does not match better-sqlite3 |
-| `MEMORY_BANK_INJECT_HOOK_BUDGET_MS` | Injection hook time budget that bounds its native-ABI re-run (default 30000 = Claude Code's UserPromptSubmit default) |
+| `MEMORY_BANK_INJECT_HOOK_BUDGET_MS` | Injection hook time budget that bounds its cold fallback and native-ABI re-run (default 30000 = the hook's `timeout` in hooks.json) |
+| `MEMORY_BANK_INJECT_HEADLESS` / `MEMORY_BANK_INJECT_CODEX` | `0` = no injection for `claude -p`/Agent SDK sessions (entry point `sdk-*`) / for Codex prompts; unset = inject as before. Read where the block is computed — set them where the MCP server and the hooks both see them |
+| `MEMORY_BANK_INJECT_COLD_ON_TIMEOUT` | `0` = when the warm daemon did not answer in time, skip the cold recomputation (default: run it) |
+| `MEMORY_BANK_KEY_FACTS_GLOBAL_MAX` | Global facts in the session-start key-facts block, after the project's (default 3; a non-negative integer) |
+| `MEMORY_BANK_DRIFT_REMOTE` | Session-start version check: `off` = never ask the upstream repository for tags; another value = the repository to ask instead of package.json's |
+| `MEMORY_BANK_INJECT_RECLAIM_MS` / `MEMORY_BANK_DRIFT_SWEEP` | Test-only: how often an MCP server looks at the inject-daemon socket again (default 45000) / `0` = the drift check skips its process sweep |
 | `MEMORY_BANK_NATIVE_CLIENT` | Path of the native inject client the hook wrapper runs (default `<indexDir>/bin/memory-bank-inject-client`; used only when its `.srchash` matches `SRC_HASH`) |
 | `MEMORY_BANK_SQLITE_MMAP_BYTES` | `PRAGMA mmap_size` of the search connection (writable, used only for reads) (default 268435456; `0` turns mmap off; a non-integer falls back to the default with one stderr line) |
 | `MEMORY_BANK_CARGO` | `build-native-client.sh`: explicit cargo path, or `none` to behave as if cargo were absent (tests) |

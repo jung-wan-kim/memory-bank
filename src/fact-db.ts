@@ -494,21 +494,51 @@ export function searchSimilarFactsSameScope(
   return results;
 }
 
+/** Global facts in the session-start block: at most this many of `limit`; the other slots are the project's. */
+export const TOP_FACTS_GLOBAL_MAX = 3;
+
 /**
- * Get top facts using a relevance score that combines:
- * - Confirmation count (consolidated_count) — how established is this fact
- * - Recency (updated_at) — how recent is this fact
- * - Scope priority — project-specific facts rank higher than global for that project
- *
- * Score = (log2(consolidated_count + 1) * 3) + recency_bonus + scope_bonus
- *   recency_bonus: 5 if updated in last 7 days, 3 if last 30 days, 1 if last 90 days, 0 otherwise
- *   scope_bonus: 2 for project-scoped facts, 0 for global
- *
- * Project facts are guaranteed up to half of the result slots: heavily-confirmed
- * global facts otherwise outscore any newly extracted project fact (count=1)
- * forever, so project context would never surface in injection.
+ * consolidated_count stops adding to the score here. It counts DUPLICATE/EVOLUTION
+ * merges, not independent confirmations, so it grows fastest for text that every
+ * session re-states (memory-file facts: 20 merges in two days from one source
+ * conversation, measured 2026-11-10) — uncapped, its log outweighed everything else.
  */
-export function getTopFacts(db: Database.Database, rawProject: string, limit: number = 10): Fact[] {
+const TOP_FACTS_COUNT_CAP = 4;
+
+/** MEMORY_BANK_KEY_FACTS_GLOBAL_MAX: a non-negative integer; anything else is the default. */
+export function topFactsGlobalMax(raw: string | undefined): number {
+  const t = (raw ?? '').trim();
+  return /^\d+$/.test(t) ? Number(t) : TOP_FACTS_GLOBAL_MAX;
+}
+
+/**
+ * The facts of the session-start "Project Key Facts" block: the project's first,
+ * then at most `globalMax` global ones.
+ *
+ * - Project = the repository family of `rawProject` (scopeMatcher, the predicate
+ *   the per-prompt injection uses): a session in a sub-folder or a linked worktree
+ *   gets the repository's facts, the repository gets its worktrees'. A path
+ *   outside any repository sees its exact scope only, as before.
+ * - Slots: global facts take min(globalMax, limit) slots at most, project facts
+ *   the rest. A slot the global side cannot fill goes to the project; a slot the
+ *   project cannot fill stays empty — the cap on global facts is a cap. (Before,
+ *   the two sides competed on one score and the final order was by score: every
+ *   project opened with the same heavily-merged global facts.)
+ * - Score, within each side: count term 3 × (1 + log2(min(consolidated_count,
+ *   TOP_FACTS_COUNT_CAP) + 1)), recency 5 / 3 / 1 / 0 for updated within 7 / 30 /
+ *   90 days / older, and +2 for a fact scoped to exactly this cwd (ahead of the
+ *   rest of its family).
+ * - Ties: most recently updated first, then id — a total order, so the same rows
+ *   give the same block. 96.6% of project facts have count 1 (measured), so most
+ *   of the project side is decided here; without it the cut among equals was
+ *   whatever order SQLite happened to return.
+ */
+export function getTopFacts(
+  db: Database.Database,
+  rawProject: string,
+  limit: number = 10,
+  opts: { globalMax?: number } = {},
+): Fact[] {
   const project = canonicalizeProject(db, rawProject);
   const now = new Date();
   const d7 = new Date(now.getTime() - 7 * 86400000).toISOString();
@@ -517,38 +547,44 @@ export function getTopFacts(db: Database.Database, rawProject: string, limit: nu
 
   const scoreExpr = `
       (
-        CASE WHEN consolidated_count > 0 THEN (3.0 * (1.0 + LOG(consolidated_count + 1) / LOG(2))) ELSE 3.0 END
+        CASE WHEN consolidated_count > 0 THEN (3.0 * (1.0 + LOG(MIN(consolidated_count, ${TOP_FACTS_COUNT_CAP}) + 1) / LOG(2))) ELSE 3.0 END
         + CASE WHEN updated_at >= ? THEN 5 WHEN updated_at >= ? THEN 3 WHEN updated_at >= ? THEN 1 ELSE 0 END
         + CASE WHEN scope_type = 'project' AND scope_project = ? THEN 2 ELSE 0 END
       ) as relevance_score`;
+  const order = 'ORDER BY relevance_score DESC, updated_at DESC, id ASC';
 
-  type ScoredRow = Record<string, unknown> & { relevance_score: number };
-
-  const projectRows = db.prepare(`
+  // `+is_active` keeps the planner off the two-valued is_active index (it walks every
+  // active fact) and on idx_facts_scope, which holds only the rows of the scopes asked for.
+  const wanted = opts.globalMax ?? TOP_FACTS_GLOBAL_MAX;
+  const globalSlots = Math.max(0, Math.min(Number.isFinite(wanted) ? Math.floor(wanted) : TOP_FACTS_GLOBAL_MAX, limit));
+  const globalRows = globalSlots === 0 ? [] : db.prepare(`
     SELECT *, ${scoreExpr}
     FROM facts
-    WHERE is_active = 1 AND scope_type = 'project' AND scope_project = ?
-    ORDER BY relevance_score DESC
+    WHERE +is_active = 1 AND scope_type = 'global'
+    ${order}
     LIMIT ?
-  `).all(d7, d30, d90, project, project, limit) as ScoredRow[];
+  `).all(d7, d30, d90, project, globalSlots) as Record<string, unknown>[];
 
-  const globalRows = db.prepare(`
+  // The family predicate reads the filesystem, so it runs over the distinct project
+  // scopes (an index-only read, a few hundred values), not over fact rows.
+  // No project (empty cwd) = no project facts: scopeMatcher reads a missing project as "every
+  // scope is visible" (its meaning for searches), which here would put every project's facts
+  // into one session's block.
+  const inScope = project ? scopeMatcher(project, true) : () => false;
+  const scopes = (db.prepare("SELECT DISTINCT scope_project AS s FROM facts WHERE scope_type = 'project'")
+    .all() as Array<{ s: string | null }>)
+    .map((r) => r.s)
+    .filter((s): s is string => s !== null && inScope(s));
+  const projectSlots = limit - globalRows.length;
+  const projectRows = scopes.length === 0 || projectSlots <= 0 ? [] : db.prepare(`
     SELECT *, ${scoreExpr}
     FROM facts
-    WHERE is_active = 1 AND scope_type = 'global'
-    ORDER BY relevance_score DESC
+    WHERE +is_active = 1 AND scope_type = 'project' AND scope_project IN (${scopes.map(() => '?').join(', ')})
+    ${order}
     LIMIT ?
-  `).all(d7, d30, d90, project, limit) as ScoredRow[];
+  `).all(d7, d30, d90, project, ...scopes, projectSlots) as Record<string, unknown>[];
 
-  const reserved = Math.ceil(limit / 2);
-  const guaranteed = projectRows.slice(0, reserved);
-  const rest = [...projectRows.slice(reserved), ...globalRows]
-    .sort((a, b) => b.relevance_score - a.relevance_score)
-    .slice(0, Math.max(0, limit - guaranteed.length));
-
-  return [...guaranteed, ...rest]
-    .sort((a, b) => b.relevance_score - a.relevance_score)
-    .map(rowToFact);
+  return [...projectRows, ...globalRows].map(rowToFact);
 }
 
 /**
