@@ -9,7 +9,8 @@ import { initEmbeddings, generateEmbedding } from '../src/embeddings.js';
 import { insertFact } from '../src/fact-db.js';
 import { createDomain, createCategory, classifyFact, upsertCategoryEmbedding } from '../src/ontology-db.js';
 
-// scripts/merge-singleton-categories.mjs imports ../dist — `npm test` builds first (pretest).
+// scripts/merge-singleton-categories.mjs imports ../dist — run `npm run build` first (`npm test` does
+// not build: its pretest step only checks that dist/ is a build of the current sources).
 // The script embeds each candidate with the real model, so the fixture's
 // category vectors are real embeddings too (the model is local, no LLM).
 const ROOT = path.resolve(__dirname, '..');

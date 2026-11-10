@@ -15,7 +15,8 @@ import { checkRewrittenFacts, applyRewrittenFacts, restoreRewrittenFacts } from 
  * The module is tested with a stand-in embedder (a vector that depends only on
  * the text); the script is run as a child process for what it alone decides —
  * its arguments, and that a dry run cannot write. (The script imports dist/:
- * `npm run build` must have run — `npm test` does that in pretest.)
+ * `npm run build` must have run — `npm test` does not build, its pretest step
+ * only checks that dist/ is a build of the current sources.)
  */
 
 const REPO = path.resolve(__dirname, '..');

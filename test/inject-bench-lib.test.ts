@@ -403,29 +403,38 @@ describe('decision', () => {
       put('dist/dep.js', "import './gone.js';\n");
       expect(() => moduleClosure(dir), 'a relative import naming no file').toThrow(/dist\/gone\.js is imported but is not a file/);
       put('dist/dep.js', 'export const y = 2;\n');
-      // the digest: modules, package versions, the model id and its files — any entry changing (or vanishing) is drift
+      // the digest: modules, package versions, the model id and the model files a person placed — any entry changing (or vanishing) is drift
       put('node_modules/better-sqlite3/package.json', '{"version":"1.2.3"}');
       const before = codeDigest(dir, 'Org/model');
       expect(before['package:better-sqlite3']).toBe('1.2.3');
       expect(before['package:@scope/pkg'], 'a package that is not installed').toBe('missing');
       expect(before['embedding-model']).toBe('Org/model');
-      expect(before['embedding-model-files']).toBe('none on disk');
-      const weights = 'node_modules/@xenova/transformers/.cache/Org/model/onnx/model_quantized.onnx';
-      put(weights, 'w1');
-      expect(embeddingModelFiles(dir, 'Org/model')).toEqual([weights]);
+      // The package's download cache is not in the digest (R2-REL-1): the library fills it the first time the model is
+      // loaded — by the replay itself or by another process — so a file appearing there, or caught half-written, is not
+      // a change of code. A downloaded model is bound by its id.
+      const cached = 'node_modules/@xenova/transformers/.cache/Org/model/onnx/model_quantized.onnx';
+      put('node_modules/@xenova/transformers/.cache/Org/model/tokenizer.json', '{}');
+      put(cached, 'the first half of the fi');
+      expect(embeddingModelFiles(dir, 'Org/model')).toEqual([]);
       const withModel = codeDigest(dir, 'Org/model');
-      expect(driftedCode(before, withModel)).toEqual(['embedding-model-files', weights].sort());
-      put(weights, 'w2');
-      expect(driftedCode(withModel, codeDigest(dir, 'Org/model')), 'other weights').toEqual([weights]);
-      // the local models folder (transformers reads it first) counts too, and a linked weight file is still a weight file
+      expect(driftedCode(before, withModel), 'the cache filled between two digests').toEqual([]);
+      expect(Object.keys(withModel).filter((k) => k.includes('.cache')), 'no cache file is recorded').toEqual([]);
+      put(cached, 'the first half of the file, then the rest');
+      expect(driftedCode(withModel, codeDigest(dir, 'Org/model')), 'a download finishing').toEqual([]);
+      // The local models folder (transformers reads it before it downloads anything) is filled by hand: its files count,
+      // and a linked weight file is still a weight file.
       const local = 'node_modules/@xenova/transformers/models/Org/model/onnx/model_quantized.onnx';
       put('weights-store/real.onnx', 'w3');
       fs.mkdirSync(path.dirname(path.join(dir, local)), { recursive: true });
       fs.symlinkSync(path.join(dir, 'weights-store', 'real.onnx'), path.join(dir, local));
-      expect(embeddingModelFiles(dir, 'Org/model')).toEqual([weights, local].sort());
+      expect(embeddingModelFiles(dir, 'Org/model')).toEqual([local]);
       const linked = codeDigest(dir, 'Org/model');
+      expect(driftedCode(withModel, linked), 'a model placed in the local folder').toEqual([local]);
       put('weights-store/real.onnx', 'w4');
       expect(driftedCode(linked, codeDigest(dir, 'Org/model')), 'the linked file\'s bytes').toEqual([local]);
+      fs.rmSync(path.join(dir, local));
+      expect(driftedCode(linked, codeDigest(dir, 'Org/model')), 'the placed model taken away').toEqual([local]);
+      expect(driftedCode(withModel, codeDigest(dir, 'Org/model')), 'back to the downloaded model').toEqual([]);
       expect(driftedCode(withModel, codeDigest(dir, 'Org/other')), 'another model').toContain('embedding-model');
       put('dist/dep.js', 'export const y = 3;\n');
       expect(driftedCode(withModel, codeDigest(dir, 'Org/model'))).toContain('dist/dep.js');
@@ -447,6 +456,7 @@ describe('decision', () => {
     const realDigest = codeDigest(repo, 'Xenova/multilingual-e5-small');
     expect(realDigest.node, 'the Node version').toBe(`${process.version} ${process.platform}-${process.arch}`);
     expect(Object.keys(realDigest), 'sub-dependencies and native binaries').toEqual(expect.arrayContaining(['package:onnxruntime-node', 'native:node_modules/better-sqlite3/build/Release/better_sqlite3.node']));
+    expect(Object.keys(realDigest).filter((k) => k.includes('/.cache/')), 'no downloaded model file, whether this checkout has fetched the model or not').toEqual([]);
   });
   it('dependencyDigest follows dependencies (own node_modules first) and installed optional ones, with native binaries; a missing required one is recorded', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-deps-'));

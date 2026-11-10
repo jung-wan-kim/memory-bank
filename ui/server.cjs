@@ -404,11 +404,43 @@ function graphData() {
   db.exec('DROP TABLE temp.graph_exchange_project');
   return { projects, toolUsage, connections, timeline: [], allTools, facts, domains, relations };
 }
+
+// The last answer of /api/graph-data, kept for as long as the database files are the ones it was computed
+// from. On a real archive one computation is seconds of CPU with the whole server waiting (see above), and
+// the first page asked for it on every open.
+//
+// "The same files" = the modification time and size of the database file and of its write-ahead log (a
+// commit by another process appends to the log, a checkpoint rewrites the main file), and SQLite's own
+// word that no other connection has committed since (PRAGMA data_version — exact where a file time is
+// coarse). While any of them changes (an archive being indexed) every request computes again: nothing
+// older than the files is ever served. The answer carries `computedAt`, the time its statements started.
+let graphDataMemo = null;
+
+function dbStamp() {
+  const fs = require('fs');
+  // Asked first: this connection's first read of a database in WAL mode creates the (empty) log file,
+  // which the file stamps below must already include — or the second request would compute again.
+  const version = db.pragma('data_version', { simple: true });
+  const files = [DB_PATH, `${DB_PATH}-wal`].map((file) => {
+    const stat = fs.statSync(file, { bigint: true, throwIfNoEntry: false });
+    return stat ? `${stat.mtimeNs}:${stat.size}` : 'absent';
+  });
+  return [version, ...files].join(' ');
+}
+
 apiHandlers['/api/graph-data'] = () => {
   ensureDb();
-  // One read transaction: every statement sees the same snapshot of the database (an exchange indexed
-  // meanwhile is in all of the numbers or in none), and a failure leaves no temp table behind.
-  return db.transaction(graphData)();
+  // Read before the statements run: a write that lands while they run leaves the database with another
+  // stamp than the one kept, so the next request computes again instead of reusing numbers from before it.
+  const stamp = dbStamp();
+  if (!graphDataMemo || graphDataMemo.stamp !== stamp) {
+    const computedAt = new Date().toISOString();
+    // One read transaction: every statement sees the same snapshot of the database (an exchange indexed
+    // meanwhile is in all of the numbers or in none), and a failure leaves no temp table behind.
+    const data = db.transaction(graphData)();
+    graphDataMemo = { stamp, data: { ...data, computedAt } };
+  }
+  return graphDataMemo.data;
 };
 
 // Serve graph-3d.html with live data injected server-side

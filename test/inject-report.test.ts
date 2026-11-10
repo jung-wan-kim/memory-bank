@@ -66,9 +66,9 @@ function writeDeterminism(override: Record<string, { a?: string; b?: string }> =
  * Run the script without blocking this worker: a test here runs it a dozen times, and a worker whose event loop is
  * held that long misses vitest's RPC deadline. The transcripts it reads are the fixture's (never this machine's own).
  */
-function run(args: string[]): Promise<{ status: number | null; stdout: string; stderr: string }> {
+function run(args: string[], script = SCRIPT): Promise<{ status: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [SCRIPT, ...args], { env: { ...process.env, TEST_PROJECTS_DIR: path.join(out, 'projects') } });
+    const child = spawn(process.execPath, [script, ...args], { env: { ...process.env, TEST_PROJECTS_DIR: path.join(out, 'projects') } });
     let stdout = '';
     let stderr = '';
     child.stdout.setEncoding('utf8').on('data', (d: string) => { stdout += d; });
@@ -77,10 +77,34 @@ function run(args: string[]): Promise<{ status: number | null; stdout: string; s
     child.on('close', (status) => resolve({ status, stdout, stderr }));
   });
 }
-async function report(doc?: string) {
-  const r = await run(['--report', '--out', out, ...(doc ? ['--doc', doc] : [])]);
+async function report(doc?: string, script = SCRIPT) {
+  const r = await run(['--report', '--out', out, ...(doc ? ['--doc', doc] : [])], script);
   const file = path.join(out, 'report.json');
   return { status: r.status, stderr: r.stderr, report: r.status === 0 && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null };
+}
+/**
+ * A checkout the report can run from whose embedding model has not been downloaded yet — what a fresh clone is
+ * until something first loads the model. bench/ is copied (the script takes its repository from its own path),
+ * dist/ and every installed package are links to this checkout's, except @xenova/transformers: a folder of its
+ * own that links the package's entries but its download cache and local models folder.
+ */
+function checkoutWithoutModel(): string {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-report-repo-'));
+  fs.cpSync(path.join(REPO, 'bench'), path.join(repo, 'bench'), { recursive: true });
+  fs.symlinkSync(path.join(REPO, 'dist'), path.join(repo, 'dist'));
+  const linkEntries = (from: string, to: string, own: Record<string, (from: string, to: string) => void> = {}) => {
+    fs.mkdirSync(to);
+    for (const name of fs.readdirSync(from)) {
+      if (own[name]) own[name](path.join(from, name), path.join(to, name));
+      else fs.symlinkSync(path.join(from, name), path.join(to, name));
+    }
+  };
+  linkEntries(path.join(REPO, 'node_modules'), path.join(repo, 'node_modules'), {
+    '@xenova': (from, to) => linkEntries(from, to, {
+      transformers: (pkgFrom, pkgTo) => linkEntries(pkgFrom, pkgTo, { '.cache': () => {}, models: () => {} }),
+    }),
+  });
+  return repo;
 }
 
 const shared = (i: number): Line[] => (i < 5 ? [{ id: `h${i}`, origin: 'vec', note: '', margin: 0.2 }] : []);
@@ -860,6 +884,33 @@ describe('inject-judge --report (synthetic bench folder, valid harness)', () => 
     expect(r.report.inputs.code.bound.node).toBe('v0.0.0 other-arch');
     writeMeta({ code: { git: null, dirty: null, files: { ...codeDigest(REPO, EMBEDDING_MODEL), 'dist/fact-text.js': '0'.repeat(64), node: 'v0.0.0 other-arch' } } });
     expect((await report()).stderr, 'every other file is still compared').toMatch(/code changed since --replay \(dist\/fact-text\.js\)/);
+  });
+
+  it('a model downloaded between the replay and the report does not stop the report; a source file changed since still does', async () => {
+    // R2-REL-1: on a fresh clone the first thing that embeds text downloads the model into the package's cache folder.
+    // The code digest covered that folder, so a download landing between the replay's digest and the report's read as
+    // "code changed since --replay (…/.cache/…/tokenizer.json)" — one of two first runs of `npm test` on a new clone.
+    const repo = checkoutWithoutModel();
+    const script = path.join(repo, 'bench', 'inject-judge.mjs');
+    try {
+      writeMeta({ code: { git: null, dirty: null, files: codeDigest(repo, EMBEDDING_MODEL) } });
+      const before = await report(undefined, script);
+      expect(before.status, `the copied checkout runs the report: ${before.stderr}`).toBe(0);
+      const cache = path.join(repo, 'node_modules', '@xenova', 'transformers', '.cache', EMBEDDING_MODEL);
+      fs.mkdirSync(path.join(cache, 'onnx'), { recursive: true });
+      fs.writeFileSync(path.join(cache, 'tokenizer.json'), '{}');
+      fs.writeFileSync(path.join(cache, 'onnx', 'model_quantized.onnx'), 'weights, half written');
+      const downloaded = await report(undefined, script);
+      expect(downloaded.stderr).not.toContain('code changed since --replay');
+      expect(downloaded.status, downloaded.stderr).toBe(0);
+      // What the digest is for: the code that made the lines is the code that is here now.
+      fs.appendFileSync(path.join(repo, 'bench', 'inject-bench-lib.mjs'), '\n// edited after the replay\n');
+      const edited = await report(undefined, script);
+      expect(edited.status).toBe(1);
+      expect(edited.stderr).toMatch(/code changed since --replay \(bench\/inject-bench-lib\.mjs\)/);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });   // removes the links, never what they point at
+    }
   });
 
   it('V4 fails when either determinism run differs from the lines file the report reads — the harness is then invalid', async () => {
