@@ -15,6 +15,7 @@ import {
   getFactKorean,
   factContentTimes,
   raiseFactContentTime,
+  ensureFactContentAtColumn,
 } from './fact-db.js';
 import { factTextRejectReason, factKrRejectReason } from './fact-validity.js';
 import { secretRejectReason } from './secret-scan.js';
@@ -589,6 +590,10 @@ function applyConsolidationPlan(
   }
   // Nothing to write — and no reason to wait for the write lock.
   if (plan.relation === 'INDEPENDENT') return { applied: true, rewritten: false, withoutKorean: false };
+  // Before the transaction: the column this merge writes (facts.content_at) is
+  // added on first use, and an ALTER inside the transaction would be undone
+  // with it when the merge fails.
+  ensureFactContentAtColumn(db);
   // Filled inside the transaction (a holder, so the value set there is the one read after it).
   const korean: { sentence: KoreanSentence | null } = { sentence: null };
   const rewriteOf = (factId: string) => (rewrite?.factId === factId

@@ -283,18 +283,22 @@ export function ensureFactContentAtColumn(db: Database.Database): boolean {
   const known = contentAtColumn.get(db);
   if (known !== undefined) return known;
   let present: boolean;
+  let addedInTransaction = false;
   try {
     const cols = db.prepare(`SELECT name FROM pragma_table_info('facts')`).all() as Array<{ name: string }>;
     present = cols.some((c) => c.name === 'content_at');
     if (!present && cols.length > 0) {
       db.prepare('ALTER TABLE facts ADD COLUMN content_at TEXT').run();
       present = true;
+      addedInTransaction = db.inTransaction;
     }
   } catch (e) {
     // Another process added it between the check and the ALTER — the goal is met.
     present = /duplicate column name/i.test(e instanceof Error ? e.message : String(e));
   }
-  contentAtColumn.set(db, present);
+  // An ALTER inside a caller's transaction is undone by its rollback: such an
+  // answer is not remembered (the next call looks again).
+  if (!addedInTransaction) contentAtColumn.set(db, present);
   return present;
 }
 

@@ -190,6 +190,25 @@ describe('the pair is ordered by when its content was stated', () => {
     expect(contentAt(later)).toBe(day(2));
   });
 
+  it('a merge that fails and rolls back on a store without the column leaves the column in place (it is added before the transaction)', () => {
+    const older = seed('Feature flags live in the config file', day(1));
+    const later = seed('Feature flags moved to the database', day(2));
+    const columns = () => (db.prepare(`SELECT name FROM pragma_table_info('facts')`).all() as Array<{ name: string }>).map((c) => c.name);
+    if (columns().includes('content_at')) db.prepare('ALTER TABLE facts DROP COLUMN content_at').run();
+    db.close();
+    db = new Database(process.env.TEST_DB_PATH!); // a handle that has not looked for the column yet
+    const sqliteVec = require('sqlite-vec') as { load: (d: Database.Database) => void };
+    sqliteVec.load(db);
+    db.exec(`CREATE TRIGGER fail_last BEFORE UPDATE OF is_active ON facts WHEN NEW.is_active = 0 BEGIN SELECT RAISE(ABORT, 'injected failure'); END`);
+
+    expect(() => applyConsolidationResult(db, factOf(older), factOf(later), { relation: 'DUPLICATE', merged_fact: '', reason: 'same' }))
+      .toThrow(/injected failure/);
+
+    expect(columns(), 'the rollback must not take the column with it').toContain('content_at');
+    expect(contentAt(older), 'and reading content times still works on this handle').toBe(day(1));
+    expect(db.prepare('SELECT COUNT(*) AS n FROM facts WHERE content_at IS NOT NULL').get(), 'nothing of the failed merge stayed').toEqual({ n: 0 });
+  });
+
   it('the column is added on first use to a store that lacks it; a handle that cannot add it reads creation times', () => {
     const a = seed('Imports are sorted', day(1));
     const columns = () => (db.prepare(`SELECT name FROM pragma_table_info('facts')`).all() as Array<{ name: string }>).map((c) => c.name);
