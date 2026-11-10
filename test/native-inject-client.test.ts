@@ -400,6 +400,70 @@ describe.skipIf(!cargo)('native inject client ≡ JS client', () => {
     expect(String(line!.req_id)).toMatch(/^[0-9a-f-]{36}$/);
   }, 60_000);
 
+  it('a config dir too deep for a unix socket: neither client asks whoever listens on the cut-off name — both fall back with socket-path-too-long', async () => {
+    const base = fs.mkdtempSync('/tmp/mbnl-');
+    try {
+      const cfg = path.join(base, 'a'.repeat(70), 'cfg');
+      const index = path.join(cfg, 'conversation-index');
+      fs.mkdirSync(index, { recursive: true });
+      expect(injectSocketPathIn(index, VERSION), 'no socket name fits').toBeNull();
+      // Another session's server, bound with the same long path, listens on the name the OS cut it to (Node does
+      // not refuse the long path). A platform that does refuse it leaves nobody listening — the rest still holds.
+      const received: Array<Record<string, unknown>> = [];
+      await lineDaemon(path.join(index, 'inject-daemon.sock'), (_req, c) => c.end(JSON.stringify({ ok: true, context: 'FROM-CUT-OFF-NAME' }) + '\n'), servers, received).catch(() => null);
+
+      const fake = fakeNode();
+      const input = envelope({ session_id: 'sess-rs-long' });
+      const rs = await runNative(input, { MEMORY_BANK_CONFIG_DIR: cfg, PATH: fake.pathEnv });
+      expect(rs.status).toBe(0);
+      expect(rs.stdout).toBe('');
+      const got = fake.read();
+      expect(got).not.toBeNull();
+      expect(got!.env.MEMORY_BANK_INJECT_DAEMON_FAILED).toBe('socket-path-too-long');
+      expect(got!.stdin).toBe(input);
+
+      const js = await runNode(envelope({ session_id: 'sess-js-long' }), { MEMORY_BANK_CONFIG_DIR: cfg });
+      expect(js.status).toBe(0);
+      expect(js.stdout).not.toContain('FROM-CUT-OFF-NAME');
+      expect(received, 'the server on the cut-off name was asked by neither client').toEqual([]);
+      const line = readInjectLog(cfg).find((l) => l.client_impl === 'node');
+      expect(line).toMatchObject({ via: 'fallback', fallback_reason: 'socket-path-too-long' });
+    } finally {
+      await closeAll(servers);
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it('host switches set only in the hook environment: both clients skip before asking the daemon, with the same log line', async () => {
+    // A daemon that knows nothing of the switches — another session's MCP server, as far as the hook can tell.
+    const received: Array<Record<string, unknown>> = [];
+    await lineDaemon(sock(), (_req, c) => c.end(JSON.stringify({ ok: true, context: 'INJECTED-BY-DAEMON', ledger_keys: [] }) + '\n'), servers, received);
+    const cases: Array<[string, Record<string, unknown>, Record<string, string>]> = [
+      ['headless', {}, { MEMORY_BANK_INJECT_HEADLESS: '0', CLAUDE_CODE_ENTRYPOINT: 'sdk-ts' }],
+      ['codex-off', { turn_id: 'turn-1' }, { MEMORY_BANK_INJECT_CODEX: '0' }],
+      ['codex-off', {}, { MEMORY_BANK_INJECT_CODEX: '0', MEMORY_BANK_CLIENT: 'codex' }],
+    ];
+    for (const [reason, over, extra] of cases) {
+      fs.rmSync(path.join(ci(), 'logs'), { recursive: true, force: true });
+      const js = await runNode(envelope({ session_id: 'sess-js-host', ...over }), extra);
+      const rs = await runNative(envelope({ session_id: 'sess-rs-host', ...over }), extra);
+      expect(rs.status).toBe(0);
+      expect([js.stdout, rs.stdout], reason).toEqual(['', '']);
+      const lines = readInjectLog(tmp);
+      expect(lines.map((l) => l.client_impl), reason).toEqual(['node', 'native']);
+      for (const l of lines) expect(l, reason).toMatchObject({ status: 'skipped', reason, via: 'client' });
+      expect(logFields(lines[1]), reason).toEqual(logFields(lines[0]));
+      expect(Object.keys(lines[1]), 'same keys in the same order').toEqual(Object.keys(lines[0]));
+    }
+    expect(received, 'the daemon was never asked').toEqual([]);
+    // Control: the switch is set but the host is not the one it names — both clients take the daemon's block.
+    const extra = { MEMORY_BANK_INJECT_HEADLESS: '0', MEMORY_BANK_INJECT_CODEX: '0', CLAUDE_CODE_ENTRYPOINT: 'cli' };
+    const js = await runNode(envelope({ session_id: 'sess-js-host2' }), extra);
+    const rs = await runNative(envelope({ session_id: 'sess-rs-host2' }), extra);
+    expect([js.stdout, rs.stdout]).toEqual(['INJECTED-BY-DAEMON\n', 'INJECTED-BY-DAEMON\n']);
+    expect(received).toHaveLength(2);
+  });
+
   it('a daemon trickling bytes without a newline hits the same 3s answer deadline in both clients (deadlines are absolute, not per read)', async () => {
     const received: Array<Record<string, unknown>> = [];
     await lineDaemon(sock(), (_req, c) => { const iv = setInterval(() => { try { c.write('x'); } catch { clearInterval(iv); } }, 700); c.on('close', () => clearInterval(iv)); }, servers, received);

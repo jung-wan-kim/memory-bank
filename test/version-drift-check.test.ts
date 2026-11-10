@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFileSync, spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -64,6 +65,8 @@ function fakeGitTags(tags: string[]) {
   const out = tags.map((t, i) => `${String(i).padStart(40, '0')}\trefs/tags/${t}`).join('\n');
   fakeBin('git', `echo "$*" >> "${path.join(tmp, 'git-calls.log')}"\ncat <<'TAGS'\n${out}\nTAGS`);
 }
+/** 스크립트가 git 에 넘기는 인자의 앞부분 — 저속 제한은 스크립트가 먼저 죽었을 때 git 이 스스로 그만두게 하는 값이다. */
+const LS_REMOTE = '-c http.lowSpeedLimit=1000 -c http.lowSpeedTime=5 ls-remote --tags --refs';
 const gitCalls = () => (fs.existsSync(path.join(tmp, 'git-calls.log')) ? fs.readFileSync(path.join(tmp, 'git-calls.log'), 'utf8').trim().split('\n').filter(Boolean) : []);
 
 type Run = { stdout: string; stderr: string; status: number | null; ms: number };
@@ -192,7 +195,7 @@ describe('version-drift-check — 원격 태그', () => {
     expect(out.hookSpecificOutput.additionalContext).toContain('v1.8.0');
     expect(out.hookSpecificOutput.additionalContext).toContain(`claude plugin marketplace update ${MP}`);
     expect(out.hookSpecificOutput.additionalContext, '사전 릴리스 태그는 버전으로 세지 않는다').not.toContain('2.0.0');
-    expect(gitCalls()).toEqual(['ls-remote --tags --refs https://example.invalid/fake.git']);
+    expect(gitCalls()).toEqual([`${LS_REMOTE} https://example.invalid/fake.git`]);
     expect(logLines().at(-1)).toMatchObject({ remote_status: 'ok', remote_latest: '1.8.0' });
   });
 
@@ -223,7 +226,7 @@ describe('version-drift-check — 원격 태그', () => {
     expect(hookJson(runCheck('1.7.7', env)).systemMessage).toContain('1.8.1');
     expect(gitCalls()).toHaveLength(2);
     runCheck('1.7.7', { MEMORY_BANK_DRIFT_REMOTE: 'https://example.invalid/moved.git' });
-    expect(gitCalls().at(-1)).toBe('ls-remote --tags --refs https://example.invalid/moved.git');
+    expect(gitCalls().at(-1)).toBe(`${LS_REMOTE} https://example.invalid/moved.git`);
     expect(gitCalls()).toHaveLength(3);
   });
 
@@ -288,7 +291,7 @@ describe('version-drift-check — 원격 태그', () => {
     fakeGitTags(['v1.7.9']);
     const run = runCheck('1.7.9', { MEMORY_BANK_DRIFT_REMOTE: '' });
     expect(run.stdout).toBe('');
-    expect(gitCalls()).toEqual(['ls-remote --tags --refs https://example.invalid/never-contacted.git']);
+    expect(gitCalls()).toEqual([`${LS_REMOTE} https://example.invalid/never-contacted.git`]);
     expect(logLines().at(-1)).toMatchObject({ remote_status: 'ok', remote_latest: '1.7.9' });
   });
 
@@ -308,6 +311,77 @@ describe('version-drift-check — 원격 태그', () => {
     expect(out.systemMessage, '1.10.0 > 1.9.0 (숫자 비교)').toContain('1.10.0');
     expect(logLines().at(-1)).toMatchObject({ remote_status: 'ok', remote_latest: '1.10.0' });
   });
+});
+
+/**
+ * 원격 조회를 끊을 때 git 이 띄운 도우미까지 끝낸다 (2026-11-11, 1.8.0 검수 IH-4).
+ * 3초 제한은 git 본체만 SIGKILL 했다. HTTP 원격이면 git 은 `git remote-http` → `git-remote-http` 를 띄우는데,
+ * 이 둘은 PID 1 밑으로 옮겨져 원격이 답하거나 연결이 끊길 때까지 남았다(느린·막힌 네트워크에서 세션 시작마다 한 쌍).
+ *
+ * 연결은 받되 답하지 않는 로컬 서버를 원격으로 주고, 진짜 git 으로 돌린다. 남은 프로세스는 진짜 ps 에서
+ * 그 서버의 주소가 든 명령줄로 찾는다(스크립트가 쓰는 PATH 의 ps 는 가짜다).
+ */
+describe('version-drift-check — 원격 조회를 끊으면 git 의 도우미 프로세스도 남지 않는다', () => {
+  const realGit = (() => { try { return execFileSync('which', ['git'], { encoding: 'utf8' }).trim(); } catch { return ''; } })();
+  const conns = new Set<net.Socket>();
+  let hang: net.Server;
+  let remote: string;
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  /** 그 원격을 명령줄에 든 프로세스들(git 본체와 도우미). */
+  const gitProcs = (): string[] => execFileSync('/bin/ps', ['-axo', 'pid=,ppid=,command='], { encoding: 'utf8' }).split('\n')
+    .filter((l) => l.includes(remote)).map((l) => l.trim().replace(/\s+/g, ' '));
+  const waitProcs = async (pred: (n: number) => boolean, ms: number) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) { if (pred(gitProcs().length)) return true; await sleep(100); }
+    return pred(gitProcs().length);
+  };
+  /** 훅을 띄워 두고 프로세스를 돌려준다(끝나기를 기다리지 않는다). */
+  const startCheck = (from: string): ChildProcess => {
+    const child = spawn(process.execPath, [scriptOf(from)], { env: checkEnv({ MEMORY_BANK_DRIFT_REMOTE: remote }), stdio: ['pipe', 'ignore', 'ignore'] });
+    children.push(child);
+    child.stdin!.end(HOOK_INPUT);
+    return child;
+  };
+
+  beforeEach(async () => {
+    hang = net.createServer((s) => { conns.add(s); s.on('error', () => {}); s.on('close', () => conns.delete(s)); });
+    await new Promise<void>((r) => hang.listen(0, '127.0.0.1', () => r()));
+    remote = `http://127.0.0.1:${(hang.address() as net.AddressInfo).port}/x.git`;
+    installVersion('1.7.9');
+    marketplaceClone('1.7.9');
+    fs.unlinkSync(path.join(bin, 'git')); // 진짜 git — 대상은 위 로컬 서버뿐이다
+  });
+  afterEach(async () => {
+    for (const l of gitProcs()) { try { process.kill(Number(l.split(' ')[0]), 'SIGKILL'); } catch { /* gone */ } }
+    for (const s of conns) s.destroy();
+    await new Promise((r) => hang.close(() => r(null)));
+  });
+
+  it.skipIf(!realGit)('3초 제한으로 끊은 뒤: git 본체도, 그것이 띄운 도우미도 남지 않는다', async () => {
+    const run = await runCheckAsync('1.7.9', { MEMORY_BANK_DRIFT_REMOTE: remote });
+    expect(run.status).toBe(0);
+    expect(String(logLines().at(-1)!.remote_error), '전제: git 이 답을 기다리다 3초 제한에 걸렸다').toMatch(/timed out after 3000ms/);
+    expect(await waitProcs((n) => n === 0, 1500), `남은 프로세스: ${gitProcs().join(' | ')}`).toBe(true);
+  }, 30_000);
+
+  it.skipIf(!realGit)('조회 중에 훅이 SIGTERM 을 받으면: git 과 도우미를 끝내고 그 신호로 끝난다', async () => {
+    const child = startCheck('1.7.9');
+    const exited = new Promise<NodeJS.Signals | null>((r) => child.on('exit', (_code, signal) => r(signal)));
+    expect(await waitProcs((n) => n >= 2, 2500), '전제: git 과 도우미가 떠 있다').toBe(true);
+    child.kill('SIGTERM');
+    expect(await exited, '기본 동작 그대로 — 신호로 끝난다').toBe('SIGTERM');
+    expect(await waitProcs((n) => n === 0, 1500), `남은 프로세스: ${gitProcs().join(' | ')}`).toBe(true);
+  }, 30_000);
+
+  it.skipIf(!realGit)('조회 중에 훅이 SIGKILL 로 죽어도: git 이 저속 제한으로 스스로 그만둔다 (몇 초 안)', async () => {
+    const child = startCheck('1.7.9');
+    const exited = new Promise<void>((r) => child.on('exit', () => r()));
+    expect(await waitProcs((n) => n >= 2, 2500), '전제: git 과 도우미가 떠 있다').toBe(true);
+    child.kill('SIGKILL');
+    await exited;
+    expect(gitProcs().length, '훅이 죽은 직후에는 아직 떠 있다(끝내 줄 프로세스가 없다)').toBeGreaterThan(0);
+    expect(await waitProcs((n) => n === 0, 12_000), `남은 프로세스: ${gitProcs().join(' | ')}`).toBe(true);
+  }, 30_000);
 });
 
 describe('version-drift-check — 옛 버전 작업자 정리 알림', () => {

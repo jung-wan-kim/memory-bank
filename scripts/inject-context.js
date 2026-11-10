@@ -25,6 +25,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { injectionQuery } from '../dist/prompt-gate.js';
+import { hostSkipReason } from '../dist/inject-host-skip.js';
 import { appendInjectLog, pluginVersion, sessionKey } from '../dist/inject-log.js';
 import { injectSocketPathIn, ownPackageVersion } from '../dist/version-guard.js';
 import { selfHealDeps } from '../dist/deps-heal.js';
@@ -80,16 +81,19 @@ function injectSocketPath() {
   // the daemon never used, and only the native client reached it.)
   const base = process.env.MEMORY_BANK_CONFIG_DIR || process.env.PERSONAL_SUPERPOWERS_DIR
     || path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'superpowers');
-  // Same version → same socket as this install's daemon (never an older one's).
+  // Same version → same socket as this install's daemon (never an older one's). null: the index dir is too deep
+  // for a unix socket — the daemon is not running there (inject-daemon.ts), and net.connect would not fail on the
+  // long path but reach whoever listens on its first 104 bytes.
   return injectSocketPathIn(path.join(base, 'conversation-index'), ownPackageVersion());
 }
 
 /**
  * Ask the warm daemon. Resolves { context, ledgerKeys } on an answer, or
- * { failed: 'no-daemon' | 'daemon-timeout' | 'daemon-closed' | 'daemon-error' }
+ * { failed: 'no-daemon' | 'daemon-timeout' | 'daemon-closed' | 'daemon-error' | 'socket-path-too-long' }
  * (never rejects) so the caller falls back — the hook must never break a user
  * prompt. 'daemon-closed': the daemon hung up without a full answer; waiting out
- * the warming deadline after that only delays the fallback.
+ * the warming deadline after that only delays the fallback. 'socket-path-too-long':
+ * no socket name fits under this config dir, so there is no daemon to ask.
  */
 function askDaemon(prompt, cwd, sessionId, meta) {
   return new Promise((resolve) => {
@@ -98,9 +102,11 @@ function askDaemon(prompt, cwd, sessionId, meta) {
     let warmed = false; // the warming deadline is armed once — a daemon that only ever says warming cannot hold the prompt
     let timer = null;
     const done = (v) => { if (!settled) { settled = true; clearTimeout(timer); resolve(v); } };
+    const sockPath = injectSocketPath();
+    if (sockPath === null) return done({ failed: 'socket-path-too-long' });
     let conn;
     try {
-      conn = net.connect(injectSocketPath());
+      conn = net.connect(sockPath);
     } catch {
       return done({ failed: 'no-daemon' });
     }
@@ -253,7 +259,10 @@ async function main() {
   // Harness-generated prompts (task notifications, slash-command expansions …)
   // and very short ones are not worth a search. Logged here so skips stay
   // measurable — they used to return silently before any log line.
-  const skipReason = invalidEnvelope ? 'hook-envelope' : injectionQuery(prompt).reason;
+  // Then the host switches (MEMORY_BANK_INJECT_HEADLESS=0 / _CODEX=0), on THIS process's environment: the daemon
+  // that would answer is whichever session's MCP server holds the socket, and it reads its own environment — a
+  // switch given to this run only was ignored whenever a daemon answered (dist/inject-host-skip.js).
+  const skipReason = invalidEnvelope ? 'hook-envelope' : injectionQuery(prompt).reason ?? hostSkipReason(meta);
   if (skipReason) {
     appendInjectLog({
       status: 'skipped', reason: skipReason, project: cwd, prompt_len: prompt.length,
