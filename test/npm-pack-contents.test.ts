@@ -17,7 +17,9 @@ function packList(): { files: string[]; unpackedSize: number } {
   return { files: pkg.files.map((f: { path: string }) => f.path), unpackedSize: pkg.unpackedSize };
 }
 
-const PLUGIN_REF = /\$\{CLAUDE_PLUGIN_ROOT\}\/([^"'\s]+)/g;
+// hooks.json quotes the placeholder inside its command strings (`node \"${CLAUDE_PLUGIN_ROOT}/x.js\"`), so in the file
+// text the path ends at the backslash of the escaped quote.
+const PLUGIN_REF = /\$\{CLAUDE_PLUGIN_ROOT\}\/([^"'\s\\]+)/g;
 
 describe('TC-REL-002 npm tarball contents (AC-012)', () => {
   const { files, unpackedSize } = packList();

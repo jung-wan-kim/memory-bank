@@ -6,32 +6,32 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/version-drift-check.js",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/version-drift-check.js\"",
             "async": true
           },
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/cli/memory-bank.js sync --background",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/cli/memory-bank.js\" sync --background",
             "async": true
           },
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/sync-import-hook.js",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/sync-import-hook.js\"",
             "async": true
           },
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/fact-consolidate-hook.js",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fact-consolidate-hook.js\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/install-commands.sh",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/install-commands.sh\"",
             "async": true
           },
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/build-native-client.sh",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/build-native-client.sh\"",
             "async": true
           }
         ]
@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/ledger-reset-hook.js",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/ledger-reset-hook.js\"",
             "timeout": 5
           }
         ]
@@ -53,12 +53,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/fact-extract-hook.js",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/fact-extract-hook.js\"",
             "async": true
           },
           {
             "type": "command",
-            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/sync-export-hook.js",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/sync-export-hook.js\"",
             "async": true
           }
         ]
@@ -70,7 +70,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/inject-context.sh",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/inject-context.sh\"",
             "timeout": 30
           }
         ]
