@@ -19,13 +19,13 @@ Memory Bank is a TypeScript/Node.js Claude Code plugin and package for semantic 
 | Variable | Literal value | Evidence |
 | --- | --- | --- |
 | `FRONTEND_DIR` | `ui` | `ui/server.cjs` serves `/dashboard`, `/`, `/graph`, and JSON APIs. |
-| `PKG_MANAGER` | `npm` | `package-lock.json` is present. |
+| `PKG_MANAGER` | `npm` | `package.json` scripts (`package-lock.json` is not tracked). |
 | `HAS_TYPECHECK` | `true` | `tsconfig.json` present; command `npx tsc --noEmit`. |
 | `BACKEND_TYPE` | `node-mcp-cli-sqlite` | `src/mcp-server.ts`, CLI wrappers, `better-sqlite3`, `sqlite-vec`. |
 | Build | `npm run build` | Verified PASS in this session. |
 | Typecheck | `npx tsc --noEmit` | Available from TypeScript 5.9.3 + `tsconfig.json`. |
 | Lint | unavailable | No `lint` script or ESLint config in root package. |
-| Test | `npm test` | Verified PASS: 28 files / 218 tests. |
+| Test | `npm test` | Verified PASS at 1.8.0 (2026-11-11): 178 files / 2,116 tests, 1 skipped. The first run downloads the embedding model. |
 | UI hard QA | `python3 .codex/scripts/validate_hard_qa.py --scope feature --json` | Generated hard blocker validator; no Playwright/Cypress dependency exists. |
 
 ## Commands

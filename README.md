@@ -198,7 +198,7 @@ Extraction quality/cost controls (v1.2.0):
 
 Each new fact is compared with its nearest fact in the same scope (similarity ≥ 0.95), at most 10 comparisons per session start. "Older" and "later" follow creation time, whichever of the two triggered the comparison.
 
-When a run fails, the reason is appended to `fact-consolidate.log` in `~/.config/superpowers/conversation-index/` (`worker: ERROR fact=… kind=… msg=…`) and `state/fact-consolidate-health.json` there counts the failed runs in a row; after five, the next attempts are spaced out (5 minutes, doubling, up to 6 hours) until a run gets through.
+When a run fails, the reason is appended to `fact-consolidate.log` in `~/.config/superpowers/conversation-index/` (`worker: ERROR fact=… kind=… msg=…`) and `state/fact-consolidate-health.json` there counts the failed runs in a row; after five, the next attempts are spaced out (5 minutes, doubling, up to 6 hours) until a run gets through. Three other lines in that log are not failures of a comparison: `worker: WARN no_content_time=<n> …` (the content-time column could not be created yet, so `n` pairs were ordered by creation time), `worker: lock unavailable (…) — not started` (the single-run lock could not be set up) and `worker: fact_kr restore failed (…)`, which ends with whether the Korean-sentence restore is tried again on the next run or not repeated for this version.
 
 ### Scope Isolation
 

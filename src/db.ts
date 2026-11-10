@@ -207,10 +207,14 @@ function narrowFtsUpdateTrigger(db: Database.Database): void {
  * this code made the two versions rebuild it for as long as both ran: every
  * open of the older one paid those seconds (an older MCP server opens the
  * database per tool call). So an index that is back within this time of the
- * last drop stays. The two queries the drop was measured on (key facts in
- * fact-db.ts, the ontology tree in ontology-db.ts) carry a `+is_active` hint
- * and stay off it either way; other `is_active = 1` queries plan as they did
- * in 1.7.x while it is back. After that time — the older processes of an
+ * last drop stays. The queries that plan worse on it carry a `+is_active`
+ * hint and stay off it either way: the two the drop was measured on (key facts
+ * in fact-db.ts, the ontology tree in ontology-db.ts) and the per-category /
+ * per-scope fact counts added after 1.7.x (ontology-db.ts activeFactCounts,
+ * findCategoriesByNameKey, getFactsByCategory; fact-db.ts
+ * searchSimilarFactsSameScope) — without the hint those took one extraction
+ * from about 2s to over 9s while the index was back. Other `is_active = 1`
+ * queries plan as they did in 1.7.x. After that time — the older processes of an
  * upgrade are long replaced — it is dropped again. 6 hours: chosen, not
  * measured; the interval of the session-start maintenance, the other cleanup
  * that is not done per open.

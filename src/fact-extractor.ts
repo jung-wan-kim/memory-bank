@@ -73,7 +73,7 @@ const BATCH_SIZE = 5; // configurable-ok
 // 바닥 20 은 예전 고정 상한이다 — 배치 4개 이하인 세션은 결과가 달라지지 않는다.
 const MAX_FACTS_PER_SESSION = 20; // configurable-ok
 const FACTS_PER_SELECTED_BATCH = 5; // configurable-ok — 단일 배치 세션의 배치당 사실 중앙값(실측 5)
-// MEMORY_BANK_MAX_EXTRACT_CALLS 로 배치 수를 올려도 넘지 않는 상한(저장 뒤 사실마다 분류 LLM 1회).
+// MEMORY_BANK_MAX_EXTRACT_CALLS 로 배치 수를 올려도 넘지 않는 상한(저장 뒤 분류 LLM 은 사실 20건당 1회, 관계 판정은 사실당 최대 1회).
 // 배치 수 자체의 상한도 이 값이다(MAX_EXTRACT_CALLS_CEILING).
 const ABSOLUTE_MAX_FACTS_PER_SESSION = 60; // configurable-ok
 const CONFIDENCE_THRESHOLD = 0.7; // configurable-ok

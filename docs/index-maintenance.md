@@ -327,11 +327,17 @@ node scripts/reembed-rewritten-facts.mjs [--db PATH] --restore TABLE
   and the kind of credential, never the text. `--apply` sets `is_active = 0`
   after writing each row's previous `is_active` / `updated_at` to the undo file
   (`redact-secret-facts-undo-<UTC time>.jsonl` next to the database unless
-  `--undo-file` names another path). A deactivated fact is no longer injected,
-  found by search, or listed by the next sync export — the export file already
-  on disk still has it until that next export. The text stays in the row, and
-  the credential is still leaked: **rotate it.** `--undo FILE` reactivates the
-  rows that are still as that run left them.
+  `--undo-file` names another path). It also removes those facts' rows from the
+  vector index (`vec_facts`, `vec_facts_kr`) and keeps the removed bytes in a
+  table of the same database, `redact_secret_backup_<UTC time>`, which the undo
+  file names. A deactivated fact is no longer injected, found by search, or
+  listed by the next sync export — the export file already on disk still has
+  it until that next export. The text stays in the row, and the credential is
+  still leaked: **rotate it.** `--undo FILE` reactivates the rows that are
+  still as that run left them, vectors included, and drops that run's backup
+  table once every row of the file is back (while a fact changed since is left
+  as it is, the table stays — that fact's vectors exist only there). `--help`
+  prints the usage and opens nothing.
 - `dedupe-exact-facts.mjs` — merges active facts of one scope whose sentences
   are equal after collapsing whitespace and case. No LLM and no embedding
   model; the oldest fact of a group stays and the rest are deactivated (nothing
@@ -351,9 +357,11 @@ node scripts/reembed-rewritten-facts.mjs [--db PATH] --restore TABLE
   the one to use** unless a translation run follows: it leaves `fact_kr` and
   its vector as they are (written for the old sentence, but still what a
   Korean query finds the fact by). `--fact-kr clear` removes both, and only
-  part of them comes back by itself: the consolidation worker restores a
-  Korean sentence only where a merged, deactivated fact still holds one for
-  the same sentence. On a copy of a live database, of 624 rewritten active
+  part of them comes back: the run itself ends by restoring a Korean sentence
+  only where a merged, deactivated fact still holds one for the same sentence
+  (the pass the consolidation worker runs once per plugin version; if it
+  fails, the run exits 1 and the same command repeats it). On a copy of a
+  live database, of 624 rewritten active
   facts left without a Korean sentence after `clear`, that brought back 71;
   the 436 whose sentence is English only have no Korean vector until
   `scripts/translate-facts.mjs` (LLM calls, run by hand) translates them. Use
