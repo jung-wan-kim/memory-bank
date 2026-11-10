@@ -105,8 +105,12 @@ async function consolidateOne(
       ? ({ type: 'project', project: driver.scope_project } as const)
       : null;
   if (!scope) return 'none';
+  // The driver's Korean vector is searched too: the same fact written in the
+  // other language is out of reach of the main vector alone, so whether such a
+  // pair was compared used to depend on which of the two was the driver.
   const candidates = searchSimilarFactsSameScope(db, embeddingArray, scope, 5, SIMILARITY_THRESHOLD, {
     onCapReached: () => { tally.searchCapped = true; },
+    krVectorOfFactId: driver.id,
   }).filter((s) => s.fact.id !== driver.id);
   if (candidates.length === 0) return 'none';
 

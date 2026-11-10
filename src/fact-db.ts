@@ -358,6 +358,32 @@ export interface SameScopeSearchOptions {
    * matches farther than the nearest `k` rows were not examined.
    */
   onCapReached?: (info: { k: number; found: number }) => void;
+  /**
+   * Also search with this fact's own stored Korean vector (its vec_facts_kr
+   * row, when it has one). `embedding` is one language's vector, and a
+   * multilingual model scores cross-language pairs well below same-language
+   * ones (measured on live facts: 0.93 against 0.99) — an English sentence's
+   * vector does not reach the same fact written in Korean, its Korean
+   * translation's vector does. Each fact keeps its best distance over both.
+   */
+  krVectorOfFactId?: string;
+}
+
+/**
+ * One fact's stored vector in a fact-side vec table, decoded to float32 scale
+ * (int8 rows are divided by the table's scale; re-encoding the result for the
+ * same table gives the stored bytes back). null when the fact has no row there.
+ */
+function storedFactVector(db: Database.Database, table: FactVecTable, id: string): number[] | null {
+  return factKnn(table, () => {
+    const q = getVecQuant(db, table);
+    const row = db.prepare(`SELECT embedding FROM ${table} WHERE id = ?`).get(id) as { embedding: Buffer } | undefined;
+    if (!row) return null;
+    const bytes = row.embedding.buffer.slice(row.embedding.byteOffset, row.embedding.byteOffset + row.embedding.byteLength);
+    return q.dtype === 'int8'
+      ? Array.from(new Int8Array(bytes), (x) => x / q.scale)
+      : Array.from(new Float32Array(bytes));
+  }, null as number[] | null);
 }
 
 /**
@@ -403,9 +429,9 @@ export function searchSimilarFactsSameScope(
   // reaching the match. `exhausted` is the correct, index-size-independent stop.
   // `done` adds the distance-order stop: the table ran out, OR its farthest
   // returned row is already below the threshold (nothing behind it can pass).
-  const fetchN = (table: FactVecTable, n: number): { rows: Array<{ id: string; distance: number }>; done: boolean } =>
+  const fetchN = (table: FactVecTable, query: number[], n: number): { rows: Array<{ id: string; distance: number }>; done: boolean } =>
     factKnn(table, () => {
-      const p = vecParamFor(db, table, embedding);
+      const p = vecParamFor(db, table, query);
       const rows = db.prepare(`
         SELECT id, distance FROM ${table}
         WHERE embedding MATCH ${p.sql} ORDER BY distance LIMIT ?
@@ -419,10 +445,15 @@ export function searchSimilarFactsSameScope(
   // vec0 refuses k > VEC0_KNN_K_MAX. The old ceiling (100,000) let k grow
   // 200 → 800 → 3,200 → 12,800 and the fourth page threw on every driver with
   // fewer than `limit` matches in an index of more than 3,200 rows.
+  // Query vectors: the given one, plus the driver's own Korean vector when asked for.
+  const queries = [embedding];
+  const krVector = opts.krVectorOfFactId ? storedFactVector(db, 'vec_facts_kr', opts.krVectorOfFactId) : null;
+  if (krVector) queries.push(krVector);
+
   let fetchCount = Math.min(Math.max(limit * 20, 200), VEC0_KNN_K_MAX);
   let results: Array<{ fact: Fact; distance: number }> = [];
   for (;;) {
-    const lookups = [fetchN('vec_facts', fetchCount), fetchN('vec_facts_kr', fetchCount)];
+    const lookups = queries.flatMap((q) => [fetchN('vec_facts', q, fetchCount), fetchN('vec_facts_kr', q, fetchCount)]);
     const best = new Map<string, number>();
     for (const vr of lookups.flatMap((l) => l.rows)) {
       const cur = best.get(vr.id);
