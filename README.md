@@ -442,8 +442,15 @@ open docs/graph-3d.html   # Interactive 3D graph (local)
 ## Development
 
 ```bash
-npm install && npm test && npm run build
+npm install
+npm test            # works on a fresh clone: dist/ is committed
+
+# after changing anything under src/
+npm run build       # tsc + the MCP server bundle — commit the regenerated dist/
+npm test
 ```
+
+`npm test` does not build. Its first step (`pretest`, `scripts/check-dist-fresh.mjs`) fails with "dist is stale — run `npm run build` first" when `dist/` is not a build of the current sources, and writes nothing. Compiled files are compared byte for byte. The bundle `dist/mcp-server.js` inlines third-party packages whose versions differ from one `npm install` to the next (there is no lock file), so it is judged by the stamp `npm run build` writes on its last line — a digest of the sources, bundle arguments and dependency ranges it was built from — not by its bytes.
 
 ## License
 

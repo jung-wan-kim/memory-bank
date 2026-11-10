@@ -210,8 +210,15 @@ export MEMORY_BANK_API_MODEL=opus
 ## 개발
 
 ```bash
-npm install && npm test && npm run build
+npm install
+npm test            # 새로 받은 저장소에서 바로 돕니다: dist/ 가 커밋돼 있습니다
+
+# src/ 를 고친 뒤
+npm run build       # tsc + MCP 서버 번들 — 다시 만들어진 dist/ 를 함께 커밋합니다
+npm test
 ```
+
+`npm test` 는 빌드하지 않습니다. 첫 단계(`pretest`, `scripts/check-dist-fresh.mjs`)가 `dist/` 가 지금 소스의 빌드인지 확인하고, 아니면 "dist is stale — run `npm run build` first" 로 멈춥니다(아무것도 쓰지 않습니다). 컴파일 결과 파일은 바이트로 비교합니다. 번들 `dist/mcp-server.js` 에는 외부 패키지 코드가 들어가는데 잠금 파일이 없어 `npm install` 할 때마다 그 버전이 달라질 수 있으므로, 바이트가 아니라 `npm run build` 가 번들 마지막 줄에 적는 표식(번들에 들어간 소스·번들 인자·의존성 범위의 해시)으로 판정합니다.
 
 ## 라이선스
 

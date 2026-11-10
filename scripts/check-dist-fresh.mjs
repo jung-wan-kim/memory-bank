@@ -5,9 +5,18 @@
  * dist/ is git-tracked, and several tests import it (worker-dist-contract,
  * hook scripts, …). `pretest` used to run the build, so every `npm test`
  * rewrote tracked files in the working tree. This check writes nothing into
- * the repository: it compiles into a temp dir exactly as `npm run build` does
- * (tsc, then the esbuild bundle of the MCP server), compares the result with
- * dist/, and fails with "run npm run build first" when they differ.
+ * the repository; it fails with "run npm run build first" when dist/ is not a
+ * build of the current sources. Two kinds of file, two ways to tell:
+ *
+ *  - what `tsc` emits (every dist file but the bundle): compiled into a temp
+ *    dir and compared byte for byte.
+ *  - the esbuild bundle dist/mcp-server.js: it inlines third-party packages,
+ *    and package-lock.json is not tracked — a fresh `npm install` resolves
+ *    other versions of them, so a rebuild differs in bytes although nothing in
+ *    this repository changed. The bundle is judged by the stamp the build
+ *    wrote into it (scripts/stamp-bundle.mjs): the digest of the first-party
+ *    sources, bundle arguments and dependency ranges it was made from must be
+ *    the digest of the current ones, and its bytes must be the stamped ones.
  *
  * Files only dist/ has (left over from deleted sources) are reported but do
  * not fail the check — a rebuild does not remove them, so failing would have
@@ -22,9 +31,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BUNDLE_REL, bundleEsbuildArgs, bundleInto, bundleStaleReason, inputsDigest, repoBin } from './stamp-bundle.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const BUNDLE_OUTFILE_FLAG = '--outfile=dist/mcp-server.js';
+// Relative to dist/: tsc emits the unbundled module here, the bundle step overwrites it.
+const BUNDLE_IN_DIST = path.relative('dist', BUNDLE_REL);
 
 function usage(message) {
   process.stderr.write(`check-dist-fresh: ${message}\nusage: node scripts/check-dist-fresh.mjs [--root <project dir>]\n`);
@@ -69,43 +80,46 @@ function main() {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 
   // The bundle step is read from package.json so this check cannot drift from the build.
-  const bundle = String(pkg.scripts?.bundle ?? '').split(/\s+/).filter(Boolean);
-  if (bundle[0] !== 'esbuild' || !bundle.includes(BUNDLE_OUTFILE_FLAG)) {
-    throw new Error(`package.json "bundle" is not the expected esbuild command with ${BUNDLE_OUTFILE_FLAG} — update this check with it`);
-  }
+  const esbuildArgs = bundleEsbuildArgs(pkg);
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'memory-bank-dist-check-'));
   try {
-    const bin = (name) => path.join(REPO, 'node_modules', '.bin', name);
-    run('tsc', bin('tsc'), ['-p', path.join(root, 'tsconfig.json'), '--outDir', tmp], root);
-    run('esbuild bundle', bin('esbuild'),
-      bundle.slice(1).map((arg) => (arg === BUNDLE_OUTFILE_FLAG ? `--outfile=${path.join(tmp, 'mcp-server.js')}` : arg))
-        .concat('--log-level=warning'),
-      root);
+    const compiled = path.join(tmp, 'tsc');
+    const bundled = path.join(tmp, 'bundle');
+    fs.mkdirSync(bundled);
+    run('tsc', repoBin('tsc'), ['-p', path.join(root, 'tsconfig.json'), '--outDir', compiled], root);
+    // Bundled here only to learn which first-party files go in (and that the bundle step still works);
+    // its bytes depend on the installed third-party versions and are not compared.
+    const { inputs } = bundleInto(root, esbuildArgs, bundled);
 
-    const expected = listFiles(tmp);
+    const expected = listFiles(compiled);
     const missing = [];
     const different = [];
     for (const rel of expected) {
+      if (rel === BUNDLE_IN_DIST) continue; // judged by its stamp below
       const target = path.join(distDir, rel);
       if (!fs.existsSync(target)) missing.push(rel);
-      else if (!fs.readFileSync(path.join(tmp, rel)).equals(fs.readFileSync(target))) different.push(rel);
+      else if (!fs.readFileSync(path.join(compiled, rel)).equals(fs.readFileSync(target))) different.push(rel);
     }
-    const expectedSet = new Set(expected);
+    const bundleReason = bundleStaleReason(path.join(root, BUNDLE_REL), inputsDigest(root, inputs, esbuildArgs, pkg));
+
+    const expectedSet = new Set(expected).add(BUNDLE_IN_DIST);
     const leftover = fs.existsSync(distDir) ? listFiles(distDir).filter((rel) => !expectedSet.has(rel)) : [];
     if (leftover.length > 0) {
       process.stderr.write(`check-dist-fresh: note — ${leftover.length} file(s) in dist/ have no source any more (not checked): ${leftover.slice(0, 5).join(', ')}${leftover.length > 5 ? ', …' : ''}\n`);
     }
 
-    if (missing.length === 0 && different.length === 0) {
-      process.stdout.write(`check-dist-fresh: dist is fresh (${expected.length} files match a build of the current sources)\n`);
+    if (missing.length === 0 && different.length === 0 && bundleReason === null) {
+      const compared = expected.filter((rel) => rel !== BUNDLE_IN_DIST).length;
+      process.stdout.write(`check-dist-fresh: dist is fresh (${compared} compiled files match a build of the current sources; the bundle's stamp matches its ${inputs.length} first-party sources)\n`);
       return 0;
     }
     const show = (label, list) => (list.length === 0 ? '' : `  ${label} (${list.length}): ${list.slice(0, 20).join(', ')}${list.length > 20 ? ', …' : ''}\n`);
     process.stderr.write(
       `check-dist-fresh: dist is stale — run \`npm run build\` first (tests import dist/, and this check does not rebuild it).\n` +
       show('differs from a build of the current sources', different) +
-      show('missing from dist', missing),
+      show('missing from dist', missing) +
+      (bundleReason === null ? '' : `  the bundle ${BUNDLE_REL} ${bundleReason}\n`),
     );
     return 1;
   } finally {
