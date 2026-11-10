@@ -41,15 +41,154 @@ export function getDomain(db: Database.Database, id: string): OntologyDomain | n
 }
 
 export function getDomainByName(db: Database.Database, name: string): OntologyDomain | null {
-  return (
-    (db
-      .prepare(`SELECT * FROM ontology_domains WHERE name = ? COLLATE NOCASE`)
-      .get(name) as OntologyDomain | undefined) ?? null
-  );
+  const exact = db
+    .prepare(`SELECT * FROM ontology_domains WHERE name = ? COLLATE NOCASE`)
+    .get(name) as OntologyDomain | undefined;
+  if (exact) return exact;
+  // "Dev Ops" / "dev-ops" are the domain "DevOps" (see ontologyNameKey). The
+  // domain list is small (28 live), so the keys are compared here instead of
+  // being stored; the oldest row wins when legacy rows share a key.
+  const key = ontologyNameKey(name);
+  const rows = db.prepare(`SELECT * FROM ontology_domains ORDER BY created_at, id`).all() as OntologyDomain[];
+  return rows.find((d) => ontologyNameKey(d.name) === key) ?? null;
+}
+
+// === Name identity ===
+
+/**
+ * Identity of a domain/category name: NFKC, lower case, "&" read as "and",
+ * every other character that is not a letter or digit dropped. "Memory-Bank
+ * Architecture", "memory bank architecture" and "MemoryBank  Architecture" are
+ * one name; "CI/CD" and "CI CD" are one name.
+ *
+ * Why: lookups were an exact match (NOCASE), so the classifier's spelling
+ * variants of one name became separate rows — 792 names existed under several
+ * domains (1,974 rows) and 44 pairs inside one domain (live DB, 2026-11-10).
+ *
+ * The stored `ontology_categories.name_key` is this function's output. Changing
+ * the rule means rebuilding the column (`UPDATE ontology_categories SET
+ * name_key = NULL` — the next lookup refills it).
+ */
+export function ontologyNameKey(name: string): string {
+  const folded = String(name).normalize('NFKC').toLowerCase();
+  const key = folded.replace(/&/g, ' and ').replace(/[^\p{L}\p{N}]+/gu, '');
+  // A name with no letter or digit keeps its own text, so two such names are
+  // never "the same" by having an empty key.
+  return key !== '' ? key : folded.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Looser identity, for one use only: the model said it was reusing a category
+ * but spelled no existing name (classifier, `is_new_category: false`). Also
+ * folds a plural "s", the word "and" and word order — "State Managements" and
+ * "Management State" both mean "State Management". Too loose for general
+ * lookups; compared only against the candidates shown for that fact.
+ */
+export function looseOntologyNameKey(name: string): string {
+  const words = String(name).normalize('NFKC').toLowerCase().replace(/&/g, ' and ')
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w !== '' && w !== 'and')
+    .map((w) => {
+      if (w.length > 4 && w.endsWith('ies')) return `${w.slice(0, -3)}y`;
+      if (w.length > 3 && w.endsWith('s') && !w.endsWith('ss')) return w.slice(0, -1);
+      return w;
+    });
+  return words.sort().join(' ');
+}
+
+// Connections whose ontology_categories table is known to have the name_key
+// column and index (the DDL is checked once per connection).
+const nameKeyColumnReady = new WeakSet<Database.Database>();
+
+/**
+ * Idempotent migration of `ontology_categories.name_key` (+ its index), run by
+ * the category lookups below rather than initDatabase(): only code that writes
+ * the taxonomy needs it. Every call also fills rows whose key is NULL — a
+ * process running older code and the sync import insert categories without
+ * the column, and such a row must not stay invisible to the lookup (it would
+ * be created a second time). With the index that check is one probe.
+ *
+ * Returns how many rows were filled.
+ */
+export function ensureCategoryNameKeys(db: Database.Database): number {
+  if (!nameKeyColumnReady.has(db)) {
+    const columns = db.prepare(`SELECT name FROM pragma_table_info('ontology_categories')`).all() as Array<{ name: string }>;
+    if (!columns.some((c) => c.name === 'name_key')) {
+      try {
+        db.prepare('ALTER TABLE ontology_categories ADD COLUMN name_key TEXT').run();
+      } catch (error) {
+        // Two processes can both see the column missing; the loser's ALTER
+        // fails with "duplicate column name" and the column is there.
+        if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error;
+      }
+    }
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_ontology_categories_name_key ON ontology_categories(name_key)`);
+    nameKeyColumnReady.add(db);
+  }
+  const missing = db.prepare(`SELECT id, name FROM ontology_categories WHERE name_key IS NULL`).all() as Array<{ id: string; name: string }>;
+  if (missing.length === 0) return 0;
+  const fill = db.prepare(`UPDATE ontology_categories SET name_key = ? WHERE id = ? AND name_key IS NULL`);
+  let filled = 0;
+  db.transaction(() => {
+    for (const row of missing) filled += fill.run(ontologyNameKey(row.name), row.id).changes;
+  })();
+  return filled;
+}
+
+/** A category with the number of active facts filed under it. */
+export interface CategoryUsage extends OntologyCategory {
+  active_facts: number;
+}
+
+/**
+ * Every category whose name has this key (in one domain when `domainId` is
+ * given), most used first: active facts, then the oldest row, then id. The
+ * order is the tie-break wherever one name has several rows — the first row is
+ * the one a lookup returns and new facts go to, so the same name resolves to
+ * the same row on every call.
+ */
+export function findCategoriesByNameKey(
+  db: Database.Database,
+  key: string,
+  domainId?: string,
+): CategoryUsage[] {
+  ensureCategoryNameKeys(db);
+  return db
+    .prepare(
+      `SELECT c.id, c.domain_id, c.name, c.description, c.created_at,
+              (SELECT COUNT(*) FROM facts f WHERE f.ontology_category_id = c.id AND f.is_active = 1) AS active_facts
+       FROM ontology_categories c
+       WHERE c.name_key = ?${domainId ? ' AND c.domain_id = ?' : ''}
+       ORDER BY active_facts DESC, c.created_at, c.id`,
+    )
+    .all(...(domainId ? [key, domainId] : [key])) as CategoryUsage[];
+}
+
+/** Active fact count per category id (ids with no facts are absent). */
+export function activeFactCounts(db: Database.Database, categoryIds: string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  const stmt = db.prepare(`SELECT COUNT(*) AS n FROM facts WHERE ontology_category_id = ? AND is_active = 1`);
+  for (const id of new Set(categoryIds)) {
+    const n = (stmt.get(id) as { n: number }).n;
+    if (n > 0) counts.set(id, n);
+  }
+  return counts;
+}
+
+function toCategory(row: CategoryUsage): OntologyCategory {
+  return { id: row.id, domain_id: row.domain_id, name: row.name, description: row.description, created_at: row.created_at };
 }
 
 // === Category CRUD ===
 
+/**
+ * Create a category, or return the one this domain already has under the same
+ * name key — idempotent on (domain, key) the way createRelation is on its
+ * triple. The lookup and the insert share one write transaction, so two
+ * processes classifying at once cannot both insert the name. (No UNIQUE index
+ * enforces this: 44 pairs of same-name rows inside one domain predate the key
+ * and are not merged here.)
+ */
 export function createCategory(
   db: Database.Database,
   domainId: string,
@@ -58,12 +197,18 @@ export function createCategory(
 ): OntologyCategory {
   const rejectReason = ontologyNameRejectReason(name);
   if (rejectReason) throw new Error(`createCategory refused (${rejectReason}): ${String(name).slice(0, 60)}`);
-  const id = randomUUID();
-  const now = new Date().toISOString();
-  db.prepare(
-    `INSERT INTO ontology_categories (id, domain_id, name, description, created_at) VALUES (?, ?, ?, ?, ?)`,
-  ).run(id, domainId, name, description ?? null, now);
-  return { id, domain_id: domainId, name, description: description ?? null, created_at: now };
+  ensureCategoryNameKeys(db);
+  const key = ontologyNameKey(name);
+  return db.transaction((): OntologyCategory => {
+    const existing = findCategoriesByNameKey(db, key, domainId)[0];
+    if (existing) return toCategory(existing);
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO ontology_categories (id, domain_id, name, description, created_at, name_key) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(id, domainId, name, description ?? null, now, key);
+    return { id, domain_id: domainId, name, description: description ?? null, created_at: now };
+  }).immediate();
 }
 
 export function listCategories(
@@ -78,25 +223,19 @@ export function listCategories(
   return (db.prepare(`SELECT * FROM ontology_categories ORDER BY name`).all() as OntologyCategory[]);
 }
 
+/**
+ * The category of this name (by ontologyNameKey — case, spacing and
+ * punctuation do not matter), inside one domain when `domainId` is given.
+ * Several rows can carry one name (see createCategory); the most used one is
+ * returned, the same row on every call.
+ */
 export function getCategoryByName(
   db: Database.Database,
   name: string,
   domainId?: string,
 ): OntologyCategory | null {
-  if (domainId) {
-    return (
-      (db
-        .prepare(
-          `SELECT * FROM ontology_categories WHERE name = ? COLLATE NOCASE AND domain_id = ?`,
-        )
-        .get(name, domainId) as OntologyCategory | undefined) ?? null
-    );
-  }
-  return (
-    (db
-      .prepare(`SELECT * FROM ontology_categories WHERE name = ? COLLATE NOCASE`)
-      .get(name) as OntologyCategory | undefined) ?? null
-  );
+  const row = findCategoriesByNameKey(db, ontologyNameKey(name), domainId)[0];
+  return row ? toCategory(row) : null;
 }
 
 // === Category embeddings (candidate retrieval for the classifier) ===
@@ -207,6 +346,17 @@ export function getFactsByDomain(db: Database.Database, domainId: string): Fact[
 
 // === Relation CRUD ===
 
+/** createRelation declined to write a relation that cannot be true (see createRelation). */
+export class RelationRefusedError extends Error {
+  constructor(
+    public readonly reason: 'self-relation' | 'supersedes-cycle',
+    detail: string,
+  ) {
+    super(`createRelation refused (${reason}): ${detail}`);
+    this.name = 'RelationRefusedError';
+  }
+}
+
 export function createRelation(
   db: Database.Database,
   sourceFactId: string,
@@ -221,6 +371,47 @@ export function createRelation(
   // valid, user-visible graph data (a SUPPORTS b + a CONTRADICTS b) and are
   // deliberately NOT collapsed — an LLM type-flap across retries therefore
   // adds at most one row per type (bounded by the 4-type enum).
+  //
+  // Two shapes are refused (RelationRefusedError), like template residue in
+  // createDomain/createCategory:
+  //  - a relation of a fact to itself;
+  //  - SUPERSEDES whose mirror already exists. "a replaced b" and "b replaced
+  //    a" cannot both hold, and a reader of the pair cannot tell which is the
+  //    current belief (245 such pairs live, all written before the 2026-10-03
+  //    direction fix). The check and the insert share one write transaction,
+  //    so two processes judging the pair at once cannot each write one half.
+  //    Rows that bypass this function (sync import) are not covered.
+  if (sourceFactId === targetFactId) {
+    throw new RelationRefusedError('self-relation', `${relationType} ${sourceFactId}`);
+  }
+  if (relationType === 'SUPERSEDES') {
+    return db.transaction((): OntologyRelation => {
+      if (hasSupersedes(db, targetFactId, sourceFactId)) {
+        throw new RelationRefusedError('supersedes-cycle', `${targetFactId} already SUPERSEDES ${sourceFactId}`);
+      }
+      return insertRelation(db, sourceFactId, relationType, targetFactId, reasoning);
+    }).immediate();
+  }
+  return insertRelation(db, sourceFactId, relationType, targetFactId, reasoning);
+}
+
+/** True when `sourceFactId SUPERSEDES targetFactId` is stored. */
+export function hasSupersedes(db: Database.Database, sourceFactId: string, targetFactId: string): boolean {
+  return db
+    .prepare(
+      `SELECT 1 FROM ontology_relations
+       WHERE source_fact_id = ? AND relation_type = 'SUPERSEDES' AND target_fact_id = ? LIMIT 1`,
+    )
+    .get(sourceFactId, targetFactId) !== undefined;
+}
+
+function insertRelation(
+  db: Database.Database,
+  sourceFactId: string,
+  relationType: RelationType,
+  targetFactId: string,
+  reasoning?: string,
+): OntologyRelation {
   const existing = db
     .prepare(
       `SELECT * FROM ontology_relations
