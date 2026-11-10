@@ -1,6 +1,7 @@
 import { syncConversations } from './sync.js';
 import { getArchiveDir } from './paths.js';
 import { parseLockMeta, decideTakeover } from './version-guard.js';
+import { appendSyncLog } from './sync-log.js';
 import path from 'path';
 import os from 'os';
 import { spawn, execFileSync } from 'child_process';
@@ -197,8 +198,16 @@ if (!(await __acquireLock())) {
 process.on('exit', () => { try { fs.rmSync(__lockDir, { recursive: true, force: true }); } catch {} });
 // Default signal death skips 'exit' handlers (observed: SIGTERM left a stale
 // lock behind). Route signals through process.exit so the lock is released.
+// Set once the sync itself starts: a run stopped by a signal (the version check
+// terminates an older worker) leaves a line in the sync log instead of nothing.
+let __syncStartedAt: number | null = null;
 for (const sig of ['SIGTERM', 'SIGINT'] as const) {
-  process.on(sig, () => process.exit(143));
+  process.on(sig, () => {
+    if (__syncStartedAt !== null) {
+      appendSyncLog({ action: 'terminated', version: __myVersion, duration_ms: Date.now() - __syncStartedAt, signal: sig });
+    }
+    process.exit(143);
+  });
 }
 
 const sourceDir = path.join(os.homedir(), '.claude', 'projects');
@@ -208,8 +217,15 @@ console.log('Syncing conversations...');
 console.log(`Source: ${sourceDir}`);
 console.log(`Destination: ${destDir}\n`);
 
+__syncStartedAt = Date.now();
 syncConversations(sourceDir, destDir)
   .then(result => {
+    // The hook runs this detached with stdio ignored — the log line is the only trace.
+    appendSyncLog({
+      action: 'ran', version: __myVersion, duration_ms: Date.now() - (__syncStartedAt ?? Date.now()),
+      copied: result.copied, skipped: result.skipped, indexed: result.indexed, summarized: result.summarized,
+      errors: result.errors,
+    });
     console.log(`\n✅ Sync complete!`);
     console.log(`  Copied: ${result.copied}`);
     console.log(`  Skipped: ${result.skipped}`);
@@ -227,6 +243,10 @@ syncConversations(sourceDir, destDir)
     }
   })
   .catch(error => {
+    appendSyncLog({
+      action: 'failed', version: __myVersion, duration_ms: Date.now() - (__syncStartedAt ?? Date.now()),
+      error: error instanceof Error ? error.message : String(error),
+    });
     console.error('Error syncing:', error);
     process.exit(1);
   });
