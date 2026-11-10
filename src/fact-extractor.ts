@@ -424,6 +424,15 @@ export function failureConsumesBudget(kind: ExtractionFailureKind): boolean {
   return FAILURE_REPORT[kind].consumesBudget;
 }
 
+/** runFactExtraction 의 결과. `skipped` 가 있으면 이 세션은 이번 실행에서 처리되지 않았다. */
+export interface ExtractionRunResult {
+  extracted: number;
+  saved: number;
+  skipped?:
+    | 'claim_not_acquired' | 'claim_error'
+    | 'excluded_project' | 'excluded_project_unmarked'
+    | 'not_indexed';
+}
 
 export async function runFactExtraction(
   db: Database.Database,
@@ -443,8 +452,11 @@ export async function runFactExtraction(
    * "fact 0건 처리 완료"와 구분하지 못해 정상 세션으로 계상하고, 유일한 흔적인
    * console.error 는 detached 워커의 stdio:'ignore' 로 폐기된다 — 무경보 기아
    * (Codex R18 독립 발견).
+   *
+   * `not_indexed`: 이 세션의 교환이 색인 DB 에 하나도 없다. 마커를 쓰지 않으므로
+   * 색인된 뒤 backfill 이 다시 집는다.
    */
-): Promise<{ extracted: number; saved: number; skipped?: 'claim_not_acquired' | 'claim_error' | 'excluded_project' | 'excluded_project_unmarked' }> {
+): Promise<ExtractionRunResult> {
   // Skip self-referential repos (memory-bank's own monitoring sessions) — mark
   // as processed with zero facts so they are never re-attempted, no LLM calls.
   if (isExcludedProject(project)) {
@@ -486,6 +498,27 @@ export async function runFactExtraction(
       extracted: 0, saved: 0,
       skipped: markerWritten ? 'excluded_project' : 'excluded_project_unmarked',
     };
+  }
+
+  // 🚨 색인된 교환이 0개인 세션은 "0건 처리 완료"가 아니다 — 아직 입력이 없는 것이다.
+  // 색인은 SessionStart 의 sync 에서만 일어나고 이 함수는 SessionEnd 에 불리므로,
+  // 여기서 0/0 완료 마커를 쓰면 정상 종료한 세션이 pending 에서 영구 제외된다
+  // (실측 2026-11-10: 7월 이후 0건 마커 15,833개 중 6,548개가 지금은 실질 교환이 있다).
+  // 마커도 claim 도 남기지 않고 사유만 돌려준다 — 색인된 뒤 backfill 이 다시 집는다.
+  let indexedExchanges: number;
+  try {
+    indexedExchanges = (db.prepare('SELECT COUNT(*) AS n FROM exchanges WHERE session_id = ?')
+      .get(sessionId) as { n: number }).n;
+  } catch (e) {
+    // 선점 전의 DB 오류 — 마커·예산에 아무 변화가 없으므로 실패 분류기에 넘기지 않는다.
+    console.error(
+      `extraction: session ${sessionId} — 색인 교환 수 조회 실패(${e instanceof Error ? e.message : String(e)}), 이번 실행은 보류합니다`,
+    );
+    return { extracted: 0, saved: 0, skipped: 'claim_error' };
+  }
+  if (indexedExchanges === 0) {
+    console.error(`extraction: session ${sessionId} — 색인된 교환 0개, 완료 마커를 쓰지 않습니다(not_indexed)`);
+    return { extracted: 0, saved: 0, skipped: 'not_indexed' };
   }
 
   // 🚨 LLM 을 부르기 **전에** 세션을 선점한다. SessionEnd 훅과 backfill 워커는

@@ -7,6 +7,10 @@
  *   SESSION_ID - session to extract facts from (required)
  *   CWD        - project path used for fact scoping (canonical: absolute path)
  *
+ * Order: index this session's transcript, then extract. Conversations are
+ * otherwise indexed only by the SessionStart sync, so at SessionEnd the index
+ * usually does not hold this session yet.
+ *
  * Logs to <index-dir>/fact-extract.log so extraction is observable
  * (the parent hook runs with stdio ignored).
  */
@@ -15,6 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { initDatabase } from '../dist/db.js';
 import { runFactExtraction, classifyExtractionFailure, FAILURE_REPORT } from '../dist/fact-extractor.js';
+import { preindexSession } from '../dist/session-preindex.js';
 import { getIndexDir } from '../dist/paths.js';
 
 function log(line) {
@@ -38,6 +43,18 @@ async function main() {
 
   log(`worker: extracting session=${sessionId} project=${project}`);
 
+  // 추출보다 색인이 먼저다. 색인은 SessionStart 의 sync 에서만 일어나므로, 이 단계가
+  // 없으면 방금 끝난 세션은 색인 DB 에 교환이 0개이거나 일부만 있는 채로 추출된다.
+  // 색인이 실패해도 추출 단계로 간다 — 색인된 교환이 없으면 추출이 스스로
+  // not_indexed 로 건너뛰고 마커를 남기지 않는다.
+  let pre;
+  try {
+    pre = await preindexSession(sessionId);
+  } catch (e) {
+    pre = { status: 'failed', error: e instanceof Error ? e.message : String(e) };
+  }
+  log(`worker: preindex session=${sessionId} status=${pre?.status}${pre?.error ? ` — ${pre.error}` : ''}`);
+
   let db;
   try {
     db = initDatabase();
@@ -45,7 +62,12 @@ async function main() {
     // skipped 를 무시하면 claim 미획득·보류가 'extracted=0 saved=0' 정상 처리와
     // 구분되지 않아 DB 장애가 무경보로 남는다(R19 — backfill 에서 닫은 결함이
     // 이쪽에 그대로 있었다).
-    if (result.skipped) {
+    if (result.skipped === 'not_indexed') {
+      log(
+        `worker: SKIPPED (not_indexed) session=${sessionId} — 색인된 대화 0건(preindex=${pre?.status}), `
+        + '완료 마커를 쓰지 않음: 색인된 뒤 backfill 이 처리',
+      );
+    } else if (result.skipped) {
       log(`worker: SKIPPED (${result.skipped}) session=${sessionId} — 처리하지 않음`);
     } else {
       log(`worker: session=${sessionId} extracted=${result.extracted} saved=${result.saved}`);

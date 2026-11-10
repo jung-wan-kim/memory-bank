@@ -256,6 +256,10 @@ async function main() {
           } else if (result.skipped === 'claim_not_acquired') {
             buckets.handoff += 1;
             log(`session ${next.sid}: HANDOFF (claim_not_acquired) — 다른 러너가 처리 중`);
+          } else if (result.skipped === 'not_indexed') {
+            // 선정 뒤에 이 세션의 교환이 색인에서 사라졌다(재색인·정리). 마커가 없으니
+            // 다시 색인되면 다음 run 이 집는다 — 장애가 아니므로 경보로 세지 않는다.
+            log(`session ${next.sid}: skip (not_indexed) — 색인된 교환 0건, 마커 없음`);
           } else {
             buckets.transient += 1;
             escalateFailures += 1;
