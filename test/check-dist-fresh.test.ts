@@ -18,9 +18,9 @@ import { fileURLToPath } from 'node:url';
  * comparing bytes — REL-3: the check must pass on a fresh clone and still fail
  * when a source changed and dist/ was not rebuilt.
  *
- * Runs against a small project in a temp dir, built with this repository's own
- * tsc and esbuild. The project has its own node_modules/fake-dep, the stand-in
- * for an inlined third-party package.
+ * Runs against a small project in a temp dir (see fixtureBase for which one),
+ * built with this repository's own tsc and esbuild. The project has its own
+ * node_modules/fake-dep, the stand-in for an inlined third-party package.
  */
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -30,6 +30,38 @@ const ESBUILD = 'esbuild src/mcp-server.ts --bundle --platform=node --format=esm
 const BUNDLE = `${ESBUILD} && node scripts/stamp-bundle.mjs`;
 const STAMP_LINE = /\n\/\/ memory-bank-bundle-stamp v1 inputs=[0-9a-f]{64} body=[0-9a-f]{64}\n$/;
 
+/**
+ * Where the fixture project is made (R2-REL-4).
+ *
+ * esbuild lists every ancestor folder of the project it bundles, up to the root (`--log-level=verbose`:
+ * "Read N entries for directory …"). A project under os.tmpdir() therefore has each of this file's ~40 esbuild
+ * runs list the temp folder itself. On macOS that is the per-user folder, which nothing empties while the machine
+ * is up: 159,481 entries on the Mac that builds the releases — 82-142 ms per run when idle against 5 ms elsewhere,
+ * and with the machine loaded one listing took minutes and this file timed out in beforeAll. /tmp is another
+ * folder there (the system's: under 1,000 entries).
+ *
+ * So: os.tmpdir(), unless it is crowded and /tmp is not. Only the project's place matters — esbuild does not
+ * list the folders its output files go to, so the scripts' own temp dirs stay where they are.
+ */
+const CROWDED_ENTRIES = 10_000;
+
+/** Whether `dir` holds at least `limit` entries — reading no more than `limit` of them. */
+function holdsAtLeast(dir: string, limit: number): boolean {
+  const handle = fs.opendirSync(dir);
+  try {
+    for (let n = 0; n < limit; n++) if (handle.readSync() === null) return false;
+    return true;
+  } finally {
+    handle.closeSync();
+  }
+}
+
+/** The first of `candidates` that exists and is not crowded; the first one when none is (nothing better is known). */
+function fixtureBase(candidates: string[], limit = CROWDED_ENTRIES): string {
+  return candidates.find((dir) => fs.existsSync(dir) && !holdsAtLeast(dir, limit)) ?? candidates[0];
+}
+
+let base: string;
 let project: string;
 
 function bin(name: string): string {
@@ -100,8 +132,9 @@ function installFakeDep(version: string): void {
 const GREETING = `export const greeting: string = 'hello';\n`;
 
 beforeAll(() => {
-  // realpath: os.tmpdir() is a symlink on macOS, and the scripts compare real paths.
-  project = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mb-dist-check-')));
+  base = fixtureBase([os.tmpdir(), '/tmp']);
+  // realpath: os.tmpdir() and /tmp are symlinks on macOS, and the scripts compare real paths.
+  project = fs.realpathSync(fs.mkdtempSync(path.join(base, 'mb-dist-check-')));
   fs.mkdirSync(at('src'));
   writePackageJson();
   fs.writeFileSync(at('tsconfig.json'), fs.readFileSync(path.join(REPO, 'tsconfig.json')));
@@ -270,7 +303,8 @@ describe('scripts/check-dist-fresh.mjs', () => {
   it('refuses a fresh bundle that was built where node_modules is a link to another folder (it carries that machine\'s paths)', () => {
     // A git worktree whose node_modules points at another checkout: esbuild names each inlined
     // module by its real path, which leaves the project — `// ../<elsewhere>/node_modules/fake-dep/…`.
-    const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mb-dist-elsewhere-')));
+    // Next to the project: esbuild follows the link and lists that folder's ancestors too, and the rename below stays on one volume.
+    const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(base, 'mb-dist-elsewhere-')));
     const portable = fs.readFileSync(at('dist', 'mcp-server.js'));
     expect(portable.toString('utf8')).toContain('// node_modules/fake-dep/index.js');
     try {
@@ -350,6 +384,46 @@ describe('scripts/check-dist-fresh.mjs', () => {
     expect(pkg.scripts.build).toBe('tsc && npm run bundle');
     expect(pkg.scripts.bundle).toMatch(/^esbuild src\/mcp-server\.ts .*--outfile=dist\/mcp-server\.js.* && node scripts\/stamp-bundle\.mjs$/);
   });
+});
+
+describe('where the fixture project is made (esbuild lists every ancestor folder of a project)', () => {
+  it('passes over a crowded temp folder for one that is not, and keeps the first when none is better', () => {
+    const crowded = fs.mkdtempSync(path.join(base, 'mb-dist-crowded-'));
+    const roomy = fs.mkdtempSync(path.join(base, 'mb-dist-roomy-'));
+    try {
+      for (const name of ['a', 'b', 'c']) fs.writeFileSync(path.join(crowded, name), '');
+      fs.writeFileSync(path.join(roomy, 'a'), '');
+      expect(holdsAtLeast(crowded, 3)).toBe(true);
+      expect(holdsAtLeast(crowded, 4)).toBe(false);
+      expect(holdsAtLeast(roomy, 3)).toBe(false);
+      expect(fixtureBase([crowded, roomy], 3)).toBe(roomy);
+      expect(fixtureBase([roomy, crowded], 3)).toBe(roomy);
+      expect(fixtureBase([crowded, path.join(roomy, 'no-such-folder')], 3), 'a folder that does not exist is no candidate').toBe(crowded);
+      expect(fixtureBase([crowded, crowded], 3), 'none is better: the first').toBe(crowded);
+    } finally {
+      fs.rmSync(crowded, { recursive: true, force: true });
+      fs.rmSync(roomy, { recursive: true, force: true });
+    }
+  });
+
+  it('this run\'s project is under the folder chosen that way, and esbuild read no crowded folder to bundle it', () => {
+    expect(path.dirname(project)).toBe(fs.realpathSync(base));
+    const probe = at('listing-probe.js');
+    const esbuild = spawnSync(bin('esbuild'), [...ESBUILD.split(' ').slice(1, -1), `--outfile=${probe}`, '--log-level=verbose'], { cwd: project, encoding: 'utf8' });
+    try {
+      expect(esbuild.status, esbuild.stderr).toBe(0);
+      const listed = [...esbuild.stderr.matchAll(/Read (\d+) entries for directory "([^"]+)"/g)].map((m) => ({ entries: Number(m[1]), dir: m[2] }));
+      // Every ancestor is listed — which is why the project's place matters. (If esbuild stops reporting this,
+      // see whether it still lists them before trusting the check below.)
+      expect(listed.map((l) => l.dir), 'the folders esbuild --log-level=verbose says it listed').toEqual(
+        expect.arrayContaining([project, path.dirname(project), path.parse(project).root]));
+      // Unless every candidate is crowded: then there was nowhere better to go.
+      const nowhereBetter = [os.tmpdir(), '/tmp'].every((dir) => !fs.existsSync(dir) || holdsAtLeast(dir, CROWDED_ENTRIES));
+      if (!nowhereBetter) expect(listed.filter((l) => l.entries >= CROWDED_ENTRIES)).toEqual([]);
+    } finally {
+      fs.rmSync(probe, { force: true });
+    }
+  }, 120_000);
 });
 
 describe('scripts/stamp-bundle.mjs', () => {
