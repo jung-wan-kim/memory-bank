@@ -132,4 +132,52 @@ describe('liveApply', () => {
     expect(fs.readFileSync(path.join(base, '1.0.0', 'dist', 'x.js'), 'utf8')).toBe('OLD');
     fs.rmSync(lockDir, { recursive: true, force: true });
   });
+
+  /** Writes files (path relative to the version dir → content). */
+  function put(dir: string, files: Record<string, string>) {
+    for (const [rel, content] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      fs.writeFileSync(path.join(dir, rel), content);
+    }
+  }
+  const read = (dir: string, rel: string) => fs.readFileSync(path.join(dir, rel), 'utf8');
+
+  it('moves ui/ and prompts/ too: the dashboard of an older-named dir must not keep serving old code (COMPAT-07)', () => {
+    const old = mkVersion('1.7.7', '1.7.7', 'OLD', { a: '1' });
+    put(old, { 'ui/server.cjs': 'OLD UI', 'ui/removed-in-new.cjs': 'gone', 'prompts/search-agent.md': 'old prompt' });
+    const self = mkVersion('1.8.0', '1.8.0', 'NEW', { a: '1' });
+    put(self, { 'ui/server.cjs': 'NEW UI', 'ui/server-guards.cjs': 'GUARDS', 'prompts/search-agent.md': 'new prompt' });
+
+    const r = liveApply(self, () => {});
+    expect(r.applied).toEqual([{ dir: '1.7.7', from: '1.7.7', to: '1.8.0' }]);
+    expect(read(old, 'ui/server.cjs')).toBe('NEW UI');
+    // The new server requires its guards file: the two must arrive together.
+    expect(read(old, 'ui/server-guards.cjs')).toBe('GUARDS');
+    expect(fs.existsSync(path.join(old, 'ui', 'removed-in-new.cjs'))).toBe(false);
+    expect(read(old, 'prompts/search-agent.md')).toBe('new prompt');
+    // The code it replaced is in the backup.
+    expect(read(path.join(marketplace, '.live-apply-backup', '1.7.7-1.7.7'), 'ui/server.cjs')).toBe('OLD UI');
+  });
+
+  it('leaves a locally generated ui/relations/data.json where it is: not taken from the newer dir, not dropped, not copied to the backup', () => {
+    // data.json is made on the machine from the user's own facts (gitignored) — it is not part of a release.
+    const withData = mkVersion('1.7.7', '1.7.7', 'OLD', { a: '1' });
+    put(withData, { 'ui/relations/app.js': 'old app', 'ui/relations/data.json': 'DATA OF 1.7.7' });
+    const without = mkVersion('1.7.8', '1.7.8', 'OLD', { a: '1' });
+    put(without, { 'ui/relations/app.js': 'old app' });
+    const noUi = mkVersion('1.7.9', '1.7.9', 'OLD', { a: '1' });
+    const self = mkVersion('1.8.0', '1.8.0', 'NEW', { a: '1' });
+    put(self, { 'ui/relations/app.js': 'new app', 'ui/relations/data.json': 'DATA OF 1.8.0' });
+
+    const r = liveApply(self, () => {});
+    expect(r.applied.map((a: { dir: string }) => a.dir).sort()).toEqual(['1.7.7', '1.7.8', '1.7.9']);
+    for (const dir of [withData, without, noUi]) expect(read(dir, 'ui/relations/app.js')).toBe('new app');
+    expect(read(withData, 'ui/relations/data.json')).toBe('DATA OF 1.7.7');
+    expect(fs.existsSync(path.join(without, 'ui', 'relations', 'data.json'))).toBe(false);
+    expect(fs.existsSync(path.join(noUi, 'ui', 'relations', 'data.json'))).toBe(false);
+    expect(read(self, 'ui/relations/data.json')).toBe('DATA OF 1.8.0');
+    const backup = path.join(marketplace, '.live-apply-backup', '1.7.7-1.7.7');
+    expect(read(backup, 'ui/relations/app.js')).toBe('old app');
+    expect(fs.existsSync(path.join(backup, 'ui', 'relations', 'data.json'))).toBe(false);
+  });
 });
