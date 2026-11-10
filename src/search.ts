@@ -116,6 +116,28 @@ const RRF_K = 60;
 const TEXT_LOOKAHEAD_MAX = 4096;
 
 /**
+ * A coding_agent filter on at most this many rows is applied in the keyword query from the agent's own row
+ * list (idx_coding_agent, read once per query) instead of from each matching exchange row.
+ *
+ * The keyword query always scans the keyword index first (see filteredSql). How the agent condition is then
+ * tested decides the cost, measured on a 341,840-row index (ms, first run, `limit` 10):
+ *   rows of the agent          0     457    5,017   20,133   316,233
+ *   test on the exchange row   1,500–4,800  48–1,600  4–64   1–79    1–18
+ *   test on the row list       4–55         4–51      2–21   8–24    21–61
+ * Testing the row opens every match of the query until `limit` rows pass, and the agent column sits behind
+ * the message text (overflow pages) — cheap when most rows pass, seconds when few do. The row list costs one
+ * index read of the agent's rows per query — cheap while the list is short.
+ */
+export const RARE_AGENT_ROWS = 20_000;
+
+/** Rows that carry `agent`, counted no further than RARE_AGENT_ROWS + 1 (index-only; under 6 ms measured). */
+function countAgentRows(db: DatabaseType.Database, agent: string): number {
+  return (db.prepare(
+    'SELECT count(*) AS c FROM (SELECT 1 FROM exchanges WHERE coding_agent = ? LIMIT ?)'
+  ).get(agent, RARE_AGENT_ROWS + 1) as { c: number }).c;
+}
+
+/**
  * One query token as an FTS5 term. A Hangul word of two or more characters is a PREFIX term: unicode61
  * splits on whitespace, so a word with a particle attached ("검색을") is a different token from the bare
  * word ("검색") and an exact term misses it (measured: 6–22% of the matches of common words). Everything
@@ -231,6 +253,9 @@ export async function searchConversationsDetailed(
   let folded = 0;
   let vectorRows: ExchangeRow[] = [];
   let textRows: ExchangeRow[] = [];
+  // null = no agent filter. 0 = no exchange carries the agent: nothing can pass, so neither pass runs
+  // (the vector pass would otherwise scan to the sqlite-vec ceiling and report "cut short").
+  const agentRows = coding_agent ? countAgentRows(db, coding_agent) : null;
 
   const cols = `
           e.id,
@@ -246,17 +271,27 @@ export async function searchConversationsDetailed(
   {
     // Build filter clauses with parameterized queries
     const filterParts: string[] = [];
+    // The same filters as the keyword query writes them (same parameters, same order) — only the agent
+    // condition differs, see RARE_AGENT_ROWS.
+    const ftsFilterParts: string[] = [];
     const filterParams: string[] = [];
     if (after) {
       filterParts.push(`e.timestamp >= ?`);
+      ftsFilterParts.push(`e.timestamp >= ?`);
       filterParams.push(after);
     }
     if (before) {
       filterParts.push(`e.timestamp <= ?`);
+      ftsFilterParts.push(`e.timestamp <= ?`);
       filterParams.push(before);
     }
     if (coding_agent) {
       filterParts.push(`e.coding_agent = ?`);
+      // Unary plus: the condition must stay a test on each keyword match. Without it SQLite may turn the
+      // list into the outer loop and probe the keyword index once per listed row.
+      ftsFilterParts.push((agentRows ?? 0) <= RARE_AGENT_ROWS
+        ? `+fts.rowid IN (SELECT a.rowid FROM exchanges AS a WHERE a.coding_agent = ?)`
+        : `e.coding_agent = ?`);
       filterParams.push(coding_agent);
     }
     const timeClause = filterParts.length > 0 ? `AND ${filterParts.join(' AND ')}` : '';
@@ -265,6 +300,7 @@ export async function searchConversationsDetailed(
     const noiseClause = include_noise ? '' : `AND NOT ${NOISE_EXCHANGE_SQL}`;
     // Every condition on the exchange row: the caller's filters plus the noise exclusion.
     const rowClause = [timeClause, noiseClause].filter(Boolean).join(' ');
+    const ftsRowClause = [ftsFilterParts.length > 0 ? `AND ${ftsFilterParts.join(' AND ')}` : '', noiseClause].filter(Boolean).join(' ');
 
     /** Display rows of the given ids (the full message text is read only here). */
     const fetchRows = (ids: string[]): Map<string, ExchangeRow> => {
@@ -279,7 +315,9 @@ export async function searchConversationsDetailed(
       return byId;
     };
 
-    if (mode === 'vector' || mode === 'both') {
+    if (agentRows === 0) {
+      if (mode !== 'text') meta.vector = { k: 0, candidates: 0, matched: 0, truncated: false };
+    } else if (mode === 'vector' || mode === 'both') {
       // Vector similarity search
       await initEmbeddings();
       const queryEmbedding = await generateEmbedding(query, 'query');
@@ -455,6 +493,14 @@ export async function searchConversationsDetailed(
             // inner-limit over-fetch was reproduced hiding a valid old row
             // behind 250 newer matches) — so they use the join-then-sort
             // form; filters shrink the materialized set instead.
+            // That form fixes the join order with CROSS JOIN: the keyword
+            // index is scanned once, each match is then looked up by rowid.
+            // Left to the planner (the index has no statistics), a
+            // coding_agent filter made idx_coding_agent the outer loop — one
+            // keyword-index probe per row of the agent: 12 s for an English
+            // query and 300 s for a Korean (prefix) one on a 341,840-row
+            // index where every row is 'claude-code', the server answering
+            // nothing else meanwhile. Fixed order: 10–60 ms.
             //
             // No caller filter, machine noise left out (the default): the cheap
             // inner-limit form is kept, but it reads AHEAD of `limit` and marks
@@ -475,9 +521,9 @@ export async function searchConversationsDetailed(
             const filteredSql = (orderBy: string) => `
                   SELECT ${cols}, 0 as distance
                   FROM exchanges_fts AS fts
-                  JOIN exchanges AS e ON e.rowid = fts.rowid
+                  CROSS JOIN exchanges AS e ON e.rowid = fts.rowid
                   WHERE exchanges_fts MATCH ?
-                    ${rowClause}
+                    ${ftsRowClause}
                   ORDER BY ${orderBy.replace('rowid', 'fts.rowid')}
                   LIMIT ?
                 `;
@@ -625,7 +671,9 @@ export async function searchConversationsDetailed(
             // Contract: the text pass returns AT MOST `limit` rows in every
             // mode, all-token (AND/exact) matches always first — identical
             // fetch depth to the original all-AND implementation.
-            if (require_all_tokens) {
+            if (agentRows === 0) {
+              textResults = []; // no exchange carries the agent — nothing to look up
+            } else if (require_all_tokens) {
               textResults = ftsRows(ftsExpr, limit);
             } else if (ftsTokens.length <= MAX_FTS_TOKENS) {
               // Short query: AND first (precision — identical to original
