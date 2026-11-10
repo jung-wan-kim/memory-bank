@@ -407,7 +407,11 @@ node scripts/migrate-vec-facts-int8.mjs --dry-run                              #
 node scripts/migrate-vec-facts-int8.mjs --restore BACKUP.jsonl.gz              # back to float32 from its verified backup
 node scripts/reembed-rewritten-facts.mjs [--db PATH]                           # dry run: facts whose vector still describes a sentence consolidation rewrote (≤1.7.9); see the script header for --apply
 node scripts/dedupe-exact-facts.mjs [--db PATH] [--list]                       # dry run: same-scope facts with the same sentence; see the script header for --apply
+node scripts/redact-secret-facts.mjs [--db PATH]                               # dry run: stored facts that carry a credential-shaped string (id and kind only) — run once after upgrading from ≤1.7.9
+node scripts/requeue-zero-markers.mjs [--db PATH]                              # dry run: sessions marked "done, 0 facts" before they were indexed; --apply --limit N puts them back in the extraction queue (LLM calls)
 ```
+
+The cleanup scripts default to a dry run, change rows only with `--apply`, and can be put back (`--undo FILE` / `--restore TABLE`): [docs/index-maintenance.md](docs/index-maintenance.md#one-time-cleanup-scripts).
 
 ## 3D Knowledge Graph
 
