@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { initDatabase, getFileLastIndexed, isExchangeCurrent, deleteExchanges } from './db.js';
+import { initDatabase, isExchangeCurrent, deleteExchanges } from './db.js';
 import { getArchiveDir, getExcludedProjects, isExcludedProject } from './paths.js';
 import { archiveFileExists, canonicalArchiveName, removeArchiveFile, statArchiveFile } from './archive-io.js';
 import { parseGuarded } from './conversation-guard.js';
@@ -17,12 +17,26 @@ export interface VerificationResult {
    * `.jsonl.zst`). Reported only — repair deletes them just with pruneMissing.
    */
   orphaned: Array<{ uuid: string; path: string }>;
-  /** Conversations changed after they were indexed, holding an exchange the index does not have. */
+  /**
+   * Conversations holding an exchange the index does not have as it stands:
+   * changed after they were indexed, or indexed with a shorter snapshot of a
+   * turn than the file holds.
+   */
   outdated: Array<{ path: string; fileTime: number; dbTime: number }>;
   /** Files that could not be read to the end — never re-indexed, never judged "clean". */
   corrupted: Array<{ path: string; error: string }>;
-  /** What the repair thresholds are measured against. */
-  totals: { exchanges: number; conversations: number };
+  /**
+   * What the repair thresholds are measured against: indexed exchanges, the
+   * conversation files walked, and — of those files — the ones that hold
+   * something to index (not excluded, at least one indexable exchange).
+   */
+  totals: VerificationTotals;
+}
+
+export interface VerificationTotals {
+  exchanges: number;
+  conversations: number;
+  indexable: number;
 }
 
 /**
@@ -68,7 +82,7 @@ export async function verifyIndex(): Promise<VerificationResult> {
     orphaned: [],
     outdated: [],
     corrupted: [],
-    totals: { exchanges: 0, conversations: 0 }
+    totals: { exchanges: 0, conversations: 0, indexable: 0 }
   };
 
   const archiveDir = getArchiveDir();
@@ -82,6 +96,9 @@ export async function verifyIndex(): Promise<VerificationResult> {
   const db = initDatabase();
 
   try {
+    // One read of a file's rows gives both when it was last indexed and how far each indexed turn goes.
+    const rowsOfFile = db.prepare('SELECT line_start AS lineStart, line_end AS lineEnd, last_indexed AS lastIndexed FROM exchanges WHERE archive_path = ?');
+
     const conversations = listArchiveConversations({
       onExcludedProject: (project) => console.log("\nSkipping excluded project: " + project),
     });
@@ -112,27 +129,43 @@ export async function verifyIndex(): Promise<VerificationResult> {
       // worker prompts / machine noise): neither "missing" nor "not indexed".
       // Counting these made repair plan one LLM summary per warm-up file.
       if (indexable.length === 0) continue;
+      result.totals.indexable++;
 
       const summaryPath = conversationPath.replace('.jsonl', '-summary.txt');
       if (!archiveFileExists(summaryPath)) {
         result.missingSummary.push({ path: conversationPath });
       }
 
-      const lastIndexed = getFileLastIndexed(db, conversationPath);
+      let lastIndexed: number | null = null;
+      const indexedEndOfTurn = new Map<number, number>();
+      for (const row of rowsOfFile.all(conversationPath) as Array<{ lineStart: number; lineEnd: number; lastIndexed: number | null }>) {
+        if (row.lastIndexed !== null && (lastIndexed === null || row.lastIndexed > lastIndexed)) lastIndexed = row.lastIndexed;
+        if (row.lineEnd > (indexedEndOfTurn.get(row.lineStart) ?? -1)) indexedEndOfTurn.set(row.lineStart, row.lineEnd);
+      }
       if (lastIndexed === null) {
         result.notIndexed.push({ path: conversationPath });
         continue;
       }
 
-      // Outdated = modified after last_indexed AND holding an exchange the
-      // index lacks. The mtime alone is not enough: indexing skips exchanges
-      // that are already current, so a file that grew by a line that forms
-      // no new exchange keeps its old last_indexed.
+      // Outdated, either way:
+      //  - modified after last_indexed AND holding an exchange the index
+      //    lacks. The mtime alone is not enough: indexing skips exchanges that
+      //    are already current, so a file that grew by a line that forms no
+      //    new exchange keeps its old last_indexed.
+      //  - the index holds a turn of this file only up to an earlier line than
+      //    the file does. The mtime says nothing here: a shorter copy of the
+      //    turn written AFTER the file last changed (a sync that had read the
+      //    file earlier) is newer than the file and still incomplete.
       const fileStat = statArchiveFile(conversationPath);
-      if (fileStat && fileStat.mtimeMs > lastIndexed && indexable.some(e => !isExchangeCurrent(db, e.id))) {
+      const changedSince = fileStat !== null && fileStat.mtimeMs > lastIndexed && indexable.some(e => !isExchangeCurrent(db, e.id));
+      const shorterTurnIndexed = indexable.some(e => {
+        const indexedEnd = indexedEndOfTurn.get(e.lineStart);
+        return indexedEnd !== undefined && indexedEnd < e.lineEnd;
+      });
+      if (changedSince || shorterTurnIndexed) {
         result.outdated.push({
           path: conversationPath,
-          fileTime: fileStat.mtimeMs,
+          fileTime: fileStat?.mtimeMs ?? 0,
           dbTime: lastIndexed
         });
       }
@@ -175,6 +208,12 @@ export interface RepairOptions {
 export const REPAIR_THRESHOLD_RATIO = 0.05;
 /** Chosen, not measured: below this many items a share of a small index means nothing. */
 export const REPAIR_THRESHOLD_FLOOR = 20;
+/**
+ * Summary (LLM) calls a repair starts without `yes`, whatever share of the
+ * archive they are. Chosen, not measured: each call is a headless model
+ * session of 10-14s, so 100 is about 20 minutes of account usage.
+ */
+export const REPAIR_LLM_CALLS_MAX = 100;
 
 export interface RepairPlan {
   /** Rows whose file is gone. */
@@ -185,7 +224,7 @@ export interface RepairPlan {
   reindexFiles: number;
   /** Summary (LLM) calls: no summary file + outdated (0 with noSummaries). */
   summaryCalls: number;
-  totals: { exchanges: number; conversations: number };
+  totals: VerificationTotals;
   /** One line per count over its threshold; empty = the plan runs without `yes`. */
   overThreshold: string[];
 }
@@ -207,15 +246,24 @@ export function planRepair(issues: VerificationResult, opts: RepairOptions = {})
     totals: issues.totals,
     overThreshold: [],
   };
-  const check = (count: number, total: number, what: string, of: string) => {
-    const limit = Math.max(REPAIR_THRESHOLD_FLOOR, Math.floor(total * REPAIR_THRESHOLD_RATIO));
+  const check = (count: number, total: number, what: string, of: string, ceiling = Infinity) => {
+    // A total that is not a number (a hand-built result without it) is held to the floor, never to "no limit".
+    const share = Number.isFinite(total) ? Math.floor(total * REPAIR_THRESHOLD_RATIO) : 0;
+    const limit = Math.min(Math.max(REPAIR_THRESHOLD_FLOOR, share), ceiling);
     if (count > limit) {
-      plan.overThreshold.push(`${what}: ${count} is over ${limit} (${REPAIR_THRESHOLD_RATIO * 100}% of ${total} ${of}, at least ${REPAIR_THRESHOLD_FLOOR})`);
+      plan.overThreshold.push(
+        `${what}: ${count} is over ${limit} (${REPAIR_THRESHOLD_RATIO * 100}% of ${total} ${of}, at least ${REPAIR_THRESHOLD_FLOOR}` +
+        (ceiling === Infinity ? ')' : `, at most ${ceiling})`));
     }
   };
   check(plan.deleteRows, plan.totals.exchanges, 'rows to delete', 'indexed exchanges');
-  check(plan.reindexFiles, plan.totals.conversations, 'conversations to re-index', 'archived conversations');
-  check(plan.summaryCalls, plan.totals.conversations, 'summary (LLM) calls', 'archived conversations');
+  // Files and LLM calls are measured against the conversations that hold
+  // something to index — not every file in the archive. On the measured
+  // archive 272,274 files were walked and about 18,000 held a real exchange
+  // (the rest: agent warm-ups, observer files); 5% of all files was 13,613,
+  // a line no real count crossed, and 6,767 summary calls started unasked.
+  check(plan.reindexFiles, plan.totals.indexable, 'conversations to re-index', 'conversations with something to index');
+  check(plan.summaryCalls, plan.totals.indexable, 'summary (LLM) calls', 'conversations with something to index', REPAIR_LLM_CALLS_MAX);
   return plan;
 }
 
@@ -228,7 +276,7 @@ export function formatRepairPlan(plan: RepairPlan, opts: RepairOptions = {}): st
           : ' — kept (reported only; pass --prune-missing to back them up and delete them)'),
     `  conversations to re-index: ${plan.reindexFiles}`,
     `  summary (LLM) calls: ${plan.summaryCalls}` + (opts.noSummaries ? ' (--no-summaries)' : ''),
-    `  index size: ${plan.totals.exchanges} exchanges, ${plan.totals.conversations} archived conversations`,
+    `  index size: ${plan.totals.exchanges} exchanges, ${plan.totals.conversations} archived conversations (${plan.totals.indexable} with something to index)`,
   ];
 }
 

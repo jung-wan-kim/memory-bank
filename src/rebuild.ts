@@ -1,10 +1,11 @@
 import type Database from 'better-sqlite3';
 import fs from 'fs';
-import { EXCHANGES_FTS_AD_DDL, ensureExchangeTurnIndex, getVecQuant, initDatabase, vecParamSql } from './db.js';
+import { EXCHANGES_FTS_AD_DDL, ensureExchangeTurnIndex, getVecQuant, initDatabase, pauseForOtherWriters, vecParamSql } from './db.js';
 import { newBackupPath, writeRowBackup } from './row-backup.js';
 import { getArchiveDir } from './paths.js';
 import { removeAllSummaries } from './archive-io.js';
 import { verifyIndex, repairIndex, listArchiveConversations, RepairOutcome } from './verify.js';
+import { parseGuarded } from './conversation-guard.js';
 
 /**
  * `index --rebuild`: regenerate the CONVERSATION index and nothing else.
@@ -40,12 +41,19 @@ export interface RebuildReach {
   archiveConversations: number;
   /**
    * Indexed exchanges whose file is NOT one of those — in a sub-folder of its
-   * project, in an excluded project, or gone from the archive. Clearing them
-   * is final: no re-index of this code re-creates them.
+   * project, in an excluded project, or gone from the archive — or is one of
+   * them but cannot be read to its end (`unreadable`). Clearing them is final:
+   * no re-index of this code re-creates them.
    */
   unreachable: { exchanges: number; files: number };
   /** The archive paths of those exchanges (what the pre-rebuild backup copies). */
   unreachablePaths: string[];
+  /**
+   * The part of `unreachable` whose file IS among the conversations the
+   * re-index reads but fails to read (a `.zst` cut short, corrupt bytes, over
+   * the decompression cap). Zero until addUnreadableFiles has read the files.
+   */
+  unreadable: { exchanges: number; files: number };
 }
 
 /**
@@ -63,7 +71,46 @@ export function measureRebuildReach(db: Database.Database): RebuildReach {
     unreachable.files++;
     unreachablePaths.push(p);
   }
-  return { archiveConversations: listed.size, unreachable, unreachablePaths };
+  return { archiveConversations: listed.size, unreachable, unreachablePaths, unreadable: { exchanges: 0, files: 0 } };
+}
+
+/**
+ * Read every listed conversation that has indexed rows to its end — the way
+ * the re-index will — and count the rows of the ones that cannot be read as
+ * unreachable. "Its path is in the listing" is not "it can be re-created": a
+ * `.zst` the compressor was interrupted on is listed, and the re-index reports
+ * it unreadable and indexes nothing from it — after the clear that was the
+ * loss of every row of that conversation, with no backup and exit 0.
+ * Reads only. Costs one pass over those files (the re-index reads them again).
+ */
+export async function addUnreadableFiles(
+  db: Database.Database,
+  reach: RebuildReach,
+  opts: { onProgress?: (read: number) => void } = {},
+): Promise<Array<{ path: string; error: string }>> {
+  const rowsOfPath = new Map(
+    (db.prepare('SELECT archive_path AS p, count(*) AS n FROM exchanges GROUP BY archive_path').all() as Array<{ p: string; n: number }>)
+      .map((r) => [r.p, r.n]),
+  );
+  const already = new Set(reach.unreachablePaths);
+  const unreadable: Array<{ path: string; error: string }> = [];
+  let read = 0;
+  for (const { project, path: conversationPath } of listArchiveConversations()) {
+    const rows = rowsOfPath.get(conversationPath);
+    if (rows === undefined || already.has(conversationPath)) continue;
+    try {
+      await parseGuarded(conversationPath, project, conversationPath);
+    } catch (error) {
+      unreadable.push({ path: conversationPath, error: error instanceof Error ? error.message : String(error) });
+      reach.unreadable.exchanges += rows;
+      reach.unreadable.files++;
+      reach.unreachable.exchanges += rows;
+      reach.unreachable.files++;
+      reach.unreachablePaths.push(conversationPath);
+    }
+    opts.onProgress?.(++read);
+  }
+  return unreadable;
 }
 
 /**
@@ -77,10 +124,7 @@ export function backupExchangesOfPaths(
   archivePaths: readonly string[],
   backupPath: string,
 ): { exchanges: number; toolCalls: number } {
-  db.exec('CREATE TEMP TABLE IF NOT EXISTS rebuild_unreachable (p TEXT PRIMARY KEY)');
-  db.exec('DELETE FROM temp.rebuild_unreachable');
-  const add = db.prepare('INSERT OR IGNORE INTO temp.rebuild_unreachable (p) VALUES (?)');
-  db.transaction(() => { for (const p of archivePaths) add.run(p); })();
+  fillUnreachablePaths(db, archivePaths);
   try {
     const rows = 'SELECT * FROM exchanges WHERE archive_path IN (SELECT p FROM temp.rebuild_unreachable)';
     const counts = writeRowBackup(db, backupPath, [
@@ -89,6 +133,40 @@ export function backupExchangesOfPaths(
     ]);
     return { exchanges: counts.exchanges, toolCalls: counts.tool_calls };
   } finally {
+    db.exec('DELETE FROM temp.rebuild_unreachable');
+  }
+}
+
+function fillUnreachablePaths(db: Database.Database, archivePaths: readonly string[]): void {
+  db.exec('CREATE TEMP TABLE IF NOT EXISTS rebuild_unreachable (p TEXT PRIMARY KEY)');
+  db.exec('DELETE FROM temp.rebuild_unreachable');
+  const add = db.prepare('INSERT OR IGNORE INTO temp.rebuild_unreachable (p) VALUES (?)');
+  db.transaction(() => { for (const p of archivePaths) add.run(p); })();
+}
+
+/**
+ * How many exchanges indexed from the given archive paths are NOT in the
+ * backup written by backupExchangesOfPaths. The backup copies a read snapshot
+ * (it does not hold the write lock — see writeRowBackup), so a row another
+ * process indexed while it was being written is not in it; the rebuild is
+ * about to clear every row, and for these files no re-index brings one back.
+ * Reads only.
+ */
+export function exchangesMissingFromBackup(
+  db: Database.Database,
+  archivePaths: readonly string[],
+  backupPath: string,
+): number {
+  fillUnreachablePaths(db, archivePaths);
+  db.exec(`ATTACH DATABASE '${backupPath.replace(/'/g, "''")}' AS bak`);
+  try {
+    return (db.prepare(`
+      SELECT count(*) AS n FROM exchanges
+      WHERE archive_path IN (SELECT p FROM temp.rebuild_unreachable)
+        AND id NOT IN (SELECT id FROM bak.exchanges WHERE id IS NOT NULL)
+    `).get() as { n: number }).n;
+  } finally {
+    db.exec('DETACH DATABASE bak');
     db.exec('DELETE FROM temp.rebuild_unreachable');
   }
 }
@@ -132,14 +210,29 @@ export function backupFactLayer(db: Database.Database, backupPath: string): Reco
 /**
  * Swap vec_exchanges for a fresh table of the same DDL that holds only the
  * vectors of the rows `exchanges` has right now, and rebuild the FTS index
- * from the content table — one write transaction.
+ * from the content table — two write transactions with a pause between them,
+ * the vectors and then the text index. As one they held the write lock for over 5s at the end of a
+ * rebuild of a large index (dropping 341,840 vectors: 2.3s, emptying the text
+ * index: 1.5s with a warm cache, more with a cold one), and every other
+ * process's write failed after its 5s wait. A row another process indexes
+ * between the two is indexed by the insert trigger and read again by the
+ * 'rebuild'; a run that dies between them leaves the text index marked "not
+ * built" (search scans), as an interrupted clear does.
  *
  * After a clear, `exchanges` is empty or holds the few rows another process
  * indexed since the last delete batch; those keep their vector (same bytes),
  * so no exchange row is ever left without one.
  */
-export function resetVectorsAndTextIndex(db: Database.Database): { vectorsKept: number } {
-  return db.transaction(() => {
+export function resetVectorsAndTextIndex(
+  db: Database.Database,
+  opts: {
+    /** Called between the two transactions (none is open). */
+    onVectorsReset?: () => void;
+    /** Wait between the two (default DELETE_BATCH_PAUSE_MS). 0 = none. */
+    pauseMs?: number;
+  } = {},
+): { vectorsKept: number } {
+  const vectorsKept = db.transaction(() => {
     const ddl = (db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'vec_exchanges'`).get() as { sql: string } | undefined)?.sql;
     if (!ddl) throw new Error('vec_exchanges: table does not exist');
     const getVector = db.prepare('SELECT embedding FROM vec_exchanges WHERE id = ?');
@@ -157,18 +250,37 @@ export function resetVectorsAndTextIndex(db: Database.Database): { vectorsKept: 
     const quant = getVecQuant(db, 'vec_exchanges');
     const insertVector = db.prepare(`INSERT INTO vec_exchanges (id, embedding) VALUES (?, ${vecParamSql(quant)})`);
     for (const s of survivors) insertVector.run(s.id, s.embedding);
+    return survivors.length;
+  }).immediate();
+  opts.onVectorsReset?.();
+  // Two transactions with nothing between them are one long hold to a process
+  // that retries the lock every 100ms: it needs a gap it can land in.
+  pauseForOtherWriters(opts.pauseMs);
 
+  db.transaction(() => {
     db.exec(`INSERT INTO exchanges_fts(exchanges_fts) VALUES('rebuild')`);
     // The index now holds exactly what the content table holds, and the
     // triggers index every later insert — so it is complete, whatever the flag said.
     db.prepare(`INSERT OR REPLACE INTO fts_meta(key, value) VALUES('exchanges_fts_built', '1')`).run();
-    return { vectorsKept: survivors.length };
   }).immediate();
+  return { vectorsKept };
 }
+
+/**
+ * While clearing, batches follow each other at once: a process waiting for
+ * the write lock retries every 100ms at most and has only the microseconds
+ * between two batches to land in. After this long without a gap the clear
+ * waits (pauseForOtherWriters) before its next batch. Measured on a 341,840
+ * exchange index: a waiter sat through the last exchange batches and the
+ * vector reset — 4.6s to 5.1s, at the edge of its 5s limit.
+ */
+export const CLEAR_YIELD_EVERY_MS = 1000;
 
 export interface ClearOptions {
   /** Rows per transaction. Default 2000. */
   batchSize?: number;
+  /** Length of each wait for other writers (default DELETE_BATCH_PAUSE_MS). 0 = none. */
+  pauseMs?: number;
   /** Called after each committed batch (progress; other connections can write here). */
   onBatch?: (progress: { table: 'tool_calls' | 'exchanges'; deleted: number }) => void;
 }
@@ -203,6 +315,12 @@ export function clearConversationIndex(db: Database.Database, opts: ClearOptions
   const batchSize = opts.batchSize ?? 2000;
   if (!Number.isInteger(batchSize) || batchSize < 1) throw new Error(`invalid batch size: ${batchSize}`);
   const cleared = { exchanges: 0, toolCalls: 0 };
+  let lastGap = Date.now();
+  const letOthersIn = (always = false): void => {
+    if (!always && Date.now() - lastGap < CLEAR_YIELD_EVERY_MS) return;
+    pauseForOtherWriters(opts.pauseMs);
+    lastGap = Date.now();
+  };
 
   // 1. tool_calls first (children of exchanges; no trigger on this table).
   const deleteToolCalls = db.prepare('DELETE FROM tool_calls WHERE rowid IN (SELECT rowid FROM tool_calls LIMIT ?)');
@@ -211,6 +329,7 @@ export function clearConversationIndex(db: Database.Database, opts: ClearOptions
     if (changes === 0) break;
     cleared.toolCalls += changes;
     opts.onBatch?.({ table: 'tool_calls', deleted: cleared.toolCalls });
+    letOthersIn();
   }
 
   // Before the first trigger-free delete: mark the text index as not built, so
@@ -237,10 +356,13 @@ export function clearConversationIndex(db: Database.Database, opts: ClearOptions
     if (changes === 0) break;
     cleared.exchanges += changes;
     opts.onBatch?.({ table: 'exchanges', deleted: cleared.exchanges });
+    letOthersIn();
   }
 
-  // 3. Vectors + FTS (one transaction — see resetVectorsAndTextIndex).
-  resetVectorsAndTextIndex(db);
+  // 3. Vectors, then FTS (a transaction each — see resetVectorsAndTextIndex).
+  //    The vector reset is the longest hold of the clear: a gap right before it.
+  letOthersIn(true);
+  resetVectorsAndTextIndex(db, { pauseMs: opts.pauseMs });
 
   // 4. An empty table is when the (archive_path, line_start) index costs
   //    nothing to build — see ensureExchangeTurnIndex (it does nothing if
@@ -294,20 +416,30 @@ export class RebuildWouldLoseIndexError extends Error {
     super(
       `rebuild refused — nothing was changed. ${reach.unreachable.exchanges} indexed exchange(s) from ${reach.unreachable.files} file(s) ` +
       `cannot be re-created: their file is not among the ${reach.archiveConversations} archive conversation(s) the re-index reads ` +
-      `(it is in a sub-folder of its project, in an excluded project, or gone). ` +
-      `Pass --allow-index-loss to clear them anyway.`);
+      `(it is in a sub-folder of its project, in an excluded project, or gone)` +
+      (reach.unreadable.files > 0
+        ? `, or it cannot be read to the end (${reach.unreadable.exchanges} exchange(s) from ${reach.unreadable.files} damaged file(s))`
+        : '') +
+      `. Pass --allow-index-loss to clear them anyway (they are backed up first).`);
     this.name = 'RebuildWouldLoseIndexError';
   }
 }
 
 export function formatRebuildCounts(counts: RebuildCounts, reach: RebuildReach): string[] {
   const p = counts.preserved;
+  // An upper bound: the rows whose file the re-index reads. How many of those
+  // the current rules index again is only known by reading every row's text.
+  const reCreatable = Math.max(0, counts.cleared.exchanges - reach.unreachable.exchanges);
   return [
     `Preserved: ${p.facts} facts (${p.activeFacts} active, ${p.taggedFacts} tagged), ${p.relations} relations, ` +
       `${p.revisions} revisions, ${p.domains} domains / ${p.categories} categories, ${p.extractionLog} extraction log rows`,
-    `Cleared and re-created from the archive: ${counts.cleared.exchanges} exchanges, ` +
-      `${counts.cleared.toolCalls} tool calls, ${counts.cleared.vectors} vectors`,
-    `Re-index source: ${reach.archiveConversations} archive conversation(s)`,
+    // What is cleared and what can come back are different numbers: this line
+    // used to read "Cleared and re-created from the archive: <every row>",
+    // two lines above the count of the rows that are not re-created.
+    `Cleared: ${counts.cleared.exchanges} exchanges, ${counts.cleared.toolCalls} tool calls, ${counts.cleared.vectors} vectors`,
+    `Re-index source: ${reach.archiveConversations} archive conversation(s) — at most ${reCreatable} of the ` +
+      `${counts.cleared.exchanges} cleared exchanges are indexed from them and can be re-created`,
+    `  (fewer when today's indexing rules skip some of them: agent warm-up turns, observer sessions and the plugin's own worker prompts are not indexed again)`,
     `Cleared and NOT re-created (file not among them): ${reach.unreachable.exchanges} exchanges from ${reach.unreachable.files} file(s)`,
   ];
 }
@@ -337,6 +469,12 @@ export async function rebuildConversationIndex(opts: RebuildOptions = {}): Promi
     reach = measureRebuildReach(db);
     for (const line of formatRebuildCounts(counts, reach)) console.log(line);
     if (!opts.yes) throw new RebuildNotConfirmedError(counts, reach);
+    // Before anything is cleared: can the files the re-index reads be read?
+    console.log('Reading the indexed conversations of the archive before anything is cleared...');
+    const unreadable = await addUnreadableFiles(db, reach, {
+      onProgress: (read) => { if (read % 5000 === 0) console.log(`  read ${read} conversations...`); },
+    });
+    for (const u of unreadable) console.log(`  cannot be read to the end: ${u.path} (${u.error})`);
     // The conversation index is derived data only as far as the archive this
     // code re-reads goes. Rows from files outside that reach (measured live:
     // 131,380 of 341,817 — sub-agent transcripts in sub-folders, and files no
@@ -355,6 +493,15 @@ export async function rebuildConversationIndex(opts: RebuildOptions = {}): Promi
       lostExchangesBackupPath = newBackupPath('pre-rebuild-unreachable-exchanges');
       const lost = backupExchangesOfPaths(db, reach.unreachablePaths, lostExchangesBackupPath);
       console.log(`Backed up ${lost.exchanges} exchange(s) and ${lost.toolCalls} tool call(s) that will not be re-created to ${lostExchangesBackupPath}`);
+      // The copy read a snapshot and other processes kept writing meanwhile.
+      // A row of these files indexed since then would be cleared with no copy.
+      const late = exchangesMissingFromBackup(db, reach.unreachablePaths, lostExchangesBackupPath);
+      if (late > 0) {
+        throw new Error(
+          `rebuild stopped — nothing was cleared. ${late} exchange(s) of the files that cannot be re-created were indexed while their backup was being written ` +
+          `(another process is writing to this database). Close the other Claude Code sessions and run the rebuild again. ` +
+          `Backups written by this run: ${backupPath}, ${lostExchangesBackupPath}`);
+      }
     }
 
     cleared = clearConversationIndex(db, {

@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import Database from 'better-sqlite3';
-import { initDatabase, insertExchange, deleteExchange, deleteExchanges, isExchangeCurrent, EXCHANGE_TURN_INDEX, TOOL_INPUT_MAX_CHARS } from '../src/db.js';
+import { initDatabase, insertExchange, deleteExchange, deleteExchanges, isExchangeCurrent, repointQueuedExchangeSources, EXCHANGE_TURN_INDEX, FACTS_ACTIVE_INDEX_REDROP_MS, TOOL_INPUT_MAX_CHARS } from '../src/db.js';
 import { parseConversation } from '../src/parser.js';
 import { EMBEDDING_VERSION } from '../src/embedding-version.js';
 import { suppressConsole } from './test-utils.js';
@@ -214,7 +214,9 @@ describe('exchange storage invariants (fresh DB, no CASCADE)', () => {
     const db = initDatabase();
     try {
       const [shortId] = await indexFile(db);
-      // a fact extracted while only the shorter snapshot existed (facts carry every exchange id of their session)
+      // a fact extracted while only the shorter snapshot existed (facts carry every exchange id of their session);
+      // every extraction leaves a row for its session in extraction_log before it saves a fact
+      db.prepare(`INSERT INTO extraction_log (session_id, processed_at, extracted, saved) VALUES ('s1', '2026-11-01T00:10:00.000Z', 1, 1)`).run();
       const addFact = (id: string, sources: string | null) => db.prepare(
         `INSERT INTO facts (id, fact, category, scope_type, source_exchange_ids, created_at, updated_at) VALUES (?, ?, 'decision', 'global', ?, 't', 'u')`
       ).run(id, `fact ${id}`, sources);
@@ -228,6 +230,8 @@ describe('exchange storage invariants (fresh DB, no CASCADE)', () => {
       fs.writeFileSync(file, lines.join('\n'));
       const [longId] = await indexFile(db);
       expect(longId).not.toBe(shortId);
+      // the sources move after the insert, outside its transaction (indexExchanges does this after each file)
+      expect(repointQueuedExchangeSources(db)).toEqual({ pairs: 1, scanned: true, facts: 1, revisions: 1 });
 
       const sources = Object.fromEntries((db.prepare('SELECT id, source_exchange_ids AS s, updated_at AS u FROM facts ORDER BY id').all() as Array<{ id: string; s: string | null; u: string }>).map((r) => [r.id, r]));
       expect(sources['f-from-short'].s).toBe(JSON.stringify(['other-exchange', longId]));
@@ -396,6 +400,51 @@ describe('schema checks that run on every open', () => {
       expect(indexNames(again)).not.toContain('idx_facts_active');
     } finally {
       again.close();
+    }
+  });
+
+  // A 1.7.x process sharing the DB re-creates the index on its own open — reading the whole fact table under
+  // the write lock (measured 1.6-3.4s at 46,507 facts). Dropping it again on every open of this code made the
+  // two versions rebuild it over and over for as long as both ran.
+  it('an index an older process re-created right after the drop is left alone; it is dropped again once the last drop is old', () => {
+    const first = initDatabase();
+    first.exec('CREATE INDEX idx_facts_active ON facts(is_active)');
+    first.close();
+    initDatabase().close(); // this code drops it
+    const reopened = initDatabase();
+    expect(indexNames(reopened)).not.toContain('idx_facts_active');
+    // an older process opens the DB: CREATE INDEX IF NOT EXISTS
+    reopened.exec('CREATE INDEX IF NOT EXISTS idx_facts_active ON facts(is_active)');
+    reopened.close();
+
+    const soon = initDatabase();
+    try {
+      expect(indexNames(soon)).toContain('idx_facts_active'); // not dropped again: that would only make the older process rebuild it
+      // long after the last drop (the older processes have had their time): dropped again
+      soon.prepare(`UPDATE fts_meta SET value = ? WHERE key = 'idx_facts_active_dropped_at'`).run(String(Date.now() - FACTS_ACTIVE_INDEX_REDROP_MS - 1000));
+    } finally {
+      soon.close();
+    }
+    const later = initDatabase();
+    try {
+      expect(indexNames(later)).not.toContain('idx_facts_active');
+      const droppedAt = Number((later.prepare(`SELECT value FROM fts_meta WHERE key = 'idx_facts_active_dropped_at'`).get() as { value: string }).value);
+      expect(Date.now() - droppedAt).toBeLessThan(60_000); // the drop is recorded anew
+    } finally {
+      later.close();
+    }
+  });
+
+  it('a drop time in the future (the clock was set back) does not keep the index forever', () => {
+    const first = initDatabase();
+    first.exec('CREATE INDEX idx_facts_active ON facts(is_active)');
+    first.prepare(`INSERT OR REPLACE INTO fts_meta(key, value) VALUES('idx_facts_active_dropped_at', ?)`).run(String(Date.now() + 86_400_000));
+    first.close();
+    const db = initDatabase();
+    try {
+      expect(indexNames(db)).not.toContain('idx_facts_active');
+    } finally {
+      db.close();
     }
   });
 

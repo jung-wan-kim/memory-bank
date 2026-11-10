@@ -148,24 +148,47 @@ function __writeLockMeta(): void {
   } catch {}
 }
 
-function __reclaimLock(): boolean {
+/**
+ * taken = this process holds the lock; held = another sync does; error = the
+ * lock folder could not be made for any other reason. Only `held` may be read
+ * as "already running": the lock's parent (~/.claude/run-locks) is made by no
+ * one else, and on a machine without it every attempt failed with ENOENT, was
+ * taken for a held lock, and the sync skipped itself on every session start.
+ */
+type LockOutcome = { state: 'taken' } | { state: 'held' } | { state: 'error'; error: Error };
+
+function __makeLockDir(): LockOutcome {
   try {
-    fs.rmSync(__lockDir, { recursive: true, force: true });
+    fs.mkdirSync(path.dirname(__lockDir), { recursive: true });
+  } catch (e) {
+    return { state: 'error', error: e as Error };
+  }
+  try {
     fs.mkdirSync(__lockDir, { recursive: false });
-    return true;
-  } catch { return false; }
+    return { state: 'taken' };
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EEXIST' ? { state: 'held' } : { state: 'error', error: e as Error };
+  }
 }
 
-async function __acquireLock(): Promise<boolean> {
+function __reclaimLock(): LockOutcome {
   try {
-    fs.mkdirSync(__lockDir, { recursive: false });
-  } catch {
+    fs.rmSync(__lockDir, { recursive: true, force: true });
+  } catch (e) {
+    return { state: 'error', error: e as Error };
+  }
+  return __makeLockDir(); // held here: another sync took it between the two calls
+}
+
+async function __acquireLock(): Promise<LockOutcome> {
+  let outcome = __makeLockDir();
+  if (outcome.state === 'held') {
     let raw = '';
     try { raw = fs.readFileSync(__pidFile, 'utf8'); } catch {}
     const holder = parseLockMeta(raw);
     if (!holder || !__pidAlive(holder.pid)) {
       // Garbage or dead holder — reclaim (pre-existing behavior).
-      if (!__reclaimLock()) return false;
+      outcome = __reclaimLock();
     } else {
       // Live holder: preempt if it runs older code or is wedged.
       let runMs: number | null = holder.startedAt !== null ? Date.now() - holder.startedAt : null;
@@ -173,27 +196,37 @@ async function __acquireLock(): Promise<boolean> {
         try { runMs = Date.now() - fs.statSync(__lockDir).mtimeMs; } catch { runMs = null; }
       }
       const decision = decideTakeover(holder, __myVersion, runMs, WEDGE_MAX_MS);
-      if (decision === 'defer') return false;
+      if (decision === 'defer') return { state: 'held' };
       if (!__isSyncCliProcess(holder.pid)) {
         // Pid was recycled by an unrelated process — the lock is garbage.
-        if (!__reclaimLock()) return false;
+        outcome = __reclaimLock();
       } else {
         console.log(`Preempting sync lock holder pid=${holder.pid} version=${holder.version ?? 'legacy'} (${decision})`);
         if (!(await __killAndConfirm(holder.pid))) {
           console.error(`Failed to terminate lock holder pid=${holder.pid} - skip`);
-          return false;
+          return { state: 'held' };
         }
-        if (!__reclaimLock()) return false;
+        outcome = __reclaimLock();
       }
     }
   }
-  __writeLockMeta();
-  return true;
+  if (outcome.state === 'taken') __writeLockMeta();
+  return outcome;
 }
 
-if (!(await __acquireLock())) {
+const __lock = await __acquireLock();
+if (__lock.state === 'held') {
   console.log('Sync already running - skip (singleton lock)');
   process.exit(0);
+}
+if (__lock.state === 'error') {
+  // Not running is right — a sync without its lock is what piled up 76 at a
+  // time. Saying "already running" was not: this is a failure, and the log
+  // line is its only trace when the hook starts the sync detached.
+  const message = `cannot take the sync lock at ${__lockDir}: ${__lock.error.message}`;
+  console.error(`Sync not started - ${message}`);
+  appendSyncLog({ action: 'failed', version: __myVersion, duration_ms: 0, error: message });
+  process.exit(1);
 }
 process.on('exit', () => { try { fs.rmSync(__lockDir, { recursive: true, force: true }); } catch {} });
 // Default signal death skips 'exit' handlers (observed: SIGTERM left a stale

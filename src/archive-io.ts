@@ -126,14 +126,168 @@ function createByteLimit(maxBytes: number): Transform {
   });
 }
 
-function requireZstdSync(): (buf: Buffer) => Buffer {
+/**
+ * Where the zstd frames of a `.zst` file lie, and what is wrong with it.
+ *
+ * Node's decoder (22.x) does not tell: handed an input that ends inside a
+ * frame it returns what it had decoded — nothing, or the first blocks — with no
+ * error, and it stops after the first frame whatever follows. A compressor
+ * interrupted while writing leaves exactly such a file, and it read as a
+ * shorter conversation: verify called it healthy, a repair replaced the full
+ * index rows with the head, a rebuild cleared its rows and re-created none.
+ * So the frame structure is walked here (headers only, nothing is
+ * decompressed — RFC 8878 §3.1), every complete frame is decoded on its own,
+ * and anything else in the file is a read error.
+ */
+interface ZstdLayout {
+  /** Byte ranges [start, end) of the complete zstd frames, in file order. */
+  frames: Array<{ start: number; end: number }>;
+  /** Start of a frame that begins but does not end, when the file stops inside one. */
+  cutFrameAt: number | null;
+  /** Why the file is not a sequence of complete frames — null when it is. */
+  problem: string | null;
+}
+
+const ZSTD_MAGIC = 0xfd2fb528;
+const ZSTD_SKIPPABLE_MAGIC = 0x184d2a50; // 0x184D2A50..5F: a frame a decoder skips
+
+function zstdLayout(size: number, read: (position: number, length: number) => Buffer): ZstdLayout {
+  const layout: ZstdLayout = { frames: [], cutFrameAt: null, problem: null };
+  // Exactly `length` bytes at `position`, or null when the file ends before that.
+  const take = (position: number, length: number): Buffer | null => {
+    if (position + length > size) return null;
+    const bytes = read(position, length);
+    return bytes.length === length ? bytes : null;
+  };
+  if (size === 0) {
+    layout.problem = 'the file is empty';
+    return layout;
+  }
+  let pos = 0;
+  while (pos < size) {
+    const start = pos;
+    const cut = (where: string): ZstdLayout => {
+      layout.cutFrameAt = start;
+      layout.problem = `it ends inside ${where} (frame ${layout.frames.length + 1} starts at byte ${start} of ${size})`;
+      return layout;
+    };
+    const magic = take(pos, 4);
+    if (!magic) return cut('a frame header');
+    const magicNumber = magic.readUInt32LE(0);
+    if ((magicNumber & 0xfffffff0) === ZSTD_SKIPPABLE_MAGIC) {
+      const length = take(pos + 4, 4);
+      if (!length) return cut('a skippable frame');
+      pos += 8 + length.readUInt32LE(0);
+      if (pos > size) return cut('a skippable frame');
+      continue; // holds no conversation bytes
+    }
+    if (magicNumber !== ZSTD_MAGIC) {
+      layout.problem = start === 0
+        ? 'it does not start with a zstd frame'
+        : `${size - start} byte(s) after its last complete frame are not a zstd frame`;
+      // Not a frame at all: the decoder gets the bytes and reports them its own way.
+      if (start === 0) layout.cutFrameAt = 0;
+      return layout;
+    }
+    const descriptor = take(pos + 4, 1);
+    if (!descriptor) return cut('a frame header');
+    const contentSizeFlag = descriptor[0] >> 6;
+    const singleSegment = (descriptor[0] >> 5) & 1;
+    const hasChecksum = (descriptor[0] >> 2) & 1;
+    const dictionaryIdFlag = descriptor[0] & 3;
+    pos += 5
+      + (singleSegment ? 0 : 1)                                           // Window_Descriptor
+      + [0, 1, 2, 4][dictionaryIdFlag]                                    // Dictionary_ID
+      + (contentSizeFlag === 0 ? singleSegment : [0, 2, 4, 8][contentSizeFlag]); // Frame_Content_Size
+    if (pos > size) return cut('a frame header');
+    for (;;) {
+      const blockHeader = take(pos, 3);
+      if (!blockHeader) return cut('a frame, before its last block');
+      const header = blockHeader[0] | (blockHeader[1] << 8) | (blockHeader[2] << 16);
+      const blockType = (header >> 1) & 3;
+      // Raw and compressed blocks carry Block_Size bytes; an RLE block carries one. Type 3 is reserved —
+      // the decoder rejects it; here it is walked like a compressed block so the frame's end is still found.
+      pos += 3 + (blockType === 1 ? 1 : header >> 3);
+      if (pos > size) return cut('a block');
+      if (header & 1) break; // Last_Block
+    }
+    if (hasChecksum) {
+      pos += 4;
+      if (pos > size) return cut('a frame checksum');
+    }
+    layout.frames.push({ start, end: pos });
+  }
+  return layout;
+}
+
+function incompleteZstdError(filePath: string, problem: string): Error {
+  return new Error(`zstd archive is incomplete — ${problem}: ${filePath}`);
+}
+
+function requireZstdSync(): (buf: Buffer, filePath: string) => Buffer {
   const decompress = zstd.zstdDecompressSync;
   if (!decompress) {
     throw new Error(
       'Archive file is zstd-compressed but this Node runtime has no zstd support (need Node >= 22.15)',
     );
   }
-  return (buf: Buffer) => decompress(buf, { maxOutputLength: maxDecompressedBytes() });
+  return (buf: Buffer, filePath: string) => {
+    const layout = zstdLayout(buf.length, (position, length) => buf.subarray(position, position + length));
+    // Bytes that are no frame at all go to the decoder, which names what it found.
+    if (layout.problem && layout.cutFrameAt === 0 && layout.frames.length === 0 && buf.length >= 4
+      && buf.readUInt32LE(0) !== ZSTD_MAGIC) {
+      decompress(buf, { maxOutputLength: maxDecompressedBytes() });
+    }
+    if (layout.problem) throw incompleteZstdError(filePath, layout.problem);
+    const cap = maxDecompressedBytes();
+    const parts: Buffer[] = [];
+    let total = 0;
+    for (const frame of layout.frames) {
+      if (total >= cap) throw new Error(`Decompressed archive exceeds ${cap} byte limit`);
+      const part = decompress(buf.subarray(frame.start, frame.end), { maxOutputLength: cap - total });
+      parts.push(part);
+      total += part.length;
+    }
+    return parts.length === 1 ? parts[0] : Buffer.concat(parts);
+  };
+}
+
+/** zstdLayout of a file on disk (reads the frame and block headers only). */
+function zstdLayoutOfFile(filePath: string): ZstdLayout {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const size = fs.fstatSync(fd).size;
+    return zstdLayout(size, (position, length) => {
+      const bytes = Buffer.alloc(length);
+      return bytes.subarray(0, fs.readSync(fd, bytes, 0, length, position));
+    });
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * The decompressed bytes of a `.zst` file, frame after frame. What a damaged
+ * file still holds is yielded first — a caller reading a line range inside it
+ * gets its lines — and then the read fails: a consumer that reads to the end
+ * never takes the head for the whole file.
+ */
+async function* decompressedZstdChunks(resolved: string): AsyncGenerator<Buffer> {
+  const layout = zstdLayoutOfFile(resolved);
+  const size = fs.statSync(resolved).size;
+  const ranges = layout.cutFrameAt === null ? layout.frames : [...layout.frames, { start: layout.cutFrameAt, end: size }];
+  for (const range of ranges) {
+    if (range.end <= range.start) continue;
+    // pipeline() carries a source error (the file swapped by the external
+    // compressor between resolve and open) and a decoder error to the iterator.
+    const decoded = pipeline(
+      fs.createReadStream(resolved, { start: range.start, end: range.end - 1 }),
+      zstd.createZstdDecompress!(),
+      () => { /* the error surfaces on the iterator */ },
+    );
+    for await (const chunk of decoded) yield chunk as Buffer;
+  }
+  if (layout.problem) throw incompleteZstdError(resolved, layout.problem);
 }
 
 /** Read an archive file as UTF-8, transparently decompressing `.zst`. */
@@ -144,14 +298,15 @@ export function readArchiveFile(filePath: string): string {
   }
   const buf = fs.readFileSync(resolved);
   if (resolved.endsWith(ZST_SUFFIX)) {
-    return requireZstdSync()(buf).toString('utf-8');
+    return requireZstdSync()(buf, resolved).toString('utf-8');
   }
   return buf.toString('utf-8');
 }
 
 /**
  * Create a readable stream over an archive file, transparently decompressing
- * `.zst`. Suitable as input for readline.createInterface.
+ * `.zst`. Suitable as input for readline.createInterface. A `.zst` that is not
+ * made of complete zstd frames ends in an 'error', after the bytes it does hold.
  */
 export function createArchiveReadStream(filePath: string): Readable {
   const resolved = resolveArchiveFile(filePath);
@@ -161,19 +316,17 @@ export function createArchiveReadStream(filePath: string): Readable {
   }
   if (resolved.endsWith(ZST_SUFFIX)) {
     if (zstd.createZstdDecompress) {
-      // pipeline() propagates source errors (e.g. the file being swapped by
-      // the external compressor between resolve and open) to the returned
-      // stream — bare .pipe() would leave them unhandled and crash.
-      // The byte limiter enforces the same decompression-bomb cap as the
-      // sync path (stream constructors ignore maxOutputLength).
-      const source = fs.createReadStream(resolved);
-      const decompress = zstd.createZstdDecompress();
+      // pipeline() propagates errors to the returned stream — bare .pipe()
+      // would leave them unhandled and crash. The byte limiter enforces the
+      // same decompression-bomb cap as the sync path, over all frames together
+      // (stream constructors ignore maxOutputLength).
       const limiter = createByteLimit(maxDecompressedBytes());
-      pipeline(source, decompress, limiter, () => { /* error surfaces on the returned stream */ });
+      pipeline(Readable.from(decompressedZstdChunks(resolved), { objectMode: false }), limiter,
+        () => { /* error surfaces on the returned stream */ });
       return limiter;
     }
     // Fallback: decompress in memory (capped via maxOutputLength)
-    const content = requireZstdSync()(fs.readFileSync(resolved));
+    const content = requireZstdSync()(fs.readFileSync(resolved), resolved);
     return Readable.from([content]);
   }
   return fs.createReadStream(resolved);
@@ -194,7 +347,8 @@ export interface ArchiveLineRange {
  * is seen, so the cost follows the range and not the file: a file larger than a JS string can hold
  * (readArchiveFile fails on those) is readable, and so is the head of a `.zst` whose full size is over the
  * decompression cap. `maxChars` bounds what is collected (at least one line is always returned).
- * A stream error — missing file, decompression cap, bad zstd frame — rejects; it never yields a short result.
+ * A stream error — missing file, decompression cap, bad or incomplete zstd frame — rejects; it never yields a
+ * short result. (A range that ends before the damaged part of a `.zst` is still read: the stream is closed there.)
  */
 export function readArchiveLineRange(
   filePath: string,
@@ -260,7 +414,7 @@ export function statArchiveFile(filePath: string): fs.Stats | null {
 export function readResolvedArchiveFile(exactPath: string): string {
   const buf = fs.readFileSync(exactPath);
   if (exactPath.endsWith(ZST_SUFFIX)) {
-    return requireZstdSync()(buf).toString('utf-8');
+    return requireZstdSync()(buf, exactPath).toString('utf-8');
   }
   return buf.toString('utf-8');
 }

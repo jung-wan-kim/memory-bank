@@ -672,6 +672,54 @@ interface BatchClassifyItem extends ClassifyResponse {
   index: number;
 }
 
+function isUsableItem(item: unknown): item is BatchClassifyItem {
+  if (item === null || typeof item !== 'object') return false;
+  const { domain, category } = item as { domain?: unknown; category?: unknown };
+  return typeof domain === 'string' && domain.trim() !== '' && typeof category === 'string' && category.trim() !== '';
+}
+
+/** The fact number a reply item carries: an integer, or the same written as a string ("3"). */
+function replyIndex(item: unknown): number | null {
+  if (item === null || typeof item !== 'object') return null;
+  const value = (item as { index?: unknown }).index;
+  if (typeof value === 'number' && Number.isInteger(value)) return value;
+  if (typeof value === 'string' && /^\d{1,6}$/.test(value)) return Number(value);
+  return null;
+}
+
+/**
+ * Which reply item answers which of `count` facts — or null when the reply's
+ * numbering cannot be trusted and nothing of it may be applied.
+ *
+ * Items are matched to facts by `index` alone, so the numbers are believed
+ * only when the reply carries every index 0..count-1 exactly once. A model
+ * that leaves one item out and numbers the rest 0..count-2, or counts from 1,
+ * produces nothing but in-range integers: applied as they stand, every fact
+ * after the gap was filed under its neighbour's category, and the run reported
+ * "classified n-1, failed 1". With a number missing, out of range or repeated
+ * there is no telling which items are shifted, so none is applied.
+ *
+ * One fact needs no numbering: the single item of the reply is its answer.
+ * A reply with no usable item at all has nothing to apply — every fact fails,
+ * as before, without asking again.
+ */
+function matchReplyToFacts(items: unknown[], count: number): Array<BatchClassifyItem | undefined> | null {
+  if (count === 1) {
+    const objects = items.filter((item) => item !== null && typeof item === 'object');
+    return [objects.length === 1 && isUsableItem(objects[0]) ? objects[0] : undefined];
+  }
+  const indices = items.map(replyIndex);
+  const everyIndexOnce = items.length === count
+    && indices.every((index) => index !== null && index >= 0 && index < count)
+    && new Set(indices).size === count;
+  if (!everyIndexOnce) return items.some(isUsableItem) ? null : new Array<undefined>(count).fill(undefined);
+  const byFact = new Array<BatchClassifyItem | undefined>(count).fill(undefined);
+  items.forEach((item, k) => {
+    if (isUsableItem(item)) byFact[indices[k] as number] = item;
+  });
+  return byFact;
+}
+
 /**
  * Classify a batch of facts with ONE LLM call (plus zero-cost deterministic
  * assignments). Each callHaiku() spawns a full headless Claude session
@@ -679,10 +727,17 @@ interface BatchClassifyItem extends ClassifyResponse {
  * the backfill drain both slow and noisy on the proxy; batching divides the
  * spawn count by the batch size.
  *
+ * A reply is applied only when it carries every fact's index exactly once
+ * (matchReplyToFacts). Otherwise none of it is applied and the facts are asked
+ * again in two smaller batches, down to one fact per call, where the answer
+ * needs no number — a fact is never filed under an item that may belong to
+ * its neighbour.
+ *
  * Failure taxonomy (mirrors the external-probe 3-way classification):
  * - `failed`    — the LLM RESPONDED but produced no usable item for the fact
- *                 (unparseable array, missing/duplicate/out-of-range index).
- *                 These are content failures: the caller counts an attempt.
+ *                 (unparseable array, no usable item, or — asked alone — no
+ *                 single answer). These are content failures: the caller
+ *                 counts an attempt.
  *                 A refused call counts here too (the same batch is refused
  *                 again next run); a refused multi-fact batch is retried fact
  *                 by fact first, so only the refused fact takes the attempt.
@@ -827,46 +882,47 @@ export async function classifyFactsBatch(
     return { classified: [], deterministic, failed: preFailed, transient: [...preTransient, ...remaining.map((f) => f.id)], assignments };
   }
   const parsed = parseJsonResponse<BatchClassifyItem[]>(response, 'array');
+  const replyItems: unknown[] = Array.isArray(parsed) ? parsed : [];
 
-  // Index the response items; tolerate partial/malformed arrays — every fact
-  // without a usable item is reported as failed (attempt counting is the
-  // caller's responsibility, and honest failure counts matter: the previous
-  // pipeline swallowed errors and logged "failed 0" regardless).
-  // index must be an in-range integer; a DUPLICATED index means the model got
-  // confused about item identity, so ALL claimants for that index are
-  // distrusted and dropped (first-wins would let a fabricated early item
-  // pre-empt the authentic one). The fact takes a content failure and is
-  // retried in a later — differently composed — batch.
-  const byIndex = new Map<number, BatchClassifyItem>();
-  const conflicted = new Set<number>();
-  if (Array.isArray(parsed)) {
-    for (const item of parsed) {
-      if (
-        item &&
-        Number.isInteger(item.index) &&
-        item.index >= 0 &&
-        item.index < remaining.length &&
-        typeof item.domain === 'string' &&
-        item.domain.trim() !== '' &&
-        typeof item.category === 'string' &&
-        item.category.trim() !== ''
-      ) {
-        if (conflicted.has(item.index)) continue;
-        if (byIndex.has(item.index)) {
-          byIndex.delete(item.index);
-          conflicted.add(item.index);
-          continue;
-        }
-        byIndex.set(item.index, item);
+  // Every fact without a usable item is reported as failed (attempt counting
+  // is the caller's responsibility, and honest failure counts matter: the
+  // previous pipeline swallowed errors and logged "failed 0" regardless).
+  const itemOfFact = matchReplyToFacts(replyItems, remaining.length);
+  if (itemOfFact === null) {
+    // The numbering cannot be trusted (see matchReplyToFacts): apply nothing,
+    // ask again in two halves. A half answered in full is applied; one that is
+    // not is halved again, down to single facts.
+    console.error(
+      `Batch classification reply not applied — ${replyItems.length} item(s) for ${remaining.length} facts ` +
+      `without every index exactly once; asking again in smaller batches`,
+    );
+    const middle = Math.ceil(remaining.length / 2);
+    const merged = {
+      classified: [] as string[], deterministic, failed: [...preFailed], transient: [...preTransient], assignments, refused: [] as string[],
+    };
+    const halves = [remaining.slice(0, middle), remaining.slice(middle)];
+    for (let h = 0; h < halves.length; h++) {
+      const part = await classifyFactsBatch(db, halves[h]);
+      merged.classified.push(...part.classified);
+      merged.deterministic.push(...part.deterministic);
+      merged.failed.push(...part.failed);
+      merged.transient.push(...part.transient);
+      merged.refused.push(...(part.refused ?? []));
+      for (const [id, a] of part.assignments) merged.assignments.set(id, a);
+      if (part.transient.length > 0) {
+        // The call itself failed: the other half would only spend a call. Next run.
+        for (const rest of halves.slice(h + 1)) merged.transient.push(...rest.map((f) => f.id));
+        break;
       }
     }
+    return merged;
   }
 
   const classified: string[] = [];
   const failed: string[] = [];
   for (let i = 0; i < remaining.length; i++) {
     const fact = remaining[i];
-    const item = byIndex.get(i);
+    const item = itemOfFact[i];
     if (!item) {
       failed.push(fact.id);
       continue;
