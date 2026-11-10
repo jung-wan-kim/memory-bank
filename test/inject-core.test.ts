@@ -76,6 +76,8 @@ afterAll(() => {
 
 beforeEach(() => {
   delete process.env.MEMORY_BANK_REPEAT_DETECT;
+  delete process.env.MEMORY_BANK_INJECT_HEADLESS;
+  delete process.env.MEMORY_BANK_INJECT_CODEX;
 });
 
 describe('computeInjectResult', () => {
@@ -232,4 +234,61 @@ describe('computeInjectResult', () => {
     expect(last.status).toBe('injected');
     expect(typeof last.repeat_ms).toBe('number');
   }, 30_000);
+
+  /**
+   * 사람이 치지 않은 세션의 주입을 끄는 스위치 (2026-11-10, 감사 INJ-04).
+   * 10-08 이후 주입 글자 190만 자 가운데 대화형 Claude Code 는 5% 였다(Codex 72.9% · 헤드리스 21.4%).
+   * 같은 틀 프롬프트에 같은 블록이 세션을 바꿔 가며 실린다 — 세션 원장은 세션 안에서만 막는다.
+   * 기본 동작은 그대로다(둘 다 주입). 끄는 것은 사용자가 정한다.
+   */
+  describe('호스트별 주입 스위치', () => {
+    const Q = 'How does our deploy pipeline publish Vercel previews for pull requests?';
+
+    it('hostSkipReason: 기본은 아무도 건너뛰지 않는다 — 스위치가 0 일 때만, 해당 호스트만', () => {
+      const { hostSkipReason } = core;
+      const hosts = [
+        { client: 'claude-code', entrypoint: 'cli' }, { client: 'claude-code', entrypoint: 'sdk-cli' }, { client: 'claude-code', entrypoint: 'sdk-ts' },
+        { client: 'codex' }, { client: 'codex', entrypoint: 'cli' }, { client: 'manual' }, {},
+      ];
+      for (const h of hosts) expect(hostSkipReason(h, {}), JSON.stringify(h)).toBeNull();
+      for (const h of hosts) expect(hostSkipReason(h, { MEMORY_BANK_INJECT_HEADLESS: '1', MEMORY_BANK_INJECT_CODEX: '' }), JSON.stringify(h)).toBeNull();
+
+      const headlessOff = { MEMORY_BANK_INJECT_HEADLESS: '0' };
+      expect(hostSkipReason({ client: 'claude-code', entrypoint: 'sdk-cli' }, headlessOff)).toBe('headless');
+      expect(hostSkipReason({ client: 'claude-code', entrypoint: 'sdk-ts' }, headlessOff)).toBe('headless');
+      expect(hostSkipReason({ client: 'codex', entrypoint: 'sdk-cli' }, headlessOff), '헤드리스 세션이 띄운 Codex').toBe('headless');
+      expect(hostSkipReason({ client: 'claude-code', entrypoint: 'cli' }, headlessOff), '대화형 세션은 그대로').toBeNull();
+      expect(hostSkipReason({ client: 'codex' }, headlessOff), 'Codex 는 헤드리스 표지가 없다 — 이 스위치로는 끄지 않는다').toBeNull();
+      expect(hostSkipReason({}, headlessOff)).toBeNull();
+
+      const codexOff = { MEMORY_BANK_INJECT_CODEX: '0' };
+      expect(hostSkipReason({ client: 'codex' }, codexOff)).toBe('codex-off');
+      expect(hostSkipReason({ client: 'codex', entrypoint: 'cli' }, codexOff)).toBe('codex-off');
+      expect(hostSkipReason({ client: 'claude-code', entrypoint: 'sdk-cli' }, codexOff)).toBeNull();
+      expect(hostSkipReason({ client: 'claude-code', entrypoint: 'cli' }, codexOff)).toBeNull();
+    });
+
+    it('기본: 헤드리스(sdk-cli)·Codex 프롬프트에도 지금처럼 주입한다', async () => {
+      expect(await injectAndRecord(Q, '/tmp/proj', 'daemon', 'sess-host-default-1', { client: 'claude-code', entrypoint: 'sdk-cli' })).toContain('deploy pipeline publishes');
+      expect(await injectAndRecord(Q, '/tmp/proj', 'daemon', 'sess-host-default-2', { client: 'codex' })).toContain('deploy pipeline publishes');
+    }, 30_000);
+
+    it('MEMORY_BANK_INJECT_HEADLESS=0: sdk-* 세션은 검색 없이 skipped/headless, 대화형 세션은 그대로 주입', async () => {
+      process.env.MEMORY_BANK_INJECT_HEADLESS = '0';
+      const r = await core.computeInjectResult(Q, '/tmp/proj', 'daemon', 'sess-host-headless-1', { client: 'claude-code', entrypoint: 'sdk-cli', req_id: 'req-host-1' });
+      expect(r).toEqual({ context: '', ledgerKeys: [] });
+      const last = readLog().at(-1)!;
+      expect(last).toMatchObject({ status: 'skipped', reason: 'headless', via: 'daemon', client: 'claude-code', entrypoint: 'sdk-cli', req_id: 'req-host-1', has_session: true });
+      expect(last.embed_ms, '건너뛴 프롬프트에 임베딩을 계산하지 않는다').toBeUndefined();
+      expect(await injectAndRecord(Q, '/tmp/proj', 'daemon', 'sess-host-headless-2', { client: 'claude-code', entrypoint: 'cli' })).toContain('deploy pipeline publishes');
+    }, 30_000);
+
+    it('MEMORY_BANK_INJECT_CODEX=0: Codex 프롬프트는 skipped/codex-off, Claude Code 는 그대로 주입', async () => {
+      process.env.MEMORY_BANK_INJECT_CODEX = '0';
+      const r = await core.computeInjectResult(Q, '/tmp/proj', 'fallback', 'sess-host-codex-1', { client: 'codex' });
+      expect(r).toEqual({ context: '', ledgerKeys: [] });
+      expect(readLog().at(-1)!).toMatchObject({ status: 'skipped', reason: 'codex-off', via: 'fallback', client: 'codex' });
+      expect(await injectAndRecord(Q, '/tmp/proj', 'daemon', 'sess-host-codex-2', { client: 'claude-code', entrypoint: 'sdk-cli' })).toContain('deploy pipeline publishes');
+    }, 30_000);
+  });
 });
