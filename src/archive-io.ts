@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { Readable, Transform, pipeline } from 'stream';
 import * as zlib from 'node:zlib';
+import readline from 'readline';
 
 /**
  * Transparent access to archived conversation files.
@@ -176,6 +177,66 @@ export function createArchiveReadStream(filePath: string): Readable {
     return Readable.from([content]);
   }
   return fs.createReadStream(resolved);
+}
+
+export interface ArchiveLineRange {
+  /** The requested lines, each with its 1-indexed physical line number (the numbering parser.ts records). */
+  lines: Array<{ line: number; text: string }>;
+  /** Lines in the whole file — known only when the stream was read to its end, otherwise null. */
+  totalLines: number | null;
+  /** Collection stopped before the requested end because `maxChars` was reached. */
+  stoppedEarly: boolean;
+}
+
+/**
+ * Read lines `startLine`..`endLine` (1-indexed, inclusive, plus `lookahead` more) of an archive file as a
+ * stream, plain or `.zst`. Only the requested lines are kept and the stream is closed as soon as the last one
+ * is seen, so the cost follows the range and not the file: a file larger than a JS string can hold
+ * (readArchiveFile fails on those) is readable, and so is the head of a `.zst` whose full size is over the
+ * decompression cap. `maxChars` bounds what is collected (at least one line is always returned).
+ * A stream error — missing file, decompression cap, bad zstd frame — rejects; it never yields a short result.
+ */
+export function readArchiveLineRange(
+  filePath: string,
+  opts: { startLine?: number; endLine?: number; lookahead?: number; maxChars?: number } = {},
+): Promise<ArchiveLineRange> {
+  const startLine = opts.startLine ?? 1;
+  const lastWanted = opts.endLine === undefined ? Infinity : opts.endLine + (opts.lookahead ?? 0);
+  const maxChars = opts.maxChars ?? Infinity;
+
+  return new Promise((resolve, reject) => {
+    const stream = createArchiveReadStream(filePath);
+    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+    const lines: ArchiveLineRange['lines'] = [];
+    let lineNumber = 0;
+    let chars = 0;
+    let settled = false;
+
+    const settle = (error: Error | null, result?: ArchiveLineRange): void => {
+      if (settled) return;
+      settled = true;
+      rl.close();
+      stream.destroy();
+      if (error) reject(error);
+      else resolve(result!);
+    };
+
+    // The listener stays attached after settling: the decompressor may still fail on bytes it had already
+    // buffered when the range ended, and an 'error' event with no listener would take the process down.
+    stream.on('error', (error) => settle(error));
+    // readline re-emits an input error on the interface; with no listener there it is thrown as uncaught.
+    rl.on('error', (error) => settle(error as Error));
+    rl.on('line', (text) => {
+      if (settled) return; // readline can emit already-buffered lines after close()
+      lineNumber++;
+      if (lineNumber < startLine) return;
+      lines.push({ line: lineNumber, text });
+      chars += text.length;
+      if (lineNumber >= lastWanted) settle(null, { lines, totalLines: null, stoppedEarly: false });
+      else if (chars >= maxChars) settle(null, { lines, totalLines: null, stoppedEarly: true });
+    });
+    rl.on('close', () => settle(null, { lines, totalLines: lineNumber, stoppedEarly: false }));
+  });
 }
 
 /** stat() the resolved archive file (plain or compressed), null if missing. */

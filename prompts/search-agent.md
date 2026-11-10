@@ -30,7 +30,7 @@ Use the MCP tool `search`:
 ```
 mcp__plugin_memory-bank_memory-bank__search
   query: "{SEARCH_QUERY}"
-  mode: "both"  # or "vector" (default) or "text"
+  mode: "both"  # default; or "vector" or "text"
   limit: 10
 ```
 

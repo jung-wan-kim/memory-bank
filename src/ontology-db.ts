@@ -647,23 +647,115 @@ export function getRelationsForFact(
 
 // === Ontology Tree ===
 
-export function getOntologyTree(db: Database.Database): DomainTree[] {
-  const domains = listDomains(db);
+/** What getOntologyTree returns: everything by default, or a filtered / fact-capped view. */
+export interface OntologyTreeOptions {
+  /** Keep domains whose name contains this (case-insensitive for ASCII; `%` and `_` are literal). */
+  domain?: string;
+  /** Keep categories whose name contains this (same matching). Domains left with no category are dropped. */
+  category?: string;
+  /** Keep only these categories. */
+  categoryIds?: string[];
+  /** Facts loaded per category, most confirmed first. Omitted = every active fact; 0 = counts only. */
+  factsPerCategory?: number;
+}
+
+/**
+ * Domain → category → active facts, with each category's active-fact total (`factCount`).
+ *
+ * Two statements whatever the size of the ontology: one aggregate JOIN for the tree and the counts, one
+ * ranked query for the facts. It used to run one facts query per category, and with no table statistics
+ * the planner served each of them from the two-valued idx_facts_active — every active fact was visited
+ * once per category (7,146 categories × 30K facts on the live DB: minutes, with the MCP server blocked).
+ * The unary plus on is_active keeps that index out of the plan; facts are reached through
+ * idx_facts_ontology (ontology_category_id).
+ */
+export function getOntologyTree(db: Database.Database, opts: OntologyTreeOptions = {}): DomainTree[] {
+  const likePattern = (text: string) => `%${text.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+  const where: string[] = [];
+  const params: string[] = [];
+  if (opts.domain) {
+    where.push(`d.name LIKE ? ESCAPE '\\'`);
+    params.push(likePattern(opts.domain));
+  }
+  if (opts.category) {
+    where.push(`c.name LIKE ? ESCAPE '\\'`);
+    params.push(likePattern(opts.category));
+  }
+  if (opts.categoryIds) {
+    where.push(`c.id IN (SELECT value FROM json_each(?))`);
+    params.push(JSON.stringify(opts.categoryIds));
+  }
+
+  const rows = db
+    .prepare(
+      `SELECT d.id AS d_id, d.name AS d_name, d.description AS d_description, d.created_at AS d_created_at,
+              c.id AS c_id, c.name AS c_name, c.description AS c_description, c.created_at AS c_created_at,
+              COUNT(f.id) AS fact_count
+       FROM ontology_domains d
+       LEFT JOIN ontology_categories c ON c.domain_id = d.id
+       LEFT JOIN facts f ON f.ontology_category_id = c.id AND +f.is_active = 1
+       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+       GROUP BY d.id, c.id
+       ORDER BY d.name, c.name`,
+    )
+    .all(...params) as Array<Record<string, unknown>>;
+
   const tree: DomainTree[] = [];
-
-  for (const domain of domains) {
-    const categories = listCategories(db, domain.id);
-    const domainEntry: DomainTree = {
-      domain,
-      categories: [],
-    };
-
-    for (const category of categories) {
-      const facts = getFactsByCategory(db, category.id);
-      domainEntry.categories.push({ category, facts });
+  const byCategory = new Map<string, DomainTree['categories'][number]>();
+  let current: DomainTree | null = null;
+  for (const row of rows) {
+    if (!current || current.domain.id !== row['d_id']) {
+      current = {
+        domain: {
+          id: row['d_id'] as string,
+          name: row['d_name'] as string,
+          description: (row['d_description'] as string | null) ?? null,
+          created_at: row['d_created_at'] as string,
+        },
+        categories: [],
+      };
+      tree.push(current);
     }
+    if (row['c_id'] === null) continue; // a domain with no category
+    const entry: DomainTree['categories'][number] = {
+      category: {
+        id: row['c_id'] as string,
+        domain_id: current.domain.id,
+        name: row['c_name'] as string,
+        description: (row['c_description'] as string | null) ?? null,
+        created_at: row['c_created_at'] as string,
+      },
+      facts: [],
+      factCount: row['fact_count'] as number,
+    };
+    current.categories.push(entry);
+    byCategory.set(entry.category.id, entry);
+  }
 
-    tree.push(domainEntry);
+  const perCategory = opts.factsPerCategory ?? Number.MAX_SAFE_INTEGER;
+  const wanted = [...byCategory.values()].filter((entry) => entry.factCount > 0).map((entry) => entry.category.id);
+  if (perCategory > 0 && wanted.length > 0) {
+    // Rank on a narrow projection, then read the full rows of the winners only.
+    const factRows = db
+      .prepare(
+        `WITH ranked AS (
+           SELECT f.id AS id, f.ontology_category_id AS cid,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY f.ontology_category_id
+                    ORDER BY f.consolidated_count DESC, f.created_at DESC, f.id
+                  ) AS rn
+           FROM json_each(?) AS want
+           CROSS JOIN facts f ON f.ontology_category_id = want.value
+           WHERE +f.is_active = 1
+         )
+         SELECT f.* FROM ranked r JOIN facts f ON f.id = r.id
+         WHERE r.rn <= ?
+         ORDER BY r.cid, r.rn`,
+      )
+      .all(JSON.stringify(wanted), perCategory) as Array<Record<string, unknown>>;
+    for (const row of factRows) {
+      byCategory.get(row['ontology_category_id'] as string)?.facts.push(rowToFact(row));
+    }
   }
 
   return tree;

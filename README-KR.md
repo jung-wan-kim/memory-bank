@@ -106,7 +106,7 @@ graph TB
 | 도구 | 설명 |
 |------|------|
 | `search` | 대화 시맨틱/텍스트 검색 |
-| `read` | JSONL 대화 전체 표시 |
+| `read` | 대화(또는 줄 범위)를 Markdown 으로 읽기 — 한 번에 40,000자까지, 넘으면 이어 읽을 `startLine` 을 알려 줌 |
 | `search_facts` | 카테고리 필터로 팩트 검색 |
 
 ### search_facts 예시

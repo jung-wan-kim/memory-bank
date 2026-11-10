@@ -127,6 +127,30 @@ describe('avatar-responder', () => {
     expect(result.sources[0].fact.id).toBe('fact-react');
   });
 
+  // ONT-07 — every neighbour of the top facts went into the prompt in full (one fact: 106 neighbours, 76K chars).
+  it('caps the related facts a seed brings into the prompt, contradictions first, and clips their text', async () => {
+    const emb = new Array(384).fill(0.1);
+    insertTestFact(db, 'fact-hub', 'Use React for all frontend projects', emb);
+    const far = new Array(384).fill(0).map((_, i) => (i % 2 ? 0.1 : -0.1));
+    for (let i = 0; i < 30; i++) {
+      insertTestFact(db, `fact-n${i}`, `Neighbour ${i} ` + 'x'.repeat(3000), far);
+      db.prepare(`INSERT INTO ontology_relations (id, source_fact_id, relation_type, target_fact_id) VALUES (?, 'fact-hub', ?, ?)`)
+        .run(`rel-${i}`, i === 29 ? 'CONTRADICTS' : 'SUPPORTS', `fact-n${i}`);
+    }
+    (parseJsonResponse as ReturnType<typeof vi.fn>).mockReturnValue({ answer: 'ok', confidence: 0.8, cited_fact_ids: ['fact-hub'] });
+    (callHaiku as ReturnType<typeof vi.fn>).mockResolvedValue('{}');
+
+    const result = await askAvatar(db, 'What frontend framework?', 'test-project');
+
+    expect(result.relatedDecisions).toHaveLength(5);
+    expect(result.relatedDecisions[0].relation).toBe('CONTRADICTS');
+    const prompt = (callHaiku as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    expect(prompt).toContain('[relation:CONTRADICTS]');
+    expect([...prompt.matchAll(/\[relation:/g)]).toHaveLength(5);
+    expect(prompt).not.toMatch(/x{401}/);
+    expect(prompt.length).toBeLessThan(4000);
+  });
+
   it('should clamp confidence to [0, 1]', async () => {
     const emb = new Array(384).fill(0.1);
     insertTestFact(db, 'fact-x', 'Some fact', emb);

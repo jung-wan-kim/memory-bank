@@ -14,8 +14,12 @@ describe('MCP Facts Tool', () => {
   });
 
   it('should import fact-db functions', () => {
-    const content = fs.readFileSync('src/mcp-server.ts', 'utf-8');
-    expect(content).toContain('searchSimilarFacts');
+    // The fact tools' text is built in facts-tool.ts (testable — mcp-server.ts starts the server on import).
+    const server = fs.readFileSync('src/mcp-server.ts', 'utf-8');
+    expect(server).toContain("from './facts-tool.js'");
+    expect(server).toContain('formatFactSearch(');
+    const content = fs.readFileSync('src/facts-tool.ts', 'utf-8');
+    expect(content).toContain('searchFactsFiltered');
     expect(content).toContain('getRevisions');
   });
 

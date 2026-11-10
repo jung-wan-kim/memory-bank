@@ -9,13 +9,16 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { startInjectDaemon } from './inject-daemon.js';
+import { pluginVersion } from './inject-log.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import {
-  searchConversations,
+  searchConversationsDetailed,
+  searchResultsToJson,
+  multiConceptResultsToJson,
   searchMultipleConcepts,
   formatResults,
   formatMultiConceptResults,
@@ -23,12 +26,9 @@ import {
   formatKnowledgeContext,
   SearchOptions,
 } from './search.js';
-import { formatConversationAsMarkdown } from './show.js';
+import { readConversationRange, READ_MAX_OUTPUT_CHARS } from './show.js';
 import { initDatabase } from './db.js';
 import {
-  searchSimilarFacts,
-  searchAllFacts,
-  getRevisions,
   addFactTags,
   removeFactTags,
   setFactTags,
@@ -36,12 +36,14 @@ import {
   findFactsByTags,
 } from './fact-db.js';
 import { generateEmbedding, initEmbeddings } from './embeddings.js';
-import { getOntologyTree, listDomains, listCategories, getRelatedFacts } from './ontology-db.js';
+import { formatOntologyBrowse, ONTOLOGY_MAX_OUTPUT_CHARS } from './ontology-browse.js';
+import { formatFactSearch, formatFactTrace, formatCrossProjectInsights, formatGraphExploration } from './facts-tool.js';
+import { clipLine, RELATED_MAX_CHARS } from './related-format.js';
 import { askAvatar } from './avatar-responder.js';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { readArchiveFile, resolveArchiveFile } from './archive-io.js';
+import { resolveArchiveFile } from './archive-io.js';
 import { getArchiveDir } from './paths.js';
 
 // Zod Schemas for Input Validation
@@ -86,6 +88,10 @@ const SearchInputSchema = z
       .string()
       .optional()
       .describe('Filter by coding agent (e.g., "claude-code", "codex", "opencode"). Omit to search all agents.'),
+    include_noise: z
+      .boolean()
+      .default(false)
+      .describe('Also return machine-generated turns (sub-agent "Warmup" turns, other plugins\' observer prompts). Default false.'),
     response_format: ResponseFormatEnum.default('markdown').describe(
       'Output format: "markdown" for human-readable or "json" for machine-readable (default: "markdown")'
     ),
@@ -103,13 +109,13 @@ const ShowConversationInputSchema = z
       .int()
       .min(1)
       .optional()
-      .describe('Starting line number (1-indexed, inclusive). Omit to start from beginning.'),
+      .describe('Starting line number (1-indexed, inclusive). Omit to start from beginning. Must not be after endLine.'),
     endLine: z
       .number()
       .int()
       .min(1)
       .optional()
-      .describe('Ending line number (1-indexed, inclusive). Omit to read to end.'),
+      .describe('Ending line number (1-indexed, inclusive). Omit to read to the end (or to the output limit).'),
   })
   .strict();
 
@@ -159,7 +165,21 @@ const SearchOntologyInputSchema = z
   .object({
     domain: z.string().optional().describe('Filter by domain name (case-insensitive partial match)'),
     category: z.string().optional().describe('Filter by category name (case-insensitive partial match)'),
-    include_relations: z.boolean().default(false).describe('Include 1-hop fact relations'),
+    include_relations: z.boolean().default(false).describe('Include 1-hop fact relations (at most 5 per fact)'),
+    facts_per_category: z
+      .number()
+      .int()
+      .min(0)
+      .max(50)
+      .optional()
+      .describe('Facts shown per category, most confirmed first (0 = names and counts only). Default: 5 with a category filter, otherwise 0'),
+    max_categories: z
+      .number()
+      .int()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe('Categories listed per domain, largest first. Default: 8 (200 with a domain filter) without facts, 20 with'),
   })
   .strict();
 
@@ -173,6 +193,9 @@ const AskAvatarInputSchema = z
   .strict();
 
 type AskAvatarInput = z.infer<typeof AskAvatarInputSchema>;
+
+/** Related decisions listed under an ask_avatar answer. */
+const AVATAR_MAX_RELATED_LISTED = 10;
 
 // Error Handling Utility
 
@@ -188,7 +211,9 @@ function handleError(error: unknown): string {
 const server = new Server(
   {
     name: 'memory-bank',
-    version: '1.0.0',
+    // The version of the code that is running (package.json next to dist/), so a client can tell which
+    // release answered. 'unknown' when the file cannot be read — never a made-up number.
+    version: pluginVersion() ?? 'unknown',
   },
   {
     capabilities: {
@@ -204,7 +229,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: 'search',
-        description: `Gives you memory across sessions. You don't automatically remember past conversations - this tool restores context by searching them. Use BEFORE every task to recover decisions, solutions, and avoid reinventing work. Single string for semantic search or array of 2-5 concepts for precise AND matching. Returns ranked results with project, date, snippets, and file paths.`,
+        description: `Gives you memory across sessions. You don't automatically remember past conversations - this tool restores context by searching them. Use BEFORE every task to recover decisions, solutions, and avoid reinventing work. Single string for semantic + keyword search or array of 2-5 concepts for AND matching. Returns at most \`limit\` ranked results with project, date, snippet and "Lines A-B in <path>" — pass those to the read tool for the full exchange. "N% match" is a semantic hit, "keyword match" a keyword-only hit. Machine-generated turns (sub-agent warm-ups, other plugins' observer prompts) are left out unless include_noise is true. A closing "Note:" line means the search was cut short, not that nothing exists.`,
         inputSchema: {
           type: 'object',
           properties: {
@@ -219,6 +244,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             after: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
             before: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
             coding_agent: { type: 'string', description: 'Filter by coding agent (e.g., "claude-code", "codex", "opencode")' },
+            include_noise: { type: 'boolean', default: false, description: 'Also return machine-generated turns (sub-agent "Warmup" turns, other plugins\' observer prompts)' },
             response_format: { type: 'string', enum: ['markdown', 'json'], default: 'markdown' },
           },
           required: ['query'],
@@ -234,7 +260,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'read',
-        description: `Read full conversations to extract detailed context after finding relevant results with search. Essential for understanding the complete rationale, evolution, and gotchas behind past decisions. Use startLine/endLine pagination for large conversations to avoid context bloat (line numbers are 1-indexed).`,
+        description: `Read a conversation (or a line range of it) after finding relevant results with search. Essential for understanding the complete rationale, evolution, and gotchas behind past decisions. Pass the "Lines A-B" range a search result reports as startLine/endLine (1-indexed, inclusive). One call returns at most ${READ_MAX_OUTPUT_CHARS} characters: a longer range ends with "Output truncated … Continue with startLine=N" — call again with that startLine. Long tool inputs/results are clipped. A range outside the file is an error that names the file's line count.`,
         inputSchema: {
           type: 'object',
           properties: {
@@ -333,13 +359,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'search_ontology',
-        description: 'Browse the ontology hierarchy (Domain > Category > Facts). Use to understand how past decisions are organized, or to find all facts in a specific domain/category.',
+        description: `Browse the ontology hierarchy (Domain > Category > Facts) level by level. Without a filter: every domain with its largest categories and their fact counts (no fact text). With \`domain\`: up to 200 of that domain's categories. With \`category\` (or facts_per_category > 0): the top facts of each matching category. One answer is at most ${ONTOLOGY_MAX_OUTPUT_CHARS} characters and states what it left out — narrow the domain/category filter to reach it; use search_facts to find facts by meaning.`,
         inputSchema: {
           type: 'object',
           properties: {
             domain: { type: 'string', description: 'Filter by domain name (partial, case-insensitive)' },
             category: { type: 'string', description: 'Filter by category name (partial, case-insensitive)' },
-            include_relations: { type: 'boolean', default: false, description: 'Include 1-hop relations for each fact' },
+            include_relations: { type: 'boolean', default: false, description: 'Include 1-hop relations for each fact shown (at most 5 per fact)' },
+            facts_per_category: { type: 'number', minimum: 0, maximum: 50, description: 'Facts shown per category, most confirmed first (0 = names and counts only). Default: 5 with a category filter, otherwise 0' },
+            max_categories: { type: 'number', minimum: 1, maximum: 200, description: 'Categories listed per domain, largest first. Default: 8 (200 with a domain filter) without facts, 20 with' },
           },
           additionalProperties: false,
         },
@@ -474,20 +502,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           after: params.after,
           before: params.before,
           coding_agent: params.coding_agent,
+          include_noise: params.include_noise,
         };
 
         const results = await searchMultipleConcepts(params.query, options);
 
         if (params.response_format === 'json') {
-          resultText = JSON.stringify(
-            {
-              results: results,
-              count: results.length,
-              concepts: params.query,
-            },
-            null,
-            2
-          );
+          resultText = multiConceptResultsToJson(results, params.query);
         } else {
           resultText = await formatMultiConceptResults(results, params.query);
         }
@@ -499,26 +520,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           after: params.after,
           before: params.before,
           coding_agent: params.coding_agent,
+          include_noise: params.include_noise,
         };
 
-        const results = await searchConversations(params.query, options);
+        const { results, meta } = await searchConversationsDetailed(params.query, options);
 
         if (params.response_format === 'json') {
-          resultText = JSON.stringify(
-            {
-              results: results.map((r) => ({
-                exchange: r.exchange,
-                similarity: r.similarity,
-                snippet: r.snippet,
-              })),
-              count: results.length,
-              mode: params.mode,
-            },
-            null,
-            2
-          );
+          resultText = searchResultsToJson(results, meta, params.mode);
         } else {
-          resultText = await formatResults(results);
+          resultText = await formatResults(results, meta);
 
           // Append knowledge graph context for markdown format
           try {
@@ -576,13 +586,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         throw new Error('Access denied: path is outside the conversation archive');
       }
 
-      // Read and format conversation with optional line range
-      const jsonlContent = readArchiveFile(realFile);
-      const markdownContent = formatConversationAsMarkdown(
-        jsonlContent,
-        params.startLine,
-        params.endLine
-      );
+      // Read and format the requested line range as a stream: the cost follows
+      // the range, not the file (whole-file reads failed on files over 512MB),
+      // the output is capped with a continuation hint, and a range outside the
+      // file is an error naming the file's line count.
+      const markdownContent = await readConversationRange(realFile, {
+        startLine: params.startLine,
+        endLine: params.endLine,
+      });
 
       return {
         content: [
@@ -602,76 +613,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const db = initDatabase();
       try {
         const queryEmbedding = await generateEmbedding(params.query, 'query');
-        const results = searchSimilarFacts(db, queryEmbedding, currentProject, params.limit);
-
-        // Apply category and coding_agent filters
-        let filtered = results;
-        if (params.category) {
-          filtered = filtered.filter(r => r.fact.category === params.category);
-        }
-        if (params.coding_agent) {
-          filtered = filtered.filter(r => (r.fact.coding_agent || 'claude-code') === params.coding_agent);
-        }
-        if (params.tags && params.tags.length) {
-          // Normalize the same way the writer does, so "Mobile" matches "mobile".
-          const wanted = params.tags
-            .map(t => t.trim().replace(/\s+/g, '-').toLowerCase())
-            .filter(Boolean);
-          filtered = filtered.filter(r => {
-            const have = new Set(r.fact.tags ?? []);
-            return wanted.every(t => have.has(t));
-          });
-        }
-
-        const agentLabel = params.coding_agent ? ` | Agent: ${params.coding_agent}` : '';
-        let output = `# Facts Search Results\n\nQuery: "${params.query}"\nProject: ${currentProject}${agentLabel}\nResults: ${filtered.length}\n\n`;
-
-        if (filtered.length === 0) {
-          output += '_No matching facts found._\n';
-        }
-
-        // Build ontology lookup
-        const allDomains = listDomains(db);
-        const allCategories = listCategories(db);
-        const domainMap = new Map(allDomains.map(d => [d.id, d.name]));
-        const catMap = new Map(allCategories.map(c => [c.id, { name: c.name, domainId: c.domain_id }]));
-
-        for (const { fact, distance } of filtered) {
-          const similarity = (1 - distance * distance / 2).toFixed(3);
-          const catInfo = fact.ontology_category_id ? catMap.get(fact.ontology_category_id) : undefined;
-          const domainName = catInfo ? (domainMap.get(catInfo.domainId) ?? '') : '';
-          const catName = catInfo ? catInfo.name : '';
-
-          output += `## [${fact.category}] ${fact.fact}\n`;
-          output += `- ID: ${fact.id}\n`;
-          if (fact.tags && fact.tags.length) output += `- Tags: ${fact.tags.join(', ')}\n`;
-          const factAgent = fact.coding_agent || 'claude-code';
-          output += `- Scope: ${fact.scope_type}${fact.scope_project ? ` (${fact.scope_project})` : ''} | Agent: ${factAgent}\n`;
-          output += `- Confirmed: ${fact.consolidated_count}x | Similarity: ${similarity}\n`;
-          if (domainName) output += `- Ontology: ${domainName}/${catName}\n`;
-          output += `- Created: ${fact.created_at}\n`;
-
-          if (params.include_revisions) {
-            const revisions = getRevisions(db, fact.id);
-            if (revisions.length > 0) {
-              output += '- Revisions:\n';
-              for (const rev of revisions) {
-                output += `  - ${rev.created_at}: "${rev.previous_fact}" → "${rev.new_fact}" (${rev.reason})\n`;
-              }
-            }
-          }
-
-          // Show graph relations for this fact
-          const related = getRelatedFacts(db, fact.id, 1);
-          if (related.length > 0) {
-            output += `- Related:\n`;
-            for (const { fact: relFact, relation } of related) {
-              output += `  - [${relation.relation_type}] ${relFact.fact}\n`;
-            }
-          }
-
-          output += '\n';
-        }
+        const output = formatFactSearch(db, queryEmbedding, {
+          query: params.query,
+          project: currentProject,
+          category: params.category,
+          coding_agent: params.coding_agent,
+          tags: params.tags,
+          include_revisions: params.include_revisions,
+          limit: params.limit,
+        });
 
         return {
           content: [{ type: 'text', text: output }],
@@ -763,69 +713,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === 'search_ontology') {
       const params = SearchOntologyInputSchema.parse(args) as SearchOntologyInput;
 
+      const db = initDatabase();
       try {
-        const db = initDatabase();
-        const tree = getOntologyTree(db);
-
-        // Apply domain/category filters
-        const domainFilter = params.domain?.toLowerCase();
-        const categoryFilter = params.category?.toLowerCase();
-
-        const filtered = tree.filter((entry) => {
-          if (domainFilter && !entry.domain.name.toLowerCase().includes(domainFilter)) return false;
-          return true;
-        });
-
-        let output = `# Ontology Tree\n\n`;
-
-        if (filtered.length === 0) {
-          output += '_No ontology data found. Facts are classified automatically as they are extracted._\n';
-        }
-
-        for (const { domain, categories } of filtered) {
-          output += `## ${domain.name}\n`;
-          if (domain.description) output += `> ${domain.description}\n`;
-          output += '\n';
-
-          const filteredCategories = categories.filter(({ category }) => {
-            if (categoryFilter && !category.name.toLowerCase().includes(categoryFilter)) return false;
-            return true;
-          });
-
-          if (filteredCategories.length === 0) {
-            output += '_No matching categories._\n\n';
-            continue;
-          }
-
-          for (const { category, facts } of filteredCategories) {
-            output += `### ${category.name}`;
-            if (category.description) output += ` — ${category.description}`;
-            output += `\n(${facts.length} facts)\n\n`;
-
-            for (const fact of facts) {
-              output += `- **[${fact.category}]** ${fact.fact}\n`;
-              output += `  - ID: ${fact.id} | Confirmed: ${fact.consolidated_count}x | ${fact.created_at.slice(0, 10)}\n`;
-
-              if (params.include_relations) {
-                const related = getRelatedFacts(db, fact.id, 1);
-                if (related.length > 0) {
-                  for (const { fact: relFact, relation } of related) {
-                    output += `  - ↔ [${relation.relation_type}] "${relFact.fact}"\n`;
-                  }
-                }
-              }
-            }
-            output += '\n';
-          }
-        }
-
-        db.close();
-        return { content: [{ type: 'text', text: output }] };
+        return { content: [{ type: 'text', text: formatOntologyBrowse(db, params) }] };
       } catch (error) {
         return {
           content: [{ type: 'text', text: handleError(error) }],
           isError: true,
         };
+      } finally {
+        db.close();
       }
     }
 
@@ -833,10 +730,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const params = AskAvatarInputSchema.parse(args) as AskAvatarInput;
       const project = params.project || process.cwd();
 
+      const db = initDatabase();
       try {
-        const db = initDatabase();
         const result = await askAvatar(db, params.question, project);
-        db.close();
 
         const confidenceLabel =
           result.confidence >= 0.9
@@ -863,8 +759,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         if (result.relatedDecisions.length > 0) {
           output += `## Related Decisions\n\n`;
-          for (const { fact, relation } of result.relatedDecisions) {
-            output += `- **[${relation}]** ${fact.fact} _(${fact.created_at.slice(0, 10)})_\n`;
+          const listed = result.relatedDecisions.slice(0, AVATAR_MAX_RELATED_LISTED);
+          for (const { fact, relation } of listed) {
+            output += `- **[${relation}]** ${clipLine(fact.fact, RELATED_MAX_CHARS)} _(${fact.created_at.slice(0, 10)})_\n`;
+          }
+          if (result.relatedDecisions.length > listed.length) {
+            output += `- _…and ${result.relatedDecisions.length - listed.length} more related decisions._\n`;
           }
         }
 
@@ -874,6 +774,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [{ type: 'text', text: handleError(error) }],
           isError: true,
         };
+      } finally {
+        db.close();
       }
     }
 
@@ -891,60 +793,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       try {
         const queryEmbedding = await generateEmbedding(params.query, 'query');
-        const results = searchSimilarFacts(db, queryEmbedding, currentProject, params.limit, 0.5);
-
-        if (results.length === 0) {
-          return { content: [{ type: 'text', text: 'No matching facts found to trace.' }] };
-        }
-
-        let output = `# Fact Provenance Trace\n\nQuery: "${params.query}"\n\n`;
-
-        for (const { fact, distance } of results) {
-          const similarity = (1 - distance * distance / 2).toFixed(3);
-          output += `## ${fact.fact}\n`;
-          output += `- Category: ${fact.category} | Scope: ${fact.scope_type}\n`;
-          output += `- Similarity: ${similarity} | Confirmed: ${fact.consolidated_count}x\n`;
-          output += `- Created: ${fact.created_at}\n`;
-
-          // Trace back to source exchanges
-          if (fact.source_exchange_ids && fact.source_exchange_ids.length > 0) {
-            output += `\n### Source Conversations\n\n`;
-            for (const exchangeId of fact.source_exchange_ids) {
-              const exchange = db.prepare(
-                'SELECT id, project, timestamp, user_message, archive_path, line_start, line_end FROM exchanges WHERE id = ?'
-              ).get(exchangeId) as Record<string, unknown> | undefined;
-
-              if (exchange) {
-                const userMsg = (exchange['user_message'] as string).substring(0, 200).replace(/\s+/g, ' ');
-                output += `- **[${exchange['project']}, ${(exchange['timestamp'] as string).slice(0, 10)}]**\n`;
-                output += `  "${userMsg}..."\n`;
-                output += `  Lines ${exchange['line_start']}-${exchange['line_end']} in ${exchange['archive_path']}\n\n`;
-              }
-            }
-          } else {
-            output += `\n_Source exchanges not available._\n\n`;
-          }
-
-          // Show ontology context
-          const revisions = getRevisions(db, fact.id);
-          if (revisions.length > 0) {
-            output += `### Revision History\n\n`;
-            for (const rev of revisions) {
-              output += `- ${rev.created_at.slice(0, 10)}: "${rev.previous_fact}" → "${rev.new_fact}" (${rev.reason})\n`;
-            }
-            output += '\n';
-          }
-
-          // Show graph relations
-          const related = getRelatedFacts(db, fact.id, 1);
-          if (related.length > 0) {
-            output += `### Related Facts (1-hop)\n\n`;
-            for (const { fact: relFact, relation } of related) {
-              output += `- **[${relation.relation_type}]** ${relFact.fact}\n`;
-            }
-            output += '\n';
-          }
-        }
+        const output = formatFactTrace(db, queryEmbedding, { query: params.query, project: currentProject, limit: params.limit });
 
         return { content: [{ type: 'text', text: output }] };
       } catch (error) {
@@ -1032,36 +881,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       try {
         const queryEmbedding = await generateEmbedding(params.query, 'query');
-        const allResults = searchAllFacts(db, queryEmbedding, params.limit * 3, 0.5);
-
-        // Filter out current project facts, keep only OTHER projects
-        const currentProject = params.current_project || process.cwd();
-        const crossProjectResults = allResults.filter(
-          r => r.fact.scope_type === 'project' && r.fact.scope_project !== currentProject
-        ).slice(0, params.limit);
-
-        if (crossProjectResults.length === 0) {
-          return { content: [{ type: 'text', text: `No cross-project insights found for "${params.query}". Similar decisions may not exist in other projects yet.` }] };
-        }
-
-        // Group by project
-        const byProject = new Map<string, Array<{ fact: typeof crossProjectResults[0]['fact']; distance: number }>>();
-        for (const { fact, distance } of crossProjectResults) {
-          const proj = fact.scope_project || 'global';
-          if (!byProject.has(proj)) byProject.set(proj, []);
-          byProject.get(proj)!.push({ fact, distance });
-        }
-
-        let output = `# Cross-Project Insights\n\nQuery: "${params.query}"\nExcluding: ${currentProject}\n\n`;
-
-        for (const [project, facts] of byProject) {
-          output += `## Project: ${project}\n\n`;
-          for (const { fact, distance } of facts) {
-            const similarity = Math.round((1 - distance * distance / 2) * 100);
-            output += `- **[${fact.category}]** ${fact.fact} _(${similarity}% relevant, ${fact.created_at.slice(0, 10)})_\n`;
-          }
-          output += '\n';
-        }
+        const output = formatCrossProjectInsights(db, queryEmbedding, {
+          query: params.query,
+          currentProject: params.current_project || process.cwd(),
+          limit: params.limit,
+        });
 
         return { content: [{ type: 'text', text: output }] };
       } catch (error) {
@@ -1083,62 +907,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       try {
         const queryEmbedding = await generateEmbedding(params.query, 'query');
-        const seedFacts = searchSimilarFacts(db, queryEmbedding, params.project ?? null, 3, 0.5);
-
-        if (seedFacts.length === 0) {
-          return { content: [{ type: 'text', text: `No facts found related to "${params.query}" to start graph exploration.` }] };
-        }
-
-        // Build domain/category maps
-        const domains = listDomains(db);
-        const categories = listCategories(db);
-        const domainMap = new Map(domains.map(d => [d.id, d.name]));
-        const categoryMap = new Map(categories.map(c => [c.id, { name: c.name, domainId: c.domain_id }]));
-
-        let output = `# Knowledge Graph Exploration\n\nSeed: "${params.query}" | Depth: ${params.hops} hops\n\n`;
-
-        const allDiscovered = new Set<string>();
-
-        for (const { fact: seedFact, distance } of seedFacts) {
-          const similarity = Math.round((1 - distance * distance / 2) * 100);
-          const catInfo = seedFact.ontology_category_id ? categoryMap.get(seedFact.ontology_category_id) : undefined;
-          const domainName = catInfo ? (domainMap.get(catInfo.domainId) ?? '?') : '?';
-          const catName = catInfo ? catInfo.name : '?';
-
-          output += `## Seed: ${seedFact.fact}\n`;
-          output += `- [${domainName}/${catName}] ${seedFact.category} | ${similarity}% relevant\n\n`;
-
-          allDiscovered.add(seedFact.id);
-
-          // Multi-hop traversal
-          const related = getRelatedFacts(db, seedFact.id, params.hops);
-
-          if (related.length === 0) {
-            output += `_No connected facts found._\n\n`;
-            continue;
-          }
-
-          // Group by hop distance (approximate via order)
-          output += `### Connected Facts (${related.length} found, up to ${params.hops} hops)\n\n`;
-
-          for (const { fact: relFact, relation } of related) {
-            if (allDiscovered.has(relFact.id)) continue;
-            allDiscovered.add(relFact.id);
-
-            const relCatInfo = relFact.ontology_category_id ? categoryMap.get(relFact.ontology_category_id) : undefined;
-            const relDomain = relCatInfo ? (domainMap.get(relCatInfo.domainId) ?? '?') : '?';
-            const relCat = relCatInfo ? relCatInfo.name : '?';
-
-            output += `- **[${relation.relation_type}]** ${relFact.fact}\n`;
-            output += `  [${relDomain}/${relCat}] ${relFact.category} | ${relFact.created_at.slice(0, 10)}\n`;
-            if (relation.reasoning) {
-              output += `  _${relation.reasoning}_\n`;
-            }
-          }
-          output += '\n';
-        }
-
-        output += `\n_Total unique facts discovered: ${allDiscovered.size}_\n`;
+        const output = formatGraphExploration(db, queryEmbedding, { query: params.query, hops: params.hops, project: params.project });
 
         return { content: [{ type: 'text', text: output }] };
       } catch (error) {

@@ -6,6 +6,7 @@ import { classifyLlmError, LlmRefusalError } from './llm-error-class.js';
 import { generateEmbedding, initEmbeddings } from './embeddings.js';
 import { searchSimilarFacts } from './fact-db.js';
 import { getRelatedFacts, listDomains, listCategories } from './ontology-db.js';
+import { pickRelated, clipLine } from './related-format.js';
 
 const AVATAR_SYSTEM_PROMPT = `You are acting as the user's technical alter ego.
 You represent their past engineering decisions, preferences, and patterns.
@@ -28,6 +29,9 @@ You represent their past engineering decisions, preferences, and patterns.
 - 0.7-0.9: inferred from related decisions
 - 0.5-0.7: weak inference, needs verification
 - below 0.5: not enough information`;
+
+/** Characters of a related (not directly retrieved) fact in the prompt. */
+const RELATED_PROMPT_CHARS = 400;
 
 interface AvatarRawResponse {
   answer: string;
@@ -71,7 +75,9 @@ export async function askAvatar(
   const expandedFactIds = new Set(vectorResults.map((r) => r.fact.id));
 
   for (const { fact } of vectorResults.slice(0, 5)) {
-    const related = getRelatedFacts(db, fact.id, 1);
+    // A few neighbours per fact, the ones that change its reading first: all of them used to go into the
+    // prompt in full (one fact has had 106 neighbours, 76K characters).
+    const related = pickRelated(getRelatedFacts(db, fact.id, 1)).picked;
     for (const { fact: relFact, relation } of related) {
       if (!expandedFactIds.has(relFact.id)) {
         expandedFactIds.add(relFact.id);
@@ -104,7 +110,7 @@ export async function askAvatar(
     const catName = catInfo ? catInfo.name : 'Unknown';
 
     factContextLines.push(
-      `[ID:${fact.id}] [${domainName}/${catName}] [${fact.category}] [relation:${relation}] "${fact.fact}" (date: ${fact.created_at.slice(0, 10)})`,
+      `[ID:${fact.id}] [${domainName}/${catName}] [${fact.category}] [relation:${relation}] "${clipLine(fact.fact, RELATED_PROMPT_CHARS)}" (date: ${fact.created_at.slice(0, 10)})`,
     );
   }
 
