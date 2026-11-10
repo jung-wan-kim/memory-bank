@@ -2,7 +2,8 @@ import Database from 'better-sqlite3';
 import { l2DistanceToSimilarity } from './db.js';
 import type { AvatarResponse, Fact, RelationType } from './types.js';
 import { callHaiku, parseJsonResponse } from './llm.js';
-import { classifyLlmError, LlmRefusalError } from './llm-error-class.js';
+import { classifyLlmError, extractStatus, LlmCallError, LlmRefusalError } from './llm-error-class.js';
+import type { LlmErrorClass } from './llm-error-class.js';
 import { generateEmbedding, initEmbeddings } from './embeddings.js';
 import { searchSimilarFacts } from './fact-db.js';
 import { getRelatedFacts, listDomains, listCategories } from './ontology-db.js';
@@ -39,11 +40,36 @@ interface AvatarRawResponse {
   cited_fact_ids: string[];
 }
 
+/**
+ * Why no answer could be generated, when the LLM call failed. Absent on an answer (including "nothing in
+ * memory about this"). The `answer` text of a failure is a notice for the user, not an answer — a caller
+ * that shows it has to mark it as an error (the MCP tool sets isError).
+ */
+export type AvatarFailure = 'login' | 'refusal' | LlmErrorClass;
+
+export interface AvatarResult extends AvatarResponse {
+  failure?: AvatarFailure;
+}
+
+/**
+ * A call that failed because nobody is logged in or the key is not accepted: "Not logged in · Please run
+ * /login" and "Invalid API key · Please run /login" (what the Claude CLI under the Agent SDK prints), a 401, an
+ * authentication_error. Waiting does not fix it. The shared classifier keeps these as 'unknown' / 'transient'
+ * on purpose (background workers hold their queue until the login is back) — this is only about what the
+ * person asking is told.
+ */
+function isLoginFailure(error: unknown): boolean {
+  const reason = error instanceof LlmCallError ? error.reason : error;
+  if (extractStatus(reason) === 401) return true;
+  const message = (reason instanceof Error ? reason.message : String(reason)).toLowerCase();
+  return /not logged in|please run \/login|invalid (x-)?api[- ]?key|authentication_error/.test(message);
+}
+
 export async function askAvatar(
   db: Database.Database,
   question: string,
   project?: string,
-): Promise<AvatarResponse> {
+): Promise<AvatarResult> {
   await initEmbeddings();
 
   const questionEmbedding = await generateEmbedding(question, 'query');
@@ -135,19 +161,26 @@ export async function askAvatar(
     console.error('ask_avatar: LLM call failed after retries:', error);
     const cls = classifyLlmError(error);
     // A refusal or a rejected request is not retried and fails the same way
-    // again — "try again later" would be wrong advice for it.
+    // again — "try again later" would be wrong advice for it. So would it be for a
+    // missing login: the same question fails the same way until someone logs in.
     const retriable = cls !== 'deterministic';
-    const advice = error instanceof LlmRefusalError
+    const refusal = error instanceof LlmRefusalError;
+    const login = !refusal && isLoginFailure(error);
+    const advice = refusal
       ? '모델이 이 요청에 답하기를 거절했습니다. 같은 질문은 다시 해도 같은 결과일 가능성이 큽니다.'
-      : retriable
-        ? '잠시 후 다시 시도해 주세요.'
-        : '이 요청은 다시 시도해도 같은 이유로 실패합니다.';
+      : login
+        ? 'Claude 에 로그인되어 있지 않거나 API 키가 받아들여지지 않았습니다. `/login` 으로 로그인(또는 API 키를 설정)한 뒤 다시 물어 주세요 — 기다려서는 해결되지 않습니다.'
+        : retriable
+          ? '잠시 후 다시 시도해 주세요.'
+          : '이 요청은 다시 시도해도 같은 이유로 실패합니다.';
+    const failure: AvatarFailure = refusal ? 'refusal' : login ? 'login' : cls;
     // Only retriable failures were retried (callHaiku throws the rest at once).
     return {
-      answer: `⚠️ LLM 호출이 ${retriable ? '재시도 후에도 ' : ''}실패해 답변을 생성하지 못했습니다 (${cls}). ${advice}`,
+      answer: `⚠️ LLM 호출이 ${retriable ? '재시도 후에도 ' : ''}실패해 답변을 생성하지 못했습니다 (${login ? 'login' : cls}). ${advice}`,
       sources: [],
       confidence: 0,
       relatedDecisions,
+      failure,
     };
   }
   const parsed = parseJsonResponse<AvatarRawResponse>(response);

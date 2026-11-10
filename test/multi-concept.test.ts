@@ -18,8 +18,10 @@ import type { ConversationExchange } from '../src/types.js';
  * the cosine (`l2DistanceToSimilarity`, db.ts): 1 for the same direction, 0 for an orthogonal
  * one, √½ ≈ 0.71 for the halfway vector.
  *
- * A multi-concept search answers in two parts (search.ts): exchanges that contain every word of
- * every concept come first, then the conversations in which every concept has a near exchange.
+ * A multi-concept search has two sides (search.ts): exchanges that contain every word of every
+ * concept, and the conversations in which every concept has a near exchange — merged into one
+ * ranking, rank by rank, the keyword match first at the same rank (the merge itself is covered by
+ * test/search-multi-concept-keyword.test.ts).
  * The seed keeps the two apart: only the exchange in KEYWORD_ONLY has the words of two concepts
  * in one text, and its vector is near neither.
  */

@@ -190,13 +190,20 @@ describe('readConversationRange (the `read` tool)', () => {
     expect(text).toMatch(/Output truncated[^\n]*startLine=\d+, endLine=100/);
   });
 
-  it('a single message larger than the whole budget is clipped and the next page moves past it', async () => {
+  // The next page used to start at the NEXT line: the rest of the long message could not be read at all.
+  // (Reading it to its end, page by page: test/read-continue.test.ts.)
+  it('a single message larger than the whole budget is clipped and the next page goes on inside it', async () => {
     const file = join(dir, 'huge.jsonl');
     writeFileSync(file, [userLine(1, 'H'.repeat(200_000)), assistantLine(1, 'after-the-huge-one')].join('\n') + '\n');
     const first = await readConversationRange(file);
-    expect(first.length).toBeLessThanOrEqual(READ_MAX_OUTPUT_CHARS + 400);
+    expect(first.length).toBeLessThanOrEqual(READ_MAX_OUTPUT_CHARS + 500);
     expect(first).toMatch(/message clipped/);
-    expect(first).toMatch(/startLine=2/);
+    const next = first.match(/Continue with startLine=1, startChar=(\d+)\._/);
+    expect(next).not.toBeNull();
+    const second = await readConversationRange(file, { startLine: 1, startChar: Number(next![1]) });
+    expect(second).toMatch(/H{30000}/);
+    expect(second).toMatch(/Continue with startLine=1, startChar=\d+\._/);
+    // a caller that wants to skip the long message can still do so
     expect(await readConversationRange(file, { startLine: 2 })).toContain('after-the-huge-one');
   });
 
@@ -208,7 +215,7 @@ describe('readConversationRange (the `read` tool)', () => {
 
     const text = await readConversationRange(file);
     expect(text).toContain('**Result:**');
-    expect(text).toMatch(new RegExp(`R{${READ_MAX_BLOCK_CHARS}}\\n…\\[\\+28000 chars not shown\\]`));
+    expect(text).toMatch(new RegExp(`R{${READ_MAX_BLOCK_CHARS}}\\n…\\[\\+28000 chars not shown — read again with full: true\\]`));
     expect(text).not.toMatch(new RegExp(`R{${READ_MAX_BLOCK_CHARS + 1}}`));
     expect(text).toContain('done-marker');
   });

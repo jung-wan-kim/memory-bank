@@ -29,6 +29,8 @@ export const ONTOLOGY_DEFAULT_FACTS_PER_CATEGORY = 5;
 export const ONTOLOGY_DEFAULT_CATEGORIES_OVERVIEW = 8;
 export const ONTOLOGY_DEFAULT_CATEGORIES_DOMAIN = 200;
 export const ONTOLOGY_DEFAULT_CATEGORIES_WITH_FACTS = 20;
+/** Largest max_categories the tool accepts. A domain with more is paged with category_offset. */
+export const ONTOLOGY_MAX_CATEGORIES = 200;
 /**
  * Lower bounds of what a category block prints (heading + count line; two lines per fact). They decide how
  * many categories can possibly fit under the output ceiling, so only those categories' facts are loaded.
@@ -44,6 +46,8 @@ export interface OntologyBrowseParams {
   facts_per_category?: number;
   /** Categories listed per domain, largest first. Default: 8 (200 with a `domain` filter) without facts, 20 with. */
   max_categories?: number;
+  /** Categories to skip per domain (largest first) — lists the ones behind max_categories. Default 0. */
+  category_offset?: number;
 }
 
 type CategoryEntry = DomainTree['categories'][number];
@@ -58,6 +62,7 @@ export function formatOntologyBrowse(db: Database.Database, params: OntologyBrow
     ?? (withFacts
       ? ONTOLOGY_DEFAULT_CATEGORIES_WITH_FACTS
       : params.domain ? ONTOLOGY_DEFAULT_CATEGORIES_DOMAIN : ONTOLOGY_DEFAULT_CATEGORIES_OVERVIEW);
+  const offset = params.category_offset ?? 0;
 
   // One aggregate JOIN: the tree with active-fact counts, no fact rows.
   const tree = getOntologyTree(db, { domain: params.domain, category: params.category, factsPerCategory: 0 });
@@ -78,8 +83,8 @@ export function formatOntologyBrowse(db: Database.Database, params: OntologyBrow
         .sort((a, b) => b.factCount - a.factCount || a.category.name.localeCompare(b.category.name));
       return {
         domain,
-        listed: nonEmpty.slice(0, maxCategories),
-        rest: nonEmpty.slice(maxCategories),
+        listed: nonEmpty.slice(offset, offset + maxCategories),
+        rest: nonEmpty.slice(offset + maxCategories),
         categoryCount: nonEmpty.length,
         emptyCount: categories.length - nonEmpty.length,
         factCount: sum(nonEmpty),
@@ -171,6 +176,11 @@ export function formatOntologyBrowse(db: Database.Database, params: OntologyBrow
 
     let header = `## ${d.domain.name} — ${plural(d.factCount, 'fact', 'facts')} in ${plural(d.categoryCount, 'category', 'categories')}\n`;
     if (d.domain.description) header += `> ${clipLine(d.domain.description, ONTOLOGY_FACT_CHARS)}\n`;
+    if (offset > 0) {
+      header += d.listed.length > 0
+        ? `_Largest first: categories ${offset + 1}-${offset + d.listed.length} of ${d.categoryCount}._\n`
+        : `_category_offset ${offset} is past the last of this domain's ${plural(d.categoryCount, 'category', 'categories')}._\n`;
+    }
     header += '\n';
     if (output.length + header.length > BODY_MAX_CHARS) {
       full = true;
@@ -204,7 +214,10 @@ export function formatOntologyBrowse(db: Database.Database, params: OntologyBrow
 
     const tail: string[] = [];
     if (d.rest.length > 0) {
-      tail.push(`- _…and ${plural(d.rest.length, 'more category', 'more categories')} (${plural(sum(d.rest), 'fact', 'facts')}) — narrow with \`category\` or raise \`max_categories\`._`);
+      // "Raise max_categories" only while it can be raised: it used to be said at the maximum too, where the
+      // categories behind it could not be listed at all.
+      const raise = maxCategories < ONTOLOGY_MAX_CATEGORIES ? ', raise `max_categories`' : '';
+      tail.push(`- _…and ${plural(d.rest.length, 'more category', 'more categories')} (${plural(sum(d.rest), 'fact', 'facts')}) — narrow with \`category\`${raise}, or list the next ones with \`category_offset: ${offset + maxCategories}\`._`);
     }
     if (d.emptyCount > 0) {
       tail.push(`- _${plural(d.emptyCount, 'empty category', 'empty categories')} not listed._`);

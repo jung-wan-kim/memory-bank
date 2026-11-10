@@ -9,6 +9,7 @@ import {
   formatOntologyBrowse,
   ONTOLOGY_MAX_OUTPUT_CHARS,
   ONTOLOGY_FACT_CHARS,
+  ONTOLOGY_MAX_CATEGORIES,
 } from '../src/ontology-browse.js';
 
 // SQ-02 / ONT-02 / STG-03③ / ROB-07 — search_ontology built the whole tree with one facts query per
@@ -217,6 +218,45 @@ describe('formatOntologyBrowse (search_ontology output)', () => {
     expect([...text.matchAll(/^### /gm)]).toHaveLength(3);
     expect([...text.matchAll(/^- \*\*\[decision\]\*\*/gm)]).toHaveLength(6);
     expect(text).toMatch(/3 more categories \(12 facts\)/);
+  });
+
+  // F7 — a domain can hold more categories than max_categories allows (553 on the live index; the limit is
+  // 200). The closing line told the caller to raise a limit that was already at its maximum, and nothing
+  // listed the categories behind it (353 names, 64%, could only be reached by guessing them).
+  it('lists the categories behind max_categories with category_offset, and never says to raise a limit that is at its maximum', () => {
+    seedWide(1, 450, 1);
+    const names = (text: string) => [...text.matchAll(/^- (Topic 00-\d+) \(1\)$/gm)].map((m) => m[1]);
+    expect(ONTOLOGY_MAX_CATEGORIES).toBe(200);
+
+    const first = formatOntologyBrowse(db, { domain: 'Domain 00' });
+    expect(names(first)).toHaveLength(200);
+    expect(first).toMatch(/250 more categories \(250 facts\)/);
+    expect(first).toMatch(/`category_offset: 200`/);
+    expect(first).not.toMatch(/raise `max_categories`/);
+
+    const second = formatOntologyBrowse(db, { domain: 'Domain 00', category_offset: 200 });
+    expect(names(second)).toHaveLength(200);
+    expect(second).toMatch(/categories 201-400 of 450/);
+    expect(second).toMatch(/50 more categories \(50 facts\)/);
+    expect(second).toMatch(/`category_offset: 400`/);
+
+    const third = formatOntologyBrowse(db, { domain: 'Domain 00', category_offset: 400 });
+    expect(names(third)).toHaveLength(50);
+    expect(third).toMatch(/categories 401-450 of 450/);
+    expect(third).not.toMatch(/more categor/);
+    // every category once, none twice
+    expect(new Set([...names(first), ...names(second), ...names(third)]).size).toBe(450);
+
+    // below the maximum, raising the limit is still a way
+    const small = formatOntologyBrowse(db, { domain: 'Domain 00', max_categories: 50 });
+    expect(names(small)).toHaveLength(50);
+    expect(small).toMatch(/raise `max_categories`/);
+    expect(small).toMatch(/`category_offset: 50`/);
+
+    // past the end: said, not an empty list
+    const past = formatOntologyBrowse(db, { domain: 'Domain 00', category_offset: 9_999 });
+    expect(names(past)).toHaveLength(0);
+    expect(past).toMatch(/category_offset 9999 is past the last of this domain's 450 categories/);
   });
 
   it('hides empty categories and says how many', () => {

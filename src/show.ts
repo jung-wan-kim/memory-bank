@@ -55,12 +55,15 @@ interface MarkdownCaps {
 
 const NO_CAPS: MarkdownCaps = { blockChars: Infinity };
 
-/** `text` cut to `max` chars with a marker naming how much was left out (never splits a surrogate pair). */
+/**
+ * `text` cut to `max` chars with a marker naming how much was left out and how to read it (never splits a
+ * surrogate pair). Only the `read` tool clips (NO_CAPS never does), so the marker names its `full` argument.
+ */
 function clipText(text: string, max: number): string {
   if (text.length <= max) return text;
   let cut = text.slice(0, max);
   if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
-  return `${cut}\n…[+${text.length - cut.length} chars not shown]`;
+  return `${cut}\n…[+${text.length - cut.length} chars not shown — read again with full: true]`;
 }
 
 function markdownHeader(firstMessage: ConversationMessage): string {
@@ -278,6 +281,14 @@ export interface ConversationRangeOptions {
   startLine?: number;
   /** Last line (1-indexed, inclusive). */
   endLine?: number;
+  /**
+   * Characters to skip of the first message the range shows — where an earlier answer stopped inside a
+   * message longer than one answer (the value its "Continue with …" line names). Counted in that message's
+   * rendered Markdown, under the same `full` setting.
+   */
+  startChar?: number;
+  /** Show tool inputs and results whole instead of clipping each at READ_MAX_BLOCK_CHARS. */
+  full?: boolean;
   /** Output ceiling in characters (default READ_MAX_OUTPUT_CHARS). */
   maxChars?: number;
 }
@@ -285,12 +296,15 @@ export interface ConversationRangeOptions {
 /**
  * The `read` tool: Markdown of a line range of an archived conversation, read as a stream (plain or
  * `.zst`) so the cost follows the range and not the file. The output is capped: when the range does not
- * fit, rendering stops at a message boundary and the footer names the startLine to continue from.
+ * fit, rendering stops at a message boundary and the footer names the startLine to continue from. A
+ * message that alone is over the ceiling is shown as far as it fits, and the footer names the startChar to
+ * continue from inside it — following the footers reads any range to its end, whatever one message holds.
  * A range outside the file is an error carrying the file's line count — never an empty string.
  */
 export async function readConversationRange(filePath: string, opts: ConversationRangeOptions = {}): Promise<string> {
   const { startLine, endLine } = opts;
   const maxChars = opts.maxChars ?? READ_MAX_OUTPUT_CHARS;
+  const startChar = opts.startChar ?? 0;
   if (startLine !== undefined && endLine !== undefined && startLine > endLine) {
     throw new Error(`Invalid line range: startLine ${startLine} is after endLine ${endLine}`);
   }
@@ -322,40 +336,69 @@ export async function readConversationRange(filePath: string, opts: Conversation
     return `_No user or assistant messages in lines ${firstLine}-${lastLineRead}._\n`;
   }
 
-  const caps: MarkdownCaps = { blockChars: READ_MAX_BLOCK_CHARS };
+  const caps: MarkdownCaps = { blockChars: opts.full ? Infinity : READ_MAX_BLOCK_CHARS };
   let output = markdownHeader(shown[0].msg);
   let inSidechain = false;
   let rendered = 0;
-  // Line the next call should start from, once the output ceiling stops this one.
-  let nextStart: number | null = null;
+  // Where the next call should start, once the output ceiling stops this one: a line, and — when the stop is
+  // inside that line's message — the character of it to go on from (0 = the message from its start).
+  let next: { line: number; char: number } | null = null;
+  let startCharPending = startChar > 0;
 
   for (let i = 0; i < shown.length; i++) {
     const { line, msg } = shown[i];
     const body = renderMarkdownMessage(messages, i, caps);
     if (body === null) continue;
 
+    // startChar belongs to the first message that is shown.
+    let from = 0;
+    if (startCharPending) {
+      startCharPending = false;
+      if (startChar >= body.length) {
+        throw new Error(
+          `startChar ${startChar} is past the end of the message at line ${line}: it has ${body.length} characters`
+          + (opts.full ? '' : ' (tool inputs/results clipped — an offset from a full: true answer needs full: true)')
+        );
+      }
+      from = startChar;
+      // An offset between the two halves of a surrogate pair starts at the pair.
+      if (/[\uDC00-\uDFFF]/.test(body[from]) && /[\uD800-\uDBFF]/.test(body[from - 1] ?? '')) from--;
+    }
+
     let marker = '';
     if (msg.isSidechain && !inSidechain) marker = SIDECHAIN_START;
     else if (!msg.isSidechain && inSidechain) marker = SIDECHAIN_END;
-    const chunk = marker + body;
+    const lead = marker + (from > 0 ? `…[message at line ${line} continues from character ${from} of ${body.length}]\n\n` : '');
+    const rest = from > 0 ? body.slice(from) : body;
+    const room = maxChars - output.length - lead.length;
 
-    if (output.length + chunk.length > maxChars) {
+    if (rest.length > room) {
       if (rendered > 0) {
-        nextStart = line; // stop at the message boundary; the next call starts with this message
+        next = { line, char: 0 }; // stop at the message boundary; the next call starts with this message
         break;
       }
-      // The first message alone is over the ceiling: show what fits and move on, or no call could get past it.
-      let cut = chunk.slice(0, Math.max(0, maxChars - output.length));
-      if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
-      output += `${cut}\n\n…[message clipped: ${cut.length} of ${chunk.length} chars shown]\n\n`;
-      if (marker) inSidechain = !inSidechain;
-      nextStart = line + 1;
-      break;
+      // The first message alone is over the ceiling: show what fits. The next call goes on inside it — it
+      // used to start at the next line, and the rest of this message could not be read at all. At least
+      // one character is shown, so every call moves forward.
+      let cut = rest.slice(0, Math.max(1, room));
+      if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.length > 1 ? cut.slice(0, -1) : rest.slice(0, 2);
+      const upTo = from + cut.length;
+      if (upTo < body.length) {
+        output += `${lead}${cut}\n\n…[message clipped: characters ${from}-${upTo - 1} of ${body.length} shown]\n\n`;
+        if (marker) inSidechain = !inSidechain;
+        next = { line, char: upTo };
+        break;
+      }
+      // (no room was left at all and the one character shown was the message's last: it is complete)
     }
 
-    output += chunk;
+    output += lead + rest;
     if (marker) inSidechain = !inSidechain;
     rendered++;
+  }
+
+  if (startCharPending) {
+    throw new Error(`startChar ${startChar} was given, but lines ${firstLine}-${lastLineRead} show no message of their own to apply it to`);
   }
 
   // Close sidechain if still open
@@ -363,14 +406,23 @@ export async function readConversationRange(filePath: string, opts: Conversation
     output += SIDECHAIN_END;
   }
 
-  if (nextStart === null && range.stoppedEarly) nextStart = lastLineRead + 1;
-  const moreToRead = nextStart !== null
-    && (endLine === undefined || nextStart <= endLine)
-    && (range.totalLines === null || nextStart <= range.totalLines);
-  if (nextStart !== null && moreToRead) {
+  if (next === null && range.stoppedEarly) next = { line: lastLineRead + 1, char: 0 };
+  const moreToRead = next !== null && (
+    next.char > 0
+    || ((endLine === undefined || next.line <= endLine) && (range.totalLines === null || next.line <= range.totalLines))
+  );
+  if (next !== null && moreToRead) {
     const total = range.totalLines === null ? '' : ` of ${range.totalLines}`;
-    output += `\n---\n_Output truncated at the ${maxChars}-char limit: lines ${firstLine}-${nextStart - 1}${total} shown. `
-      + `Continue with startLine=${nextStart}${endLine !== undefined ? `, endLine=${endLine}` : ''}._\n`;
+    const shownSoFar = next.char > 0
+      ? `lines ${firstLine}-${next.line}${total} shown, the message at line ${next.line} up to character ${next.char}`
+      : `lines ${firstLine}-${next.line - 1}${total} shown`;
+    // Every value the next call needs, in one place: the offset counts the text as this call rendered it,
+    // so `full` travels with it.
+    const args = [`startLine=${next.line}`];
+    if (next.char > 0) args.push(`startChar=${next.char}`);
+    if (endLine !== undefined) args.push(`endLine=${endLine}`);
+    if (opts.full) args.push('full=true');
+    output += `\n---\n_Output truncated at the ${maxChars}-char limit: ${shownSoFar}. Continue with ${args.join(', ')}._\n`;
   }
 
   return output;

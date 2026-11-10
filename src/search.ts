@@ -85,6 +85,14 @@ export interface SearchOptions {
    * the multi-concept search, where "some of the words" is not a match.
    */
   require_all_tokens?: boolean;
+  /**
+   * Vector pass: the k of its first KNN round, instead of the guess (8 × limit when rows are filtered). For a
+   * caller that has just searched the same index under the same filters and saw the k that took
+   * (SearchMeta.vector.k): how many of the nearest vectors pass is a property of the index and the filters,
+   * and every round is a scan of the whole index. The turns returned do not depend on it (a larger k can
+   * only bring a more complete snapshot of a returned turn into view).
+   */
+  vector_first_k?: number;
 }
 
 /** First characters of the prompts another memory plugin's observer session sends — not a person asking. */
@@ -109,11 +117,47 @@ export const NOISE_EXCHANGE_SQL =
 /** sqlite-vec refuses a KNN whose k is above this ("k value in knn query too large … the limit is 4096"). */
 export const VEC_KNN_K_MAX = 4096;
 
+/**
+ * From this k up a KNN costs what one at the ceiling costs: vec0 scans every vector whatever k is, and
+ * selects the nearest min(k, 1024) of each 1,024-vector chunk. Measured on 341,840 int8 vectors:
+ * k 10 → 45 ms, 50 → 60 ms, 400 → 145 ms, 1,600 → 300 ms, 4,096 → 300 ms. The vector pass therefore never
+ * asks for a k between this and the ceiling — it would pay the ceiling's price for fewer candidates, and
+ * then often for one more round at the ceiling.
+ */
+export const VEC_KNN_FLAT_K = 1024;
+
+/** `k` as the vector pass asks for it: within the sqlite-vec limit, and the ceiling once the cost is flat. */
+function knnK(k: number): number {
+  return k >= VEC_KNN_FLAT_K ? VEC_KNN_K_MAX : Math.max(1, Math.ceil(k));
+}
+
 /** Reciprocal-rank-fusion constant for merging the vector and keyword passes in `both` mode. */
 const RRF_K = 60;
 
 /** Most keyword matches one look-ahead reads to find `limit` rows that are not machine noise. */
 const TEXT_LOOKAHEAD_MAX = 4096;
+
+/**
+ * A coding_agent filter on at most this many rows is applied in the keyword query from the agent's own row
+ * list (idx_coding_agent, read once per query) instead of from each matching exchange row.
+ *
+ * The keyword query always scans the keyword index first (see filteredSql). How the agent condition is then
+ * tested decides the cost, measured on a 341,840-row index (ms, first run, `limit` 10):
+ *   rows of the agent          0     457    5,017   20,133   316,233
+ *   test on the exchange row   1,500–4,800  48–1,600  4–64   1–79    1–18
+ *   test on the row list       4–55         4–51      2–21   8–24    21–61
+ * Testing the row opens every match of the query until `limit` rows pass, and the agent column sits behind
+ * the message text (overflow pages) — cheap when most rows pass, seconds when few do. The row list costs one
+ * index read of the agent's rows per query — cheap while the list is short.
+ */
+export const RARE_AGENT_ROWS = 20_000;
+
+/** Rows that carry `agent`, counted no further than RARE_AGENT_ROWS + 1 (index-only; under 6 ms measured). */
+function countAgentRows(db: DatabaseType.Database, agent: string): number {
+  return (db.prepare(
+    'SELECT count(*) AS c FROM (SELECT 1 FROM exchanges WHERE coding_agent = ? LIMIT ?)'
+  ).get(agent, RARE_AGENT_ROWS + 1) as { c: number }).c;
+}
 
 /**
  * One query token as an FTS5 term. A Hangul word of two or more characters is a PREFIX term: unicode61
@@ -220,7 +264,7 @@ export async function searchConversationsDetailed(
   query: string,
   options: SearchOptions = {}
 ): Promise<{ results: SearchHit[]; meta: SearchMeta }> {
-  const { limit = 10, mode = 'both', after, before, coding_agent, include_noise = false, require_all_tokens = false } = options;
+  const { limit = 10, mode = 'both', after, before, coding_agent, include_noise = false, require_all_tokens = false, vector_first_k } = options;
 
   // Validate date parameters
   if (after) validateISODate(after, '--after');
@@ -231,6 +275,9 @@ export async function searchConversationsDetailed(
   let folded = 0;
   let vectorRows: ExchangeRow[] = [];
   let textRows: ExchangeRow[] = [];
+  // null = no agent filter. 0 = no exchange carries the agent: nothing can pass, so neither pass runs
+  // (the vector pass would otherwise scan to the sqlite-vec ceiling and report "cut short").
+  const agentRows = coding_agent ? countAgentRows(db, coding_agent) : null;
 
   const cols = `
           e.id,
@@ -246,17 +293,27 @@ export async function searchConversationsDetailed(
   {
     // Build filter clauses with parameterized queries
     const filterParts: string[] = [];
+    // The same filters as the keyword query writes them (same parameters, same order) — only the agent
+    // condition differs, see RARE_AGENT_ROWS.
+    const ftsFilterParts: string[] = [];
     const filterParams: string[] = [];
     if (after) {
       filterParts.push(`e.timestamp >= ?`);
+      ftsFilterParts.push(`e.timestamp >= ?`);
       filterParams.push(after);
     }
     if (before) {
       filterParts.push(`e.timestamp <= ?`);
+      ftsFilterParts.push(`e.timestamp <= ?`);
       filterParams.push(before);
     }
     if (coding_agent) {
       filterParts.push(`e.coding_agent = ?`);
+      // Unary plus: the condition must stay a test on each keyword match. Without it SQLite may turn the
+      // list into the outer loop and probe the keyword index once per listed row.
+      ftsFilterParts.push((agentRows ?? 0) <= RARE_AGENT_ROWS
+        ? `+fts.rowid IN (SELECT a.rowid FROM exchanges AS a WHERE a.coding_agent = ?)`
+        : `e.coding_agent = ?`);
       filterParams.push(coding_agent);
     }
     const timeClause = filterParts.length > 0 ? `AND ${filterParts.join(' AND ')}` : '';
@@ -265,6 +322,7 @@ export async function searchConversationsDetailed(
     const noiseClause = include_noise ? '' : `AND NOT ${NOISE_EXCHANGE_SQL}`;
     // Every condition on the exchange row: the caller's filters plus the noise exclusion.
     const rowClause = [timeClause, noiseClause].filter(Boolean).join(' ');
+    const ftsRowClause = [ftsFilterParts.length > 0 ? `AND ${ftsFilterParts.join(' AND ')}` : '', noiseClause].filter(Boolean).join(' ');
 
     /** Display rows of the given ids (the full message text is read only here). */
     const fetchRows = (ids: string[]): Map<string, ExchangeRow> => {
@@ -279,7 +337,9 @@ export async function searchConversationsDetailed(
       return byId;
     };
 
-    if (mode === 'vector' || mode === 'both') {
+    if (agentRows === 0) {
+      if (mode !== 'text') meta.vector = { k: 0, candidates: 0, matched: 0, truncated: false };
+    } else if (mode === 'vector' || mode === 'both') {
       // Vector similarity search
       await initEmbeddings();
       const queryEmbedding = await generateEmbedding(query, 'query');
@@ -319,7 +379,9 @@ export async function searchConversationsDetailed(
         // has not upgraded yet (newest sessions are upgraded first).
         const blob = embeddingToVecBlob(queryEmbedding, vecQuant);
         const want = Math.min(limit, VEC_KNN_K_MAX);
-        let k = rowClause ? Math.min(VEC_KNN_K_MAX, Math.max(want * 8, 64)) : want;
+        let k = vector_first_k !== undefined
+          ? knnK(Math.max(want, vector_first_k))
+          : rowClause ? knnK(Math.max(want * 8, 64)) : want;
         type Candidate = { id: string; distance: number; archive_path: string; line_start: number; line_end: number; pass: number };
         for (;;) {
           const candidates = stmt.all(EMBEDDING_VERSION, ...timeParams, blob, k) as Candidate[];
@@ -350,8 +412,8 @@ export async function searchConversationsDetailed(
           }
           // Each round is a full scan of the index, so take as few as possible: at least ×4, and when the
           // pass rate seen so far says that cannot fill `want` either, twice what the rate implies (the
-          // ceiling when nothing has passed yet).
-          k = Math.min(VEC_KNN_K_MAX, Math.max(k * 4, turns.length === 0 ? VEC_KNN_K_MAX : Math.ceil((k * want * 2) / turns.length)));
+          // ceiling when nothing has passed yet, or when the k asked for is where the cost is flat anyway).
+          k = knnK(Math.max(k * 4, turns.length === 0 ? VEC_KNN_K_MAX : Math.ceil((k * want * 2) / turns.length)));
         }
       };
 
@@ -455,6 +517,14 @@ export async function searchConversationsDetailed(
             // inner-limit over-fetch was reproduced hiding a valid old row
             // behind 250 newer matches) — so they use the join-then-sort
             // form; filters shrink the materialized set instead.
+            // That form fixes the join order with CROSS JOIN: the keyword
+            // index is scanned once, each match is then looked up by rowid.
+            // Left to the planner (the index has no statistics), a
+            // coding_agent filter made idx_coding_agent the outer loop — one
+            // keyword-index probe per row of the agent: 12 s for an English
+            // query and 300 s for a Korean (prefix) one on a 341,840-row
+            // index where every row is 'claude-code', the server answering
+            // nothing else meanwhile. Fixed order: 10–60 ms.
             //
             // No caller filter, machine noise left out (the default): the cheap
             // inner-limit form is kept, but it reads AHEAD of `limit` and marks
@@ -475,9 +545,9 @@ export async function searchConversationsDetailed(
             const filteredSql = (orderBy: string) => `
                   SELECT ${cols}, 0 as distance
                   FROM exchanges_fts AS fts
-                  JOIN exchanges AS e ON e.rowid = fts.rowid
+                  CROSS JOIN exchanges AS e ON e.rowid = fts.rowid
                   WHERE exchanges_fts MATCH ?
-                    ${rowClause}
+                    ${ftsRowClause}
                   ORDER BY ${orderBy.replace('rowid', 'fts.rowid')}
                   LIMIT ?
                 `;
@@ -625,7 +695,9 @@ export async function searchConversationsDetailed(
             // Contract: the text pass returns AT MOST `limit` rows in every
             // mode, all-token (AND/exact) matches always first — identical
             // fetch depth to the original all-AND implementation.
-            if (require_all_tokens) {
+            if (agentRows === 0) {
+              textResults = []; // no exchange carries the agent — nothing to look up
+            } else if (require_all_tokens) {
               textResults = ftsRows(ftsExpr, limit);
             } else if (ftsTokens.length <= MAX_FTS_TOKENS) {
               // Short query: AND first (precision — identical to original
@@ -970,8 +1042,12 @@ export async function formatResults(results: SearchHit[], meta?: SearchMeta): Pr
 
 /**
  * Keyword side of the multi-concept search: exchanges that contain every word of every concept, one per
- * conversation, in the keyword pass's order. Each carries its real similarity to every concept, computed
- * from its stored vector (NaN when the exchange has no vector row — unknown, not zero).
+ * conversation — up to 5×limit of them, the nearest to the concepts first. Each carries its real similarity
+ * to every concept, computed from its stored vector (NaN when the exchange has no vector row — unknown, not
+ * zero; those go last).
+ * The order is the similarity, not the keyword pass's: an exchange can hold every word by accident (a long
+ * pasted document, a tool log), and the keyword pass ranks by word statistics or, over its ranking budget,
+ * by recency.
  */
 async function keywordConceptMatches(
   concepts: string[],
@@ -995,7 +1071,7 @@ async function keywordConceptMatches(
   for (const hit of results) {
     if (!perConversation.has(hit.exchange.archivePath)) perConversation.set(hit.exchange.archivePath, hit);
   }
-  const hits = [...perConversation.values()].slice(0, limit);
+  const hits = [...perConversation.values()];
   if (hits.length === 0) return [];
 
   await initEmbeddings();
@@ -1007,7 +1083,7 @@ async function keywordConceptMatches(
   const distance = db.prepare(`SELECT vec_distance_l2(embedding, ${vecParamSql(quant)}) AS d FROM vec_exchanges WHERE id = ?`);
   const blobs = embeddings.map((embedding) => embeddingToVecBlob(embedding, quant));
 
-  return hits.map((hit) => {
+  const matches = hits.map((hit) => {
     const conceptSimilarities = blobs.map((blob) => {
       const row = distance.get(blob, hit.exchange.id) as { d: number } | undefined;
       return row ? l2DistanceToSimilarity(normalizeVecDistance(row.d, quant)) : Number.NaN;
@@ -1020,12 +1096,42 @@ async function keywordConceptMatches(
       matchedBy: 'keyword' as const,
     };
   });
+  // Nearest first; unknown similarity last. The sort is stable: equal values keep the keyword pass's order.
+  const sortKey = (m: MultiConceptResult) => (Number.isFinite(m.averageSimilarity) ? m.averageSimilarity : -Infinity);
+  return matches.sort((a, b) => sortKey(b) - sortKey(a));
 }
 
 /**
- * Conversations that match ALL concepts, at most `limit`:
- *  1. exchanges that contain every word of every concept (keyword index), then
- *  2. conversations in which every concept has a semantically near exchange, by average similarity.
+ * One ranking out of the two sides of a multi-concept search, by reciprocal rank fusion (the same constant
+ * as the single-query merge), cut to `limit`. Both lists come best first. A conversation on both lists adds
+ * its two scores and is listed once, as its keyword match (the exchange that has every word is the place to
+ * read). Equal scores — the same rank on each list — put the keyword match first.
+ * They used to be concatenated, keyword matches first: `limit` keyword matches left no room for any
+ * semantic match, however close.
+ */
+function fuseConceptMatches(
+  keyword: MultiConceptResult[],
+  semantic: MultiConceptResult[],
+  limit: number,
+): MultiConceptResult[] {
+  const fused = new Map<string, { result: MultiConceptResult; score: number }>();
+  keyword.forEach((result, rank) => {
+    fused.set(result.exchange.archivePath, { result, score: 1 / (RRF_K + rank + 1) });
+  });
+  semantic.forEach((result, rank) => {
+    const score = 1 / (RRF_K + rank + 1);
+    const hit = fused.get(result.exchange.archivePath);
+    if (hit) hit.score += score;
+    else fused.set(result.exchange.archivePath, { result, score });
+  });
+  // Stable sort: at equal score the keyword match (inserted first) stays ahead.
+  return [...fused.values()].sort((a, b) => b.score - a.score).slice(0, limit).map((entry) => entry.result);
+}
+
+/**
+ * Conversations that match ALL concepts, at most `limit`, in one ranking (fuseConceptMatches) of
+ *  - exchanges that contain every word of every concept (keyword index), nearest to the concepts first, and
+ *  - conversations in which every concept has a semantically near exchange, by average similarity.
  * The second alone — intersecting each concept's nearest 5×limit exchanges — returned nothing on a large
  * index even when dozens of exchanges contained all the words (the lists rarely share a conversation).
  */
@@ -1039,10 +1145,20 @@ export async function searchMultipleConcepts(
     return [];
   }
 
-  // Search for each concept independently
-  const conceptResults = await Promise.all(
-    concepts.map(concept => searchConversations(concept, { ...options, limit: limit * 5, mode: 'vector' }))
-  );
+  // Search for each concept independently — one after the other (the database calls are synchronous anyway),
+  // each starting its vector pass at the largest k an earlier concept needed: the share of the nearest vectors
+  // that pass the row conditions belongs to the index and the filters, not to the concept. On an index that
+  // is mostly machine noise every concept used to pay for a first round that was too small (measured: 5 of
+  // 37 per-concept searches were done after one round).
+  const conceptResults: SearchHit[][] = [];
+  let firstK: number | undefined;
+  for (const concept of concepts) {
+    const { results, meta } = await searchConversationsDetailed(concept, {
+      ...options, limit: limit * 5, mode: 'vector', vector_first_k: firstK,
+    });
+    conceptResults.push(results);
+    if (meta.vector && meta.vector.k > (firstK ?? 0)) firstK = meta.vector.k;
+  }
 
   // Build map of conversation path -> array of results (one per concept)
   const conversationMap = new Map<string, Array<SearchResult & { conceptIndex: number }>>();
@@ -1088,15 +1204,9 @@ export async function searchMultipleConcepts(
   // Sort by average similarity (highest first)
   multiConceptResults.sort((a, b) => b.averageSimilarity - a.averageSimilarity);
 
-  // Exact word matches first, then the semantic matches of other conversations.
+  // Both sides in one ranking, cut to the limit.
   const keywordResults = await keywordConceptMatches(concepts, options, limit);
-  const keywordPaths = new Set(keywordResults.map((r) => r.exchange.archivePath));
-
-  // Apply limit
-  return [
-    ...keywordResults,
-    ...multiConceptResults.filter((r) => !keywordPaths.has(r.exchange.archivePath)),
-  ].slice(0, limit);
+  return fuseConceptMatches(keywordResults, multiConceptResults, limit);
 }
 
 // === Knowledge Graph Enhanced Search ===

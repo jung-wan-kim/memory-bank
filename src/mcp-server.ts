@@ -26,7 +26,7 @@ import {
   formatKnowledgeContext,
   SearchOptions,
 } from './search.js';
-import { readConversationRange, READ_MAX_OUTPUT_CHARS } from './show.js';
+import { readConversationRange, READ_MAX_OUTPUT_CHARS, READ_MAX_BLOCK_CHARS } from './show.js';
 import { initDatabase } from './db.js';
 import {
   addFactTags,
@@ -36,13 +36,13 @@ import {
   findFactsByTags,
 } from './fact-db.js';
 import { generateEmbedding, initEmbeddings } from './embeddings.js';
-import { formatOntologyBrowse, ONTOLOGY_MAX_OUTPUT_CHARS } from './ontology-browse.js';
+import { formatOntologyBrowse, ONTOLOGY_MAX_OUTPUT_CHARS, ONTOLOGY_MAX_CATEGORIES } from './ontology-browse.js';
 import { formatFactSearch, formatFactTrace, formatCrossProjectInsights, formatGraphExploration } from './facts-tool.js';
 import { clipLine, RELATED_MAX_CHARS } from './related-format.js';
 import { askAvatar } from './avatar-responder.js';
 import path from 'path';
 import os from 'os';
-import { resolveReadableConversation } from './read-guard.js';
+import { resolveReadableConversation, ACCESS_DENIED_MESSAGE } from './read-guard.js';
 import { getArchiveDir } from './paths.js';
 
 // Zod Schemas for Input Validation
@@ -115,6 +115,16 @@ const ShowConversationInputSchema = z
       .min(1)
       .optional()
       .describe('Ending line number (1-indexed, inclusive). Omit to read to the end (or to the output limit).'),
+    startChar: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('Characters to skip of the first message shown — the value a truncated answer names when it stopped inside one long message.'),
+    full: z
+      .boolean()
+      .default(false)
+      .describe('Show tool inputs and results whole instead of clipping each. Default false.'),
   })
   .strict();
 
@@ -176,9 +186,15 @@ const SearchOntologyInputSchema = z
       .number()
       .int()
       .min(1)
-      .max(200)
+      .max(ONTOLOGY_MAX_CATEGORIES)
       .optional()
       .describe('Categories listed per domain, largest first. Default: 8 (200 with a domain filter) without facts, 20 with'),
+    category_offset: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe('Categories to skip per domain (largest first) — lists the ones behind max_categories. Default 0'),
   })
   .strict();
 
@@ -195,6 +211,28 @@ type AskAvatarInput = z.infer<typeof AskAvatarInputSchema>;
 
 /** Related decisions listed under an ask_avatar answer. */
 const AVATAR_MAX_RELATED_LISTED = 10;
+
+/**
+ * The file the `read` tool opens for `requestedPath`: inside the conversation roots, and the same file the
+ * reader will pick.
+ *
+ * resolveReadableConversation returns the checked file with its symlinks resolved. The reader
+ * (readConversationRange → archive-io) then chooses between that file and its other variant (plain / `.zst`)
+ * once more, by modification time — so a link `a.jsonl` → `b.jsonl` inside the archive passed the check as
+ * `b.jsonl`, and the reader opened a newer `b.jsonl.zst` that nobody had looked at (a link out of the
+ * archive: its content, or for a non-conversation file its line count, came back). The check is therefore
+ * repeated on its own answer until the answer stops moving: the variant the reader picks for the returned
+ * path is then that path itself (or a link to it). A chain that never settles is refused.
+ */
+function resolveReadTarget(requestedPath: string, roots: string[]): string {
+  let file = resolveReadableConversation(requestedPath, roots);
+  for (let hop = 0; hop < 8; hop++) {
+    const again = resolveReadableConversation(file, roots);
+    if (again === file) return file;
+    file = again;
+  }
+  throw new Error(ACCESS_DENIED_MESSAGE);
+}
 
 // Error Handling Utility
 
@@ -228,7 +266,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: 'search',
-        description: `Gives you memory across sessions. You don't automatically remember past conversations - this tool restores context by searching them. Use BEFORE every task to recover decisions, solutions, and avoid reinventing work. Single string for semantic + keyword search or array of 2-5 concepts for AND matching. Returns at most \`limit\` ranked results with project, date, snippet and "Lines A-B in <path>" — pass those to the read tool for the full exchange. "N% match" is a semantic hit, "keyword match" a keyword-only hit. Machine-generated turns (sub-agent warm-ups, other plugins' observer prompts) are left out unless include_noise is true. A closing "Note:" line means the search was cut short, not that nothing exists.`,
+        description: `Gives you memory across sessions. You don't automatically remember past conversations - this tool restores context by searching them. Use BEFORE every task to recover decisions, solutions, and avoid reinventing work. Single string for semantic + keyword search or array of 2-5 concepts for AND matching. Returns at most \`limit\` ranked results with project, date, snippet and "Lines A-B in <path>" — pass those to the read tool for the full exchange. "N% match" is a semantic hit, "keyword match" a keyword-only hit. The percentage is the cosine similarity of the embeddings: with this model even unrelated text scores 85-89% and a strong hit about 90% — use it to compare the hits of one answer, not as a confidence. Machine-generated turns (sub-agent warm-ups, other plugins' observer prompts) are left out unless include_noise is true. A closing "Note:" line means the search was cut short, not that nothing exists.`,
         inputSchema: {
           type: 'object',
           properties: {
@@ -259,13 +297,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'read',
-        description: `Read a conversation (or a line range of it) after finding relevant results with search. Essential for understanding the complete rationale, evolution, and gotchas behind past decisions. Pass the "Lines A-B" range a search result reports as startLine/endLine (1-indexed, inclusive). One call returns at most ${READ_MAX_OUTPUT_CHARS} characters: a longer range ends with "Output truncated … Continue with startLine=N" — call again with that startLine. Long tool inputs/results are clipped. A range outside the file is an error that names the file's line count.`,
+        description: `Read a conversation (or a line range of it) after finding relevant results with search. Essential for understanding the complete rationale, evolution, and gotchas behind past decisions. Pass the "Lines A-B" range a search result reports as startLine/endLine (1-indexed, inclusive). One call returns at most ${READ_MAX_OUTPUT_CHARS} characters: a longer range ends with "Output truncated … Continue with startLine=N" — call again with the values that line names. When the answer stopped inside one message longer than the limit, the line also names startChar=M, so a message of any length can be read to its end. Tool inputs/results longer than ${READ_MAX_BLOCK_CHARS} characters are clipped ("…[+N chars not shown …]") unless full is true. A range outside the file is an error that names the file's line count.`,
         inputSchema: {
           type: 'object',
           properties: {
             path: { type: 'string', minLength: 1 },
             startLine: { type: 'number', minimum: 1 },
             endLine: { type: 'number', minimum: 1 },
+            startChar: { type: 'number', minimum: 0, description: 'Characters to skip of the first message shown — the value a truncated answer names when it stopped inside one long message' },
+            full: { type: 'boolean', default: false, description: 'Show tool inputs and results whole instead of clipping each' },
           },
           required: ['path'],
           additionalProperties: false,
@@ -358,7 +398,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'search_ontology',
-        description: `Browse the ontology hierarchy (Domain > Category > Facts) level by level. Without a filter: every domain with its largest categories and their fact counts (no fact text). With \`domain\`: up to 200 of that domain's categories. With \`category\` (or facts_per_category > 0): the top facts of each matching category. One answer is at most ${ONTOLOGY_MAX_OUTPUT_CHARS} characters and states what it left out — narrow the domain/category filter to reach it; use search_facts to find facts by meaning.`,
+        description: `Browse the ontology hierarchy (Domain > Category > Facts) level by level. Without a filter: every domain with its largest categories and their fact counts (no fact text). With \`domain\`: up to ${ONTOLOGY_MAX_CATEGORIES} of that domain's categories (\`category_offset\` lists the ones after them). With \`category\` (or facts_per_category > 0): the top facts of each matching category. One answer is at most ${ONTOLOGY_MAX_OUTPUT_CHARS} characters and states what it left out — narrow the domain/category filter to reach it; use search_facts to find facts by meaning.`,
         inputSchema: {
           type: 'object',
           properties: {
@@ -366,7 +406,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             category: { type: 'string', description: 'Filter by category name (partial, case-insensitive)' },
             include_relations: { type: 'boolean', default: false, description: 'Include 1-hop relations for each fact shown (at most 5 per fact)' },
             facts_per_category: { type: 'number', minimum: 0, maximum: 50, description: 'Facts shown per category, most confirmed first (0 = names and counts only). Default: 5 with a category filter, otherwise 0' },
-            max_categories: { type: 'number', minimum: 1, maximum: 200, description: 'Categories listed per domain, largest first. Default: 8 (200 with a domain filter) without facts, 20 with' },
+            max_categories: { type: 'number', minimum: 1, maximum: ONTOLOGY_MAX_CATEGORIES, description: 'Categories listed per domain, largest first. Default: 8 (200 with a domain filter) without facts, 20 with' },
+            category_offset: { type: 'number', minimum: 0, description: 'Categories to skip per domain (largest first) — lists the ones behind max_categories. Default 0' },
           },
           additionalProperties: false,
         },
@@ -560,20 +601,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // usable as an arbitrary-file reader (prompt-injected paths like
       // /tmp/secret.jsonl would otherwise be readable). The roots are checked
       // before any existence test, so a path outside them gets one answer
-      // whether or not a file is there (read-guard.ts). A reversed or out-of-file
+      // whether or not a file is there (read-guard.ts), and the file returned is
+      // the one the reader opens (resolveReadTarget). A reversed or out-of-file
       // line range is reported by readConversationRange below.
-      const realFile = resolveReadableConversation(params.path, [
+      const realFile = resolveReadTarget(params.path, [
         getArchiveDir(),
         path.join(os.homedir(), '.claude', 'projects'),
       ]);
 
       // Read and format the requested line range as a stream: the cost follows
       // the range, not the file (whole-file reads failed on files over 512MB),
-      // the output is capped with a continuation hint, and a range outside the
-      // file is an error naming the file's line count.
+      // the output is capped with a continuation hint (a line, and a character
+      // offset when the stop is inside one long message), and a range outside
+      // the file is an error naming the file's line count.
       const markdownContent = await readConversationRange(realFile, {
         startLine: params.startLine,
         endLine: params.endLine,
+        startChar: params.startChar,
+        full: params.full,
       });
 
       return {
@@ -749,7 +794,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
         }
 
-        return { content: [{ type: 'text', text: output }] };
+        // A failed LLM call is an error for the caller, not an answer with 0% confidence.
+        return result.failure
+          ? { content: [{ type: 'text', text: output }], isError: true }
+          : { content: [{ type: 'text', text: output }] };
       } catch (error) {
         return {
           content: [{ type: 'text', text: handleError(error) }],
