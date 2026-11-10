@@ -78,6 +78,24 @@ export interface SearchOptions {
   coding_agent?: string; // Filter by coding agent (e.g., 'claude-code', 'codex', 'opencode')
 }
 
+/** sqlite-vec refuses a KNN whose k is above this ("k value in knn query too large … the limit is 4096"). */
+export const VEC_KNN_K_MAX = 4096;
+
+/** Reciprocal-rank-fusion constant for merging the vector and keyword passes in `both` mode. */
+const RRF_K = 60;
+
+/** How a search ran — what a caller needs to tell "nothing matched" from "the search was cut short". */
+export interface SearchMeta {
+  /**
+   * Vector pass: the k of the last KNN, how many candidates it returned, how many of them passed the row
+   * conditions (date, agent, embedding version), and whether k hit the sqlite-vec ceiling before `limit`
+   * rows passed (the index held more candidates that were never looked at).
+   */
+  vector?: { k: number; candidates: number; matched: number; truncated: boolean };
+}
+
+export type SearchHit = SearchResult & { summary?: string };
+
 interface ExchangeRow {
   id: string;
   project: string;
@@ -106,7 +124,15 @@ function validateISODate(dateStr: string, paramName: string): void {
 export async function searchConversations(
   query: string,
   options: SearchOptions = {}
-): Promise<SearchResult[]> {
+): Promise<SearchHit[]> {
+  return (await searchConversationsDetailed(query, options)).results;
+}
+
+/** searchConversations plus how the search ran (SearchMeta) — pass both to formatResults. */
+export async function searchConversationsDetailed(
+  query: string,
+  options: SearchOptions = {}
+): Promise<{ results: SearchHit[]; meta: SearchMeta }> {
   const { limit = 10, mode = 'both', after, before, coding_agent } = options;
 
   // Validate date parameters
@@ -114,7 +140,20 @@ export async function searchConversations(
   if (before) validateISODate(before, '--before');
 
   const db = getSearchDb();
-  let results: ExchangeRow[] = [];
+  const meta: SearchMeta = {};
+  let vectorRows: ExchangeRow[] = [];
+  let textRows: ExchangeRow[] = [];
+
+  const cols = `
+          e.id,
+          e.project,
+          e.timestamp,
+          e.user_message,
+          e.assistant_message,
+          e.archive_path,
+          e.line_start,
+          e.line_end,
+          e.coding_agent`;
 
   {
     // Build filter clauses with parameterized queries
@@ -135,6 +174,19 @@ export async function searchConversations(
     const timeClause = filterParts.length > 0 ? `AND ${filterParts.join(' AND ')}` : '';
     const timeParams = filterParams;
 
+    /** Display rows of the given ids (the full message text is read only here). */
+    const fetchRows = (ids: string[]): Map<string, ExchangeRow> => {
+      const byId = new Map<string, ExchangeRow>();
+      for (let at = 0; at < ids.length; at += 500) {
+        const chunk = ids.slice(at, at + 500);
+        const rows = db.prepare(
+          `SELECT ${cols}, 0 as distance FROM exchanges AS e WHERE e.id IN (${chunk.map(() => '?').join(',')})`
+        ).all(...chunk) as ExchangeRow[];
+        for (const row of rows) byId.set(row.id, row);
+      }
+      return byId;
+    };
+
     if (mode === 'vector' || mode === 'both') {
       // Vector similarity search
       await initEmbeddings();
@@ -142,44 +194,66 @@ export async function searchConversations(
 
       // dtype/scale-aware: int8 tables need vec_int8()-wrapped quantized query
       // blobs, and their distances come back ×scale (normalized below).
-      const vecQuery = (vecQuant: VecQuant): ExchangeRow[] => {
+      //
+      // The KNN applies k BEFORE any condition on the joined exchange row, so
+      // those conditions cannot simply sit in WHERE: with k = limit, a date or
+      // agent filter discarded most (often all) of the top-k and the passing
+      // rows behind them never came back — the vector pass silently returned
+      // nothing and only keyword hits were left. Every candidate is returned
+      // with a `pass` flag instead (LEFT JOIN: a vector whose exchange row is
+      // gone still counts toward "did the index run out"), and k grows until
+      // `limit` rows pass, the index is exhausted, or the sqlite-vec ceiling is
+      // reached — in which case the result says so (meta.vector.truncated).
+      // The heavy text columns are read only for the winners.
+      const vecQuery = (vecQuant: VecQuant): { rows: ExchangeRow[]; stats: NonNullable<SearchMeta['vector']> } => {
         const stmt = db.prepare(`
           SELECT
-            e.id,
-            e.project,
-            e.timestamp,
-            e.user_message,
-            e.assistant_message,
-            e.archive_path,
-            e.line_start,
-            e.line_end,
-            e.coding_agent,
-            vec.distance
+            vec.id AS id,
+            vec.distance AS distance,
+            (e.id IS NOT NULL AND e.embedding_version = ? ${timeClause}) AS pass
           FROM vec_exchanges AS vec
-          JOIN exchanges AS e ON vec.id = e.id
+          LEFT JOIN exchanges AS e ON e.id = vec.id
           WHERE vec.embedding MATCH ${vecParamSql(vecQuant)}
             AND k = ?
-            AND e.embedding_version = ?
-            ${timeClause}
           ORDER BY vec.distance ASC
         `);
 
-        // embedding_version filter: old-model vectors are incomparable with the
-        // current-model query embedding — exclude rows the re-embed worker has
-        // not upgraded yet (newest sessions are upgraded first).
-        const rows = stmt.all(
-          embeddingToVecBlob(queryEmbedding, vecQuant),
-          limit,
-          EMBEDDING_VERSION,
-          ...timeParams
-        ) as ExchangeRow[];
-        for (const r of rows) r.distance = normalizeVecDistance(r.distance, vecQuant);
-        return rows;
+        // embedding_version condition: old-model vectors are incomparable with
+        // the current-model query embedding — exclude rows the re-embed worker
+        // has not upgraded yet (newest sessions are upgraded first).
+        const blob = embeddingToVecBlob(queryEmbedding, vecQuant);
+        const want = Math.min(limit, VEC_KNN_K_MAX);
+        let k = timeClause ? Math.min(VEC_KNN_K_MAX, Math.max(want * 8, 64)) : want;
+        for (;;) {
+          const candidates = stmt.all(EMBEDDING_VERSION, ...timeParams, blob, k) as Array<{ id: string; distance: number; pass: number }>;
+          const passing = candidates.filter((c) => c.pass);
+          const exhausted = candidates.length < k;
+          if (passing.length >= want || exhausted || k >= VEC_KNN_K_MAX) {
+            const winners = passing.slice(0, want);
+            const full = fetchRows(winners.map((w) => w.id));
+            const rows: ExchangeRow[] = [];
+            for (const w of winners) {
+              const row = full.get(w.id);
+              if (row) rows.push({ ...row, distance: normalizeVecDistance(w.distance, vecQuant) });
+            }
+            return {
+              rows,
+              stats: {
+                k,
+                candidates: candidates.length,
+                matched: passing.length,
+                truncated: !exhausted && (passing.length < want || limit > want),
+              },
+            };
+          }
+          k = Math.min(k * 4, VEC_KNN_K_MAX);
+        }
       };
 
       let vecQuant = getVecQuant(db, 'vec_exchanges');
+      let vec: ReturnType<typeof vecQuery>;
       try {
-        results = vecQuery(vecQuant);
+        vec = vecQuery(vecQuant);
       } catch (e) {
         // The int8 migration may have swapped the table dtype between our
         // dtype read and the query (read path is not serialized by the swap
@@ -187,8 +261,10 @@ export async function searchConversations(
         const fresh = getVecQuant(db, 'vec_exchanges');
         if (fresh.dtype === vecQuant.dtype && fresh.scale === vecQuant.scale) throw e;
         vecQuant = fresh;
-        results = vecQuery(vecQuant);
+        vec = vecQuery(vecQuant);
       }
+      vectorRows = vec.rows;
+      meta.vector = vec.stats;
     }
 
     // In 'both' mode always run the text pass and merge: vector (semantic) and
@@ -196,17 +272,6 @@ export async function searchConversations(
     // full would drop exact matches that vector ranks lower. The text pass is now
     // cheap (FTS5), so there is no reason to skip it.
     if (mode === 'text' || mode === 'both') {
-      const cols = `
-          e.id,
-          e.project,
-          e.timestamp,
-          e.user_message,
-          e.assistant_message,
-          e.archive_path,
-          e.line_start,
-          e.line_end,
-          e.coding_agent`;
-
       let textResults: ExchangeRow[] = [];
 
       // FTS5 (BM25-ranked) — replaces the O(rows) LIKE full scan. Build a safe
@@ -451,23 +516,36 @@ export async function searchConversations(
         textResults = textStmt.all(likePattern, likePattern, ...timeParams, limit) as ExchangeRow[];
       }
 
-      if (mode === 'both') {
-        // Merge and deduplicate by ID
-        const seenIds = new Set(results.map(r => r.id));
-        for (const textResult of textResults) {
-          if (!seenIds.has(textResult.id)) {
-            results.push(textResult);
-          }
-        }
-      } else {
-        results = textResults;
-      }
+      textRows = textResults;
     }
   }
   // NOTE: no db.close() — the cached connection is reused across calls (see
   // getSearchDb). CLI processes release it at exit; the MCP server keeps it.
 
-  return results.map((row) => {
+  // Merge the two passes by reciprocal rank fusion and cut to `limit`. They used
+  // to be concatenated (vector rows, then every keyword row not already there):
+  // `limit` 10 returned up to 20 rows, and a row both passes agreed on was not
+  // ranked any higher for it. A keyword hit has no distance — it carries no
+  // similarity (it was printed as "100% match" when it borrowed distance 0).
+  type Merged = { row: ExchangeRow; matchedBy: 'vector' | 'text' | 'both'; distance?: number; score: number };
+  const merged = new Map<string, Merged>();
+  vectorRows.forEach((row, rank) => {
+    merged.set(row.id, { row, matchedBy: 'vector', distance: row.distance, score: 1 / (RRF_K + rank + 1) });
+  });
+  textRows.forEach((row, rank) => {
+    const score = 1 / (RRF_K + rank + 1);
+    const hit = merged.get(row.id);
+    if (hit) {
+      hit.matchedBy = 'both';
+      hit.score += score;
+    } else {
+      merged.set(row.id, { row, matchedBy: 'text', score });
+    }
+  });
+  // Stable sort: at equal score the vector row (inserted first) stays ahead.
+  const ranked = [...merged.values()].sort((a, b) => b.score - a.score).slice(0, limit);
+
+  const results = ranked.map(({ row, matchedBy, distance }) => {
     const exchange: ConversationExchange = {
       id: row.id,
       project: row.project,
@@ -489,13 +567,31 @@ export async function searchConversations(
     const snippetText = exchange.userMessage.substring(0, 200).replace(/\s+/g, ' ').trim();
     const snippet = snippetText + (exchange.userMessage.length > 200 ? '...' : '');
 
-    return {
+    const hit: SearchHit = {
       exchange,
-      similarity: mode === 'text' ? undefined : 1 - row.distance,
+      // Cosine similarity of the (unit) embeddings — the same conversion every
+      // other relevance figure uses. Absent for a keyword-only hit.
+      similarity: distance === undefined ? undefined : l2DistanceToSimilarity(distance),
+      matchedBy,
       snippet,
-      summary
-    } as SearchResult & { summary?: string };
+      summary,
+    };
+    return hit;
   });
+
+  return { results, meta };
+}
+
+/** Lines a caller should show with the results: what the search could not look at. */
+export function searchNotes(meta: SearchMeta | undefined): string[] {
+  const notes: string[] = [];
+  if (meta?.vector?.truncated) {
+    notes.push(
+      `Semantic results are incomplete: only the nearest ${meta.vector.candidates} vector candidates could be examined ` +
+      `(sqlite-vec ceiling) and ${meta.vector.matched} passed the filters — narrow the query or relax the date/agent filter.`
+    );
+  }
+  return notes;
 }
 
 // Helper function to count lines in a file efficiently
@@ -555,9 +651,10 @@ function getFileSizeInKB(filePath: string): number {
   return Math.round(stats.size / 1024 * 10) / 10; // Round to 1 decimal place
 }
 
-export async function formatResults(results: Array<SearchResult & { summary?: string }>): Promise<string> {
+export async function formatResults(results: SearchHit[], meta?: SearchMeta): Promise<string> {
+  const notes = searchNotes(meta).map((note) => `_Note: ${note}_\n`).join('');
   if (results.length === 0) {
-    return 'No results found.';
+    return notes ? `No results found.\n\n${notes}` : 'No results found.';
   }
 
   let output = `Found ${results.length} relevant conversation${results.length > 1 ? 's' : ''}:\n\n`;
@@ -576,8 +673,11 @@ export async function formatResults(results: Array<SearchResult & { summary?: st
     const agent = result.exchange.codingAgent || 'claude-code';
     const agentTag = agent !== 'claude-code' ? ` @${agent}` : '';
     output += `${index + 1}. [${result.exchange.project}, ${date}${agentTag}]`;
+    // A percentage only where a vector distance exists; a keyword hit says what it is.
     if (simPct !== null) {
-      output += ` - ${simPct}% match`;
+      output += ` - ${simPct}% match${result.matchedBy === 'both' ? ' (semantic + keyword)' : ''}`;
+    } else if (result.matchedBy === 'text') {
+      output += ' - keyword match';
     }
     output += '\n';
 
@@ -610,7 +710,7 @@ export async function formatResults(results: Array<SearchResult & { summary?: st
     output += `   Lines ${lineRange} in ${result.exchange.archivePath} (${fileSizeKB}KB, ${totalLines} lines)\n\n`;
   }
 
-  return output;
+  return output + notes;
 }
 
 export async function searchMultipleConcepts(

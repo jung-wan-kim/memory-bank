@@ -1,4 +1,5 @@
 import { marked } from 'marked';
+import { readArchiveLineRange } from './archive-io.js';
 
 interface ConversationMessage {
   uuid: string;
@@ -31,39 +32,38 @@ function parseJsonlMessages(lines: string[]): ConversationMessage[] {
   return messages;
 }
 
-export function formatConversationAsMarkdown(jsonl: string, startLine?: number, endLine?: number): string {
-  const allLines = jsonl.trim().split('\n').filter(line => line.trim());
-
-  // Apply line range if specified (1-indexed, inclusive)
-  const lines = startLine !== undefined || endLine !== undefined
-    ? allLines.slice(
-        startLine !== undefined ? startLine - 1 : 0,
-        endLine !== undefined ? endLine : undefined
-      )
-    : allLines;
-
-  const allMessages = parseJsonlMessages(lines);
-
-  // Filter out system messages and messages with no content
-  const messages = allMessages.filter(msg => {
-    if (msg.type !== 'user' && msg.type !== 'assistant') return false;
-    if (!msg.timestamp) return false;
-    if (!msg.message || !msg.message.content) {
-      if (msg.type === 'assistant' && msg.message?.usage) return true;
-      return false;
-    }
-    if (Array.isArray(msg.message.content) && msg.message.content.length === 0) {
-      if (msg.type === 'assistant' && msg.message?.usage) return true;
-      return false;
-    }
-    return true;
-  });
-
-  if (messages.length === 0) {
-    return '';
+/** User/assistant messages that carry something to show (system lines and empty messages are dropped). */
+function isRenderableMessage(msg: ConversationMessage): boolean {
+  if (!msg || (msg.type !== 'user' && msg.type !== 'assistant')) return false;
+  if (!msg.timestamp) return false;
+  if (!msg.message || !msg.message.content) {
+    if (msg.type === 'assistant' && msg.message?.usage) return true;
+    return false;
   }
+  if (Array.isArray(msg.message.content) && msg.message.content.length === 0) {
+    if (msg.type === 'assistant' && msg.message?.usage) return true;
+    return false;
+  }
+  return true;
+}
 
-  const firstMessage = messages[0];
+/** Per-block size limits of the Markdown renderer. `blockChars: Infinity` renders everything. */
+interface MarkdownCaps {
+  /** Longest tool input value / tool result shown before it is clipped. */
+  blockChars: number;
+}
+
+const NO_CAPS: MarkdownCaps = { blockChars: Infinity };
+
+/** `text` cut to `max` chars with a marker naming how much was left out (never splits a surrogate pair). */
+function clipText(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let cut = text.slice(0, max);
+  if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+  return `${cut}\n…[+${text.length - cut.length} chars not shown]`;
+}
+
+function markdownHeader(firstMessage: ConversationMessage): string {
   let output = '# Conversation\n\n';
 
   // Add metadata
@@ -83,118 +83,112 @@ export function formatConversationAsMarkdown(jsonl: string, startLine?: number, 
 
   output += '---\n\n';
   output += '## Messages\n\n';
+  return output;
+}
 
-  let inSidechain = false;
+const SIDECHAIN_START = '\n---\n**🔀 SIDECHAIN START**\n---\n\n';
+const SIDECHAIN_END = '\n---\n**🔀 SIDECHAIN END**\n---\n\n';
 
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-    const timestamp = new Date(msg.timestamp).toLocaleString();
-    const messageId = msg.uuid || `msg-${i}`;
+/**
+ * Markdown of messages[i], or null when the message is not shown on its own (a user message that only
+ * carries tool results — those are printed under the tool call they answer). `messages` may extend past
+ * the rendered range: a tool call looks up to 5 messages ahead for its result.
+ */
+function renderMarkdownMessage(messages: ConversationMessage[], i: number, caps: MarkdownCaps): string | null {
+  const msg = messages[i];
+  const timestamp = new Date(msg.timestamp).toLocaleString();
+  const messageId = msg.uuid || `msg-${i}`;
 
-    // Skip user messages that are just tool results
-    if (msg.type === 'user' && Array.isArray(msg.message.content)) {
-      const hasOnlyToolResults = msg.message.content.every(block => block.type === 'tool_result');
-      if (hasOnlyToolResults) {
-        continue;
-      }
+  // Skip user messages that are just tool results
+  if (msg.type === 'user' && Array.isArray(msg.message.content)) {
+    const hasOnlyToolResults = msg.message.content.every(block => block.type === 'tool_result');
+    if (hasOnlyToolResults) {
+      return null;
     }
+  }
 
-    // Handle sidechain grouping
-    if (msg.isSidechain && !inSidechain) {
-      output += '\n---\n';
-      output += '**🔀 SIDECHAIN START**\n';
-      output += '---\n\n';
-      inSidechain = true;
-    } else if (!msg.isSidechain && inSidechain) {
-      output += '\n---\n';
-      output += '**🔀 SIDECHAIN END**\n';
-      output += '---\n\n';
-      inSidechain = false;
-    }
+  // Determine role label
+  let roleLabel: string;
+  if (msg.isSidechain) {
+    roleLabel = msg.type === 'user' ? 'Agent' : 'Subagent';
+  } else {
+    roleLabel = msg.type === 'user' ? 'User' : 'Agent';
+  }
 
-    // Determine role label
-    let roleLabel: string;
-    if (msg.isSidechain) {
-      roleLabel = msg.type === 'user' ? 'Agent' : 'Subagent';
-    } else {
-      roleLabel = msg.type === 'user' ? 'User' : 'Agent';
-    }
+  let output = `### **${roleLabel}** (${timestamp}) {#${messageId}}\n\n`;
 
-    output += `### **${roleLabel}** (${timestamp}) {#${messageId}}\n\n`;
-
-    if (msg.type === 'user') {
-      // Handle tool results
-      if (msg.toolUseResult) {
-        output += '**Tool Result:**\n\n';
-        if (typeof msg.toolUseResult === 'string') {
-          output += `${msg.toolUseResult}\n\n`;
-        } else if (Array.isArray(msg.toolUseResult)) {
-          for (const result of msg.toolUseResult) {
-            output += `${result.text || String(result)}\n\n`;
-          }
-        }
-      } else if (typeof msg.message.content === 'string') {
-        output += `${msg.message.content}\n\n`;
-      } else if (Array.isArray(msg.message.content)) {
-        for (const block of msg.message.content) {
-          if (block.type === 'text' && block.text) {
-            output += `${block.text}\n\n`;
-          }
+  if (msg.type === 'user') {
+    // Handle tool results
+    if (msg.toolUseResult) {
+      output += '**Tool Result:**\n\n';
+      if (typeof msg.toolUseResult === 'string') {
+        output += `${clipText(msg.toolUseResult, caps.blockChars)}\n\n`;
+      } else if (Array.isArray(msg.toolUseResult)) {
+        for (const result of msg.toolUseResult) {
+          output += `${clipText(result.text || String(result), caps.blockChars)}\n\n`;
         }
       }
-    } else if (msg.type === 'assistant') {
-      const content = msg.message.content;
-      if (typeof content === 'string') {
-        output += `${content}\n\n`;
-      } else if (Array.isArray(content)) {
-        for (const block of content) {
-          if (block.type === 'text' && block.text) {
-            output += `${block.text}\n\n`;
-          } else if (block.type === 'tool_use') {
-            output += `**Tool Use:** \`${block.name}\`\n\n`;
+    } else if (typeof msg.message.content === 'string') {
+      output += `${msg.message.content}\n\n`;
+    } else if (Array.isArray(msg.message.content)) {
+      for (const block of msg.message.content) {
+        if (block.type === 'text' && block.text) {
+          output += `${block.text}\n\n`;
+        }
+      }
+    }
+  } else if (msg.type === 'assistant') {
+    const content = msg.message.content;
+    if (typeof content === 'string') {
+      output += `${content}\n\n`;
+    } else if (Array.isArray(content)) {
+      for (const block of content) {
+        if (block.type === 'text' && block.text) {
+          output += `${block.text}\n\n`;
+        } else if (block.type === 'tool_use') {
+          output += `**Tool Use:** \`${block.name}\`\n\n`;
 
-            // Format tool input inline
-            const input = block.input;
-            if (input && typeof input === 'object') {
-              for (const [key, value] of Object.entries(input)) {
-                if (typeof value === 'string' && value.includes('\n')) {
-                  output += `- **${key}:**\n\`\`\`\n${value}\n\`\`\`\n`;
-                } else if (typeof value === 'string') {
-                  output += `- **${key}:** ${value}\n`;
-                } else {
-                  output += `- **${key}:**\n\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\`\n`;
-                }
+          // Format tool input inline
+          const input = block.input;
+          if (input && typeof input === 'object') {
+            for (const [key, value] of Object.entries(input)) {
+              if (typeof value === 'string' && value.includes('\n')) {
+                output += `- **${key}:**\n\`\`\`\n${clipText(value, caps.blockChars)}\n\`\`\`\n`;
+              } else if (typeof value === 'string') {
+                output += `- **${key}:** ${clipText(value, caps.blockChars)}\n`;
+              } else {
+                output += `- **${key}:**\n\`\`\`json\n${clipText(JSON.stringify(value, null, 2), caps.blockChars)}\n\`\`\`\n`;
               }
-              output += '\n';
             }
+            output += '\n';
+          }
 
-            // Look for corresponding tool result
-            const toolUseId = (block as any).id;
-            if (toolUseId) {
-              let foundResult = false;
-              for (let j = i + 1; j < Math.min(i + 6, messages.length) && !foundResult; j++) {
-                const laterMsg = messages[j];
-                if (laterMsg.type === 'user' && Array.isArray(laterMsg.message.content)) {
-                  for (const resultBlock of laterMsg.message.content) {
-                    if (resultBlock.type === 'tool_result' && (resultBlock as any).tool_use_id === toolUseId) {
-                      const content = (resultBlock as any).content;
-                      output += '**Result:**\n';
-                      if (typeof content === 'string') {
-                        if (content.includes('\n') || content.length > 100) {
-                          output += '```\n';
-                          output += content;
-                          output += '\n```\n\n';
-                        } else {
-                          output += `${content}\n\n`;
-                        }
-                      } else if (Array.isArray(content)) {
-                        output += '```json\n';
-                        output += JSON.stringify(content, null, 2);
+          // Look for corresponding tool result
+          const toolUseId = (block as any).id;
+          if (toolUseId) {
+            let foundResult = false;
+            for (let j = i + 1; j < Math.min(i + 6, messages.length) && !foundResult; j++) {
+              const laterMsg = messages[j];
+              if (laterMsg.type === 'user' && Array.isArray(laterMsg.message.content)) {
+                for (const resultBlock of laterMsg.message.content) {
+                  if (resultBlock.type === 'tool_result' && (resultBlock as any).tool_use_id === toolUseId) {
+                    const content = (resultBlock as any).content;
+                    output += '**Result:**\n';
+                    if (typeof content === 'string') {
+                      if (content.includes('\n') || content.length > 100) {
+                        output += '```\n';
+                        output += clipText(content, caps.blockChars);
                         output += '\n```\n\n';
+                      } else {
+                        output += `${content}\n\n`;
                       }
-                      foundResult = true;
-                      break;
+                    } else if (Array.isArray(content)) {
+                      output += '```json\n';
+                      output += clipText(JSON.stringify(content, null, 2), caps.blockChars);
+                      output += '\n```\n\n';
                     }
+                    foundResult = true;
+                    break;
                   }
                 }
               }
@@ -202,27 +196,181 @@ export function formatConversationAsMarkdown(jsonl: string, startLine?: number, 
           }
         }
       }
-
-      // Add token usage if present
-      if (msg.message.usage) {
-        const usage = msg.message.usage;
-        output += `_in: ${(usage.input_tokens || 0).toLocaleString()}`;
-        if (usage.cache_read_input_tokens) {
-          output += ` | cache read: ${usage.cache_read_input_tokens.toLocaleString()}`;
-        }
-        if (usage.cache_creation_input_tokens) {
-          output += ` | cache create: ${usage.cache_creation_input_tokens.toLocaleString()}`;
-        }
-        output += ` | out: ${(usage.output_tokens || 0).toLocaleString()}_\n\n`;
-      }
     }
+
+    // Add token usage if present
+    if (msg.message.usage) {
+      const usage = msg.message.usage;
+      output += `_in: ${(usage.input_tokens || 0).toLocaleString()}`;
+      if (usage.cache_read_input_tokens) {
+        output += ` | cache read: ${usage.cache_read_input_tokens.toLocaleString()}`;
+      }
+      if (usage.cache_creation_input_tokens) {
+        output += ` | cache create: ${usage.cache_creation_input_tokens.toLocaleString()}`;
+      }
+      output += ` | out: ${(usage.output_tokens || 0).toLocaleString()}_\n\n`;
+    }
+  }
+
+  return output;
+}
+
+export function formatConversationAsMarkdown(jsonl: string, startLine?: number, endLine?: number): string {
+  const allLines = jsonl.trim().split('\n').filter(line => line.trim());
+
+  // Apply line range if specified (1-indexed, inclusive)
+  const lines = startLine !== undefined || endLine !== undefined
+    ? allLines.slice(
+        startLine !== undefined ? startLine - 1 : 0,
+        endLine !== undefined ? endLine : undefined
+      )
+    : allLines;
+
+  const allMessages = parseJsonlMessages(lines);
+
+  // Filter out system messages and messages with no content
+  const messages = allMessages.filter(isRenderableMessage);
+
+  if (messages.length === 0) {
+    return '';
+  }
+
+  let output = markdownHeader(messages[0]);
+
+  let inSidechain = false;
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    const body = renderMarkdownMessage(messages, i, NO_CAPS);
+    if (body === null) continue;
+
+    // Handle sidechain grouping
+    if (msg.isSidechain && !inSidechain) {
+      output += SIDECHAIN_START;
+      inSidechain = true;
+    } else if (!msg.isSidechain && inSidechain) {
+      output += SIDECHAIN_END;
+      inSidechain = false;
+    }
+
+    output += body;
   }
 
   // Close sidechain if still open
   if (inSidechain) {
-    output += '\n---\n';
-    output += '**🔀 SIDECHAIN END**\n';
-    output += '---\n\n';
+    output += SIDECHAIN_END;
+  }
+
+  return output;
+}
+
+/** Most characters one `read` call returns (the continuation footer comes on top). */
+export const READ_MAX_OUTPUT_CHARS = 40_000;
+/** Longest tool input value / tool result `read` shows before clipping it. */
+export const READ_MAX_BLOCK_CHARS = 2_000;
+/** Raw JSONL characters one `read` call may hold in memory (lines can be far larger than what is rendered). */
+const READ_MAX_RAW_CHARS = 8_000_000;
+/** Lines read past endLine only to find the results of tool calls at the end of the range. */
+const TOOL_RESULT_LOOKAHEAD_LINES = 8;
+
+export interface ConversationRangeOptions {
+  /** First line (1-indexed, inclusive) — the physical line numbers search results report. */
+  startLine?: number;
+  /** Last line (1-indexed, inclusive). */
+  endLine?: number;
+  /** Output ceiling in characters (default READ_MAX_OUTPUT_CHARS). */
+  maxChars?: number;
+}
+
+/**
+ * The `read` tool: Markdown of a line range of an archived conversation, read as a stream (plain or
+ * `.zst`) so the cost follows the range and not the file. The output is capped: when the range does not
+ * fit, rendering stops at a message boundary and the footer names the startLine to continue from.
+ * A range outside the file is an error carrying the file's line count — never an empty string.
+ */
+export async function readConversationRange(filePath: string, opts: ConversationRangeOptions = {}): Promise<string> {
+  const { startLine, endLine } = opts;
+  const maxChars = opts.maxChars ?? READ_MAX_OUTPUT_CHARS;
+  if (startLine !== undefined && endLine !== undefined && startLine > endLine) {
+    throw new Error(`Invalid line range: startLine ${startLine} is after endLine ${endLine}`);
+  }
+
+  const range = await readArchiveLineRange(filePath, {
+    startLine,
+    endLine,
+    lookahead: TOOL_RESULT_LOOKAHEAD_LINES,
+    maxChars: READ_MAX_RAW_CHARS,
+  });
+  const firstLine = startLine ?? 1;
+  const inRangeLines = range.lines.filter((l) => endLine === undefined || l.line <= endLine);
+  if (inRangeLines.length === 0) {
+    throw new Error(
+      `Line range ${firstLine}-${endLine ?? 'end'} is outside the file: it has ${range.totalLines} lines`
+    );
+  }
+  const lastLineRead = inRangeLines[inRangeLines.length - 1].line;
+
+  const entries: Array<{ line: number; msg: ConversationMessage }> = [];
+  for (const { line, text } of range.lines) {
+    let msg: ConversationMessage;
+    try { msg = JSON.parse(text); } catch { continue; /* skip malformed */ }
+    if (isRenderableMessage(msg)) entries.push({ line, msg });
+  }
+  const messages = entries.map((e) => e.msg);
+  const shown = entries.filter((e) => e.line <= lastLineRead);
+  if (shown.length === 0) {
+    return `_No user or assistant messages in lines ${firstLine}-${lastLineRead}._\n`;
+  }
+
+  const caps: MarkdownCaps = { blockChars: READ_MAX_BLOCK_CHARS };
+  let output = markdownHeader(shown[0].msg);
+  let inSidechain = false;
+  let rendered = 0;
+  // Line the next call should start from, once the output ceiling stops this one.
+  let nextStart: number | null = null;
+
+  for (let i = 0; i < shown.length; i++) {
+    const { line, msg } = shown[i];
+    const body = renderMarkdownMessage(messages, i, caps);
+    if (body === null) continue;
+
+    let marker = '';
+    if (msg.isSidechain && !inSidechain) marker = SIDECHAIN_START;
+    else if (!msg.isSidechain && inSidechain) marker = SIDECHAIN_END;
+    const chunk = marker + body;
+
+    if (output.length + chunk.length > maxChars) {
+      if (rendered > 0) {
+        nextStart = line; // stop at the message boundary; the next call starts with this message
+        break;
+      }
+      // The first message alone is over the ceiling: show what fits and move on, or no call could get past it.
+      let cut = chunk.slice(0, Math.max(0, maxChars - output.length));
+      if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+      output += `${cut}\n\n…[message clipped: ${cut.length} of ${chunk.length} chars shown]\n\n`;
+      if (marker) inSidechain = !inSidechain;
+      nextStart = line + 1;
+      break;
+    }
+
+    output += chunk;
+    if (marker) inSidechain = !inSidechain;
+    rendered++;
+  }
+
+  // Close sidechain if still open
+  if (inSidechain) {
+    output += SIDECHAIN_END;
+  }
+
+  if (nextStart === null && range.stoppedEarly) nextStart = lastLineRead + 1;
+  const moreToRead = nextStart !== null
+    && (endLine === undefined || nextStart <= endLine)
+    && (range.totalLines === null || nextStart <= range.totalLines);
+  if (nextStart !== null && moreToRead) {
+    const total = range.totalLines === null ? '' : ` of ${range.totalLines}`;
+    output += `\n---\n_Output truncated at the ${maxChars}-char limit: lines ${firstLine}-${nextStart - 1}${total} shown. `
+      + `Continue with startLine=${nextStart}${endLine !== undefined ? `, endLine=${endLine}` : ''}._\n`;
   }
 
   return output;

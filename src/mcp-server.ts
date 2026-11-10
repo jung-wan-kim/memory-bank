@@ -9,13 +9,15 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { startInjectDaemon } from './inject-daemon.js';
+import { pluginVersion } from './inject-log.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import {
-  searchConversations,
+  searchConversationsDetailed,
+  searchNotes,
   searchMultipleConcepts,
   formatResults,
   formatMultiConceptResults,
@@ -23,7 +25,7 @@ import {
   formatKnowledgeContext,
   SearchOptions,
 } from './search.js';
-import { formatConversationAsMarkdown } from './show.js';
+import { readConversationRange, READ_MAX_OUTPUT_CHARS } from './show.js';
 import { initDatabase } from './db.js';
 import {
   searchSimilarFacts,
@@ -36,12 +38,13 @@ import {
   findFactsByTags,
 } from './fact-db.js';
 import { generateEmbedding, initEmbeddings } from './embeddings.js';
-import { getOntologyTree, listDomains, listCategories, getRelatedFacts } from './ontology-db.js';
+import { listDomains, listCategories, getRelatedFacts } from './ontology-db.js';
+import { formatOntologyBrowse, ONTOLOGY_MAX_OUTPUT_CHARS } from './ontology-browse.js';
 import { askAvatar } from './avatar-responder.js';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { readArchiveFile, resolveArchiveFile } from './archive-io.js';
+import { resolveArchiveFile } from './archive-io.js';
 import { getArchiveDir } from './paths.js';
 
 // Zod Schemas for Input Validation
@@ -103,13 +106,13 @@ const ShowConversationInputSchema = z
       .int()
       .min(1)
       .optional()
-      .describe('Starting line number (1-indexed, inclusive). Omit to start from beginning.'),
+      .describe('Starting line number (1-indexed, inclusive). Omit to start from beginning. Must not be after endLine.'),
     endLine: z
       .number()
       .int()
       .min(1)
       .optional()
-      .describe('Ending line number (1-indexed, inclusive). Omit to read to end.'),
+      .describe('Ending line number (1-indexed, inclusive). Omit to read to the end (or to the output limit).'),
   })
   .strict();
 
@@ -159,7 +162,21 @@ const SearchOntologyInputSchema = z
   .object({
     domain: z.string().optional().describe('Filter by domain name (case-insensitive partial match)'),
     category: z.string().optional().describe('Filter by category name (case-insensitive partial match)'),
-    include_relations: z.boolean().default(false).describe('Include 1-hop fact relations'),
+    include_relations: z.boolean().default(false).describe('Include 1-hop fact relations (at most 5 per fact)'),
+    facts_per_category: z
+      .number()
+      .int()
+      .min(0)
+      .max(50)
+      .optional()
+      .describe('Facts shown per category, most confirmed first (0 = names and counts only). Default: 5 with a category filter, otherwise 0'),
+    max_categories: z
+      .number()
+      .int()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe('Categories listed per domain, largest first. Default: 8 without facts, 20 with'),
   })
   .strict();
 
@@ -188,7 +205,9 @@ function handleError(error: unknown): string {
 const server = new Server(
   {
     name: 'memory-bank',
-    version: '1.0.0',
+    // The version of the code that is running (package.json next to dist/), so a client can tell which
+    // release answered. 'unknown' when the file cannot be read — never a made-up number.
+    version: pluginVersion() ?? 'unknown',
   },
   {
     capabilities: {
@@ -234,7 +253,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'read',
-        description: `Read full conversations to extract detailed context after finding relevant results with search. Essential for understanding the complete rationale, evolution, and gotchas behind past decisions. Use startLine/endLine pagination for large conversations to avoid context bloat (line numbers are 1-indexed).`,
+        description: `Read a conversation (or a line range of it) after finding relevant results with search. Essential for understanding the complete rationale, evolution, and gotchas behind past decisions. Pass the "Lines A-B" range a search result reports as startLine/endLine (1-indexed, inclusive). One call returns at most ${READ_MAX_OUTPUT_CHARS} characters: a longer range ends with "Output truncated … Continue with startLine=N" — call again with that startLine. Long tool inputs/results are clipped. A range outside the file is an error that names the file's line count.`,
         inputSchema: {
           type: 'object',
           properties: {
@@ -333,13 +352,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: 'search_ontology',
-        description: 'Browse the ontology hierarchy (Domain > Category > Facts). Use to understand how past decisions are organized, or to find all facts in a specific domain/category.',
+        description: `Browse the ontology hierarchy (Domain > Category > Facts) level by level. Without a filter: every domain with its largest categories and their fact counts (no fact text). With \`domain\`: more of that domain's categories. With \`category\` (or facts_per_category > 0): the top facts of each matching category. One answer is at most ${ONTOLOGY_MAX_OUTPUT_CHARS} characters and states what it left out — narrow the domain/category filter to reach it; use search_facts to find facts by meaning.`,
         inputSchema: {
           type: 'object',
           properties: {
             domain: { type: 'string', description: 'Filter by domain name (partial, case-insensitive)' },
             category: { type: 'string', description: 'Filter by category name (partial, case-insensitive)' },
-            include_relations: { type: 'boolean', default: false, description: 'Include 1-hop relations for each fact' },
+            include_relations: { type: 'boolean', default: false, description: 'Include 1-hop relations for each fact shown (at most 5 per fact)' },
+            facts_per_category: { type: 'number', minimum: 0, maximum: 50, description: 'Facts shown per category, most confirmed first (0 = names and counts only). Default: 5 with a category filter, otherwise 0' },
+            max_categories: { type: 'number', minimum: 1, maximum: 200, description: 'Categories listed per domain, largest first. Default: 8 without facts, 20 with' },
           },
           additionalProperties: false,
         },
@@ -501,7 +522,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           coding_agent: params.coding_agent,
         };
 
-        const results = await searchConversations(params.query, options);
+        const { results, meta } = await searchConversationsDetailed(params.query, options);
 
         if (params.response_format === 'json') {
           resultText = JSON.stringify(
@@ -509,16 +530,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               results: results.map((r) => ({
                 exchange: r.exchange,
                 similarity: r.similarity,
+                matchedBy: r.matchedBy,
                 snippet: r.snippet,
               })),
               count: results.length,
               mode: params.mode,
+              notes: searchNotes(meta),
             },
             null,
             2
           );
         } else {
-          resultText = await formatResults(results);
+          resultText = await formatResults(results, meta);
 
           // Append knowledge graph context for markdown format
           try {
@@ -576,13 +599,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         throw new Error('Access denied: path is outside the conversation archive');
       }
 
-      // Read and format conversation with optional line range
-      const jsonlContent = readArchiveFile(realFile);
-      const markdownContent = formatConversationAsMarkdown(
-        jsonlContent,
-        params.startLine,
-        params.endLine
-      );
+      // Read and format the requested line range as a stream: the cost follows
+      // the range, not the file (whole-file reads failed on files over 512MB),
+      // the output is capped with a continuation hint, and a range outside the
+      // file is an error naming the file's line count.
+      const markdownContent = await readConversationRange(realFile, {
+        startLine: params.startLine,
+        endLine: params.endLine,
+      });
 
       return {
         content: [
@@ -763,69 +787,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === 'search_ontology') {
       const params = SearchOntologyInputSchema.parse(args) as SearchOntologyInput;
 
+      const db = initDatabase();
       try {
-        const db = initDatabase();
-        const tree = getOntologyTree(db);
-
-        // Apply domain/category filters
-        const domainFilter = params.domain?.toLowerCase();
-        const categoryFilter = params.category?.toLowerCase();
-
-        const filtered = tree.filter((entry) => {
-          if (domainFilter && !entry.domain.name.toLowerCase().includes(domainFilter)) return false;
-          return true;
-        });
-
-        let output = `# Ontology Tree\n\n`;
-
-        if (filtered.length === 0) {
-          output += '_No ontology data found. Facts are classified automatically as they are extracted._\n';
-        }
-
-        for (const { domain, categories } of filtered) {
-          output += `## ${domain.name}\n`;
-          if (domain.description) output += `> ${domain.description}\n`;
-          output += '\n';
-
-          const filteredCategories = categories.filter(({ category }) => {
-            if (categoryFilter && !category.name.toLowerCase().includes(categoryFilter)) return false;
-            return true;
-          });
-
-          if (filteredCategories.length === 0) {
-            output += '_No matching categories._\n\n';
-            continue;
-          }
-
-          for (const { category, facts } of filteredCategories) {
-            output += `### ${category.name}`;
-            if (category.description) output += ` — ${category.description}`;
-            output += `\n(${facts.length} facts)\n\n`;
-
-            for (const fact of facts) {
-              output += `- **[${fact.category}]** ${fact.fact}\n`;
-              output += `  - ID: ${fact.id} | Confirmed: ${fact.consolidated_count}x | ${fact.created_at.slice(0, 10)}\n`;
-
-              if (params.include_relations) {
-                const related = getRelatedFacts(db, fact.id, 1);
-                if (related.length > 0) {
-                  for (const { fact: relFact, relation } of related) {
-                    output += `  - ↔ [${relation.relation_type}] "${relFact.fact}"\n`;
-                  }
-                }
-              }
-            }
-            output += '\n';
-          }
-        }
-
-        db.close();
-        return { content: [{ type: 'text', text: output }] };
+        return { content: [{ type: 'text', text: formatOntologyBrowse(db, params) }] };
       } catch (error) {
         return {
           content: [{ type: 'text', text: handleError(error) }],
           isError: true,
         };
+      } finally {
+        db.close();
       }
     }
 
@@ -833,10 +804,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const params = AskAvatarInputSchema.parse(args) as AskAvatarInput;
       const project = params.project || process.cwd();
 
+      const db = initDatabase();
       try {
-        const db = initDatabase();
         const result = await askAvatar(db, params.question, project);
-        db.close();
 
         const confidenceLabel =
           result.confidence >= 0.9
@@ -874,6 +844,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [{ type: 'text', text: handleError(error) }],
           isError: true,
         };
+      } finally {
+        db.close();
       }
     }
 

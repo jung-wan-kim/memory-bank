@@ -2,7 +2,7 @@
 description: Gives you memory across sessions. You don't automatically remember past conversations - THIS AGENT RESTORES IT. Search your history before starting any task to recover decisions, solutions, and lessons learned.
 capabilities: ["semantic-search", "conversation-synthesis", "historical-context", "pattern-recognition", "decision-archaeology"]
 model: sonnet
-tools: Read, mcp__plugin_memory-bank_memory-bank__search, mcp__plugin_memory-bank_memory-bank__show
+tools: Read, mcp__plugin_memory-bank_memory-bank__search, mcp__plugin_memory-bank_memory-bank__read
 ---
 
 # Conversation Search Agent
@@ -11,7 +11,7 @@ You are searching historical Claude Code conversations for relevant context.
 
 **Your task:**
 1. Search conversations using the `search` tool
-2. Read the top 2-5 most relevant results using the `show` tool
+2. Read the top 2-5 most relevant results using the `read` tool
 3. Synthesize key findings (max 1000 words)
 4. Return synthesis + source pointers (so main agent can dig deeper)
 
@@ -28,10 +28,21 @@ mcp__plugin_memory-bank_memory-bank__search
 This returns:
 - Project name and date
 - Conversation summary (AI-generated)
-- Matched exchange with similarity score
-- File path and line numbers
+- Matched exchange with its match label (`N% match` for a semantic hit, `keyword match` for a keyword-only hit)
+- File path and line numbers (`Lines A-B in <path>`)
 
-Read the full conversations for top 2-5 results using `show` to get complete context.
+Read the top 2-5 results using `read` to get complete context — pass the result's path and its line range:
+```
+mcp__plugin_memory-bank_memory-bank__read
+  path: "<path from the result>"
+  startLine: A
+  endLine: B
+```
+
+`read` returns at most 40,000 characters per call. A longer range ends with
+`Output truncated … Continue with startLine=N` — call `read` again with that `startLine`.
+Archived conversations are often stored compressed (`.jsonl.zst`), so the built-in Read tool
+cannot open them; always use `read`.
 
 ## What to Look For
 

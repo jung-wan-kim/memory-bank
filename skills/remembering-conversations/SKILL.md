@@ -24,7 +24,7 @@ Task tool:
 
 The agent will:
 1. Search with the `search` tool
-2. Read top 2-5 results with the `show` tool
+2. Read top 2-5 results with the `read` tool
 3. Synthesize findings (200-1000 words)
 4. Return actionable insights + sources
 
@@ -58,7 +58,7 @@ You often get value out of consulting your memory bank once you understand what 
 
 You CAN use MCP tools directly, but DON'T:
 - `mcp__plugin_memory-bank_memory-bank__search`
-- `mcp__plugin_memory-bank_memory-bank__show`
+- `mcp__plugin_memory-bank_memory-bank__read`
 
 Using these directly wastes your context window. Always dispatch the agent instead.
 
