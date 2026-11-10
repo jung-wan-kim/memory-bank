@@ -6,6 +6,7 @@ import type Database from 'better-sqlite3';
 import { initDatabase } from './db.js';
 import { getSuperpowersDir } from './paths.js';
 import { syncFactRefusal } from './import-guard.js';
+import { OWNER_ONLY_DIR_MODE, OWNER_ONLY_FILE_MODE } from './file-perms.js';
 
 const SYNC_DIR_NAME = 'sync';
 
@@ -89,11 +90,21 @@ function readJsonOrNull<T>(p: string): T | null {
  * reader (the import of a session starting meanwhile, a folder-sync tool) sees
  * the old file or the new one, never a half-written one. A failed write removes
  * its temp file and throws — the final path keeps its previous content.
+ *
+ * The file is owner-only at every write. The rename replaces the file, mode
+ * included: with a temp file created under the process umask, a facts.jsonl
+ * the one-time pass had made 0600 (file-perms.ts) came back 0644 with the
+ * first export that changed it. The sync folder is 0700, but a `sync` that is
+ * a symlink into a cloud folder is not tightened — there the file's own mode
+ * is all there is.
  */
 function writeAtomic(file: string, body: string): void {
   const tmp = `${file}.${process.pid}.tmp`;
   try {
-    fs.writeFileSync(tmp, body);
+    // The mode below is given to a file that is created. One left under this name by a dead run
+    // that had the same pid would be reused with the mode it has, so it goes first.
+    try { fs.unlinkSync(tmp); } catch { /* none — the usual case */ }
+    fs.writeFileSync(tmp, body, { mode: OWNER_ONLY_FILE_MODE });
     fs.renameSync(tmp, file);
   } catch (e) {
     try { fs.unlinkSync(tmp); } catch { /* never created, or already renamed */ }
@@ -252,7 +263,7 @@ export function exportForSync(): {
       // turn a finished export into an error (a stale record never matches the new meta).
       try {
         const statePath = ownExportStatePath();
-        fs.mkdirSync(path.dirname(statePath), { recursive: true });
+        fs.mkdirSync(path.dirname(statePath), { recursive: true, mode: OWNER_ONLY_DIR_MODE });
         writeAtomic(statePath, JSON.stringify(state));
       } catch (e) {
         console.error('sync-export: could not record this export locally (the next import will read the files in full):', e instanceof Error ? e.message : e);
