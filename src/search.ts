@@ -1018,8 +1018,12 @@ export async function formatResults(results: SearchHit[], meta?: SearchMeta): Pr
 
 /**
  * Keyword side of the multi-concept search: exchanges that contain every word of every concept, one per
- * conversation, in the keyword pass's order. Each carries its real similarity to every concept, computed
- * from its stored vector (NaN when the exchange has no vector row — unknown, not zero).
+ * conversation — up to 5×limit of them, the nearest to the concepts first. Each carries its real similarity
+ * to every concept, computed from its stored vector (NaN when the exchange has no vector row — unknown, not
+ * zero; those go last).
+ * The order is the similarity, not the keyword pass's: an exchange can hold every word by accident (a long
+ * pasted document, a tool log), and the keyword pass ranks by word statistics or, over its ranking budget,
+ * by recency.
  */
 async function keywordConceptMatches(
   concepts: string[],
@@ -1043,7 +1047,7 @@ async function keywordConceptMatches(
   for (const hit of results) {
     if (!perConversation.has(hit.exchange.archivePath)) perConversation.set(hit.exchange.archivePath, hit);
   }
-  const hits = [...perConversation.values()].slice(0, limit);
+  const hits = [...perConversation.values()];
   if (hits.length === 0) return [];
 
   await initEmbeddings();
@@ -1055,7 +1059,7 @@ async function keywordConceptMatches(
   const distance = db.prepare(`SELECT vec_distance_l2(embedding, ${vecParamSql(quant)}) AS d FROM vec_exchanges WHERE id = ?`);
   const blobs = embeddings.map((embedding) => embeddingToVecBlob(embedding, quant));
 
-  return hits.map((hit) => {
+  const matches = hits.map((hit) => {
     const conceptSimilarities = blobs.map((blob) => {
       const row = distance.get(blob, hit.exchange.id) as { d: number } | undefined;
       return row ? l2DistanceToSimilarity(normalizeVecDistance(row.d, quant)) : Number.NaN;
@@ -1068,12 +1072,42 @@ async function keywordConceptMatches(
       matchedBy: 'keyword' as const,
     };
   });
+  // Nearest first; unknown similarity last. The sort is stable: equal values keep the keyword pass's order.
+  const sortKey = (m: MultiConceptResult) => (Number.isFinite(m.averageSimilarity) ? m.averageSimilarity : -Infinity);
+  return matches.sort((a, b) => sortKey(b) - sortKey(a));
 }
 
 /**
- * Conversations that match ALL concepts, at most `limit`:
- *  1. exchanges that contain every word of every concept (keyword index), then
- *  2. conversations in which every concept has a semantically near exchange, by average similarity.
+ * One ranking out of the two sides of a multi-concept search, by reciprocal rank fusion (the same constant
+ * as the single-query merge), cut to `limit`. Both lists come best first. A conversation on both lists adds
+ * its two scores and is listed once, as its keyword match (the exchange that has every word is the place to
+ * read). Equal scores — the same rank on each list — put the keyword match first.
+ * They used to be concatenated, keyword matches first: `limit` keyword matches left no room for any
+ * semantic match, however close.
+ */
+function fuseConceptMatches(
+  keyword: MultiConceptResult[],
+  semantic: MultiConceptResult[],
+  limit: number,
+): MultiConceptResult[] {
+  const fused = new Map<string, { result: MultiConceptResult; score: number }>();
+  keyword.forEach((result, rank) => {
+    fused.set(result.exchange.archivePath, { result, score: 1 / (RRF_K + rank + 1) });
+  });
+  semantic.forEach((result, rank) => {
+    const score = 1 / (RRF_K + rank + 1);
+    const hit = fused.get(result.exchange.archivePath);
+    if (hit) hit.score += score;
+    else fused.set(result.exchange.archivePath, { result, score });
+  });
+  // Stable sort: at equal score the keyword match (inserted first) stays ahead.
+  return [...fused.values()].sort((a, b) => b.score - a.score).slice(0, limit).map((entry) => entry.result);
+}
+
+/**
+ * Conversations that match ALL concepts, at most `limit`, in one ranking (fuseConceptMatches) of
+ *  - exchanges that contain every word of every concept (keyword index), nearest to the concepts first, and
+ *  - conversations in which every concept has a semantically near exchange, by average similarity.
  * The second alone — intersecting each concept's nearest 5×limit exchanges — returned nothing on a large
  * index even when dozens of exchanges contained all the words (the lists rarely share a conversation).
  */
@@ -1136,15 +1170,9 @@ export async function searchMultipleConcepts(
   // Sort by average similarity (highest first)
   multiConceptResults.sort((a, b) => b.averageSimilarity - a.averageSimilarity);
 
-  // Exact word matches first, then the semantic matches of other conversations.
+  // Both sides in one ranking, cut to the limit.
   const keywordResults = await keywordConceptMatches(concepts, options, limit);
-  const keywordPaths = new Set(keywordResults.map((r) => r.exchange.archivePath));
-
-  // Apply limit
-  return [
-    ...keywordResults,
-    ...multiConceptResults.filter((r) => !keywordPaths.has(r.exchange.archivePath)),
-  ].slice(0, limit);
+  return fuseConceptMatches(keywordResults, multiConceptResults, limit);
 }
 
 // === Knowledge Graph Enhanced Search ===

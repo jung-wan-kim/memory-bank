@@ -88,7 +88,74 @@ describe('multi-concept search finds exchanges that contain every concept\'s wor
     expect((await searchMultipleConcepts(['Paddle', 'signed webhook'], { limit: 5 })).map((r) => r.exchange.id)).toEqual(['phrase-all']);
   });
 
-  it('keyword matches come first, then the conversations every concept is semantically near, up to the limit', async () => {
+  /** A conversation with one exchange near each concept vector — a semantic match of ['Paddle', 'webhook']. */
+  function seedSemanticConversation(name: string, theta: number, side: number): void {
+    const db = initDatabase();
+    const base = { project: 'demo', timestamp: '2026-10-01T00:00:00.000Z', assistantMessage: 'x', archivePath: `/seed/archive/${name}.jsonl` };
+    insertExchange(db, { ...base, id: `${name}-a`, userMessage: 'first half', lineStart: 1, lineEnd: 2 }, near(0, theta, side));
+    insertExchange(db, { ...base, id: `${name}-b`, userMessage: 'second half', lineStart: 3, lineEnd: 4 }, near(200, theta, side + 1));
+    db.close();
+  }
+
+  // F3 — the two lists used to be concatenated, keyword matches first: once they filled `limit`, no semantic
+  // match was returned at all (18 queries on the live index: 8 lost semantic matches that were closer to the
+  // concepts than every keyword match shown).
+  it('keyword and semantic matches share one ranking: keyword matches that fill the limit do not push every semantic match out', async () => {
+    seed(Array.from({ length: 6 }, (_, i) => ({
+      id: `kw-${i}`, user: `the Paddle webhook case ${i}`, vector: near(0, 1.2 - i * 0.02, 300 + i),
+    })));
+    seedSemanticConversation('sem-0', 0.02, 350);
+    seedSemanticConversation('sem-1', 0.04, 352);
+    seedSemanticConversation('sem-2', 0.06, 354);
+
+    const results = await searchMultipleConcepts(['Paddle', 'webhook'], { limit: 4 });
+    // rank by rank from each list; at the same rank the exchange that has every word goes first
+    expect(results.map((r) => r.matchedBy)).toEqual(['keyword', 'semantic', 'keyword', 'semantic']);
+    expect(results.filter((r) => r.matchedBy === 'semantic').map((r) => r.exchange.archivePath))
+      .toEqual(['/seed/archive/sem-0.jsonl', '/seed/archive/sem-1.jsonl']);
+    expect(new Set(results.map((r) => r.exchange.archivePath)).size).toBe(4);
+
+    // a larger limit: all three semantic matches are in, between the keyword matches
+    const six = await searchMultipleConcepts(['Paddle', 'webhook'], { limit: 6 });
+    expect(six.map((r) => r.matchedBy)).toEqual(['keyword', 'semantic', 'keyword', 'semantic', 'keyword', 'semantic']);
+    expect(new Set(six.map((r) => r.exchange.archivePath)).size).toBe(6);
+  });
+
+  it('keyword matches are ranked by their similarity to the concepts, not by the keyword pass', async () => {
+    seed([
+      // the keyword pass ranks this one first (the words repeat), but its vector is far from both concepts
+      { id: 'kw-far', user: 'paddle webhook paddle webhook paddle webhook', vector: near(0, 1.5, 300) },
+      { id: 'kw-near', user: 'the paddle webhook arrives late after the retry window closes', vector: near(0, 0.6, 301) },
+    ]);
+    const results = await searchMultipleConcepts(['Paddle', 'webhook'], { limit: 5 });
+    expect(results.map((r) => r.exchange.id)).toEqual(['kw-near', 'kw-far']);
+    expect(results[0].averageSimilarity).toBeGreaterThan(results[1].averageSimilarity);
+  });
+
+  it('a conversation found both ways ranks above one found one way, and is listed once', async () => {
+    seed([
+      { id: 'kw-only', user: 'the Paddle webhook arrives late', vector: near(0, 0.9, 300) },
+    ]);
+    seedSemanticConversation('sem-only', 0.02, 350);
+    // semantically near both concepts AND one of its exchanges has every word
+    seedSemanticConversation('both', 0.06, 352);
+    const db = initDatabase();
+    insertExchange(db, {
+      id: 'both-c', project: 'demo', timestamp: '2026-10-01T00:00:00.000Z', userMessage: 'so the Paddle webhook was the cause',
+      assistantMessage: 'x', archivePath: '/seed/archive/both.jsonl', lineStart: 5, lineEnd: 6,
+    }, near(0, 1.2, 360));
+    db.close();
+
+    const results = await searchMultipleConcepts(['Paddle', 'webhook'], { limit: 5 });
+    expect(results.map((r) => r.exchange.archivePath)).toEqual([
+      '/seed/archive/both.jsonl', '/seed/archive/kw-only.jsonl', '/seed/archive/sem-only.jsonl',
+    ]);
+    // listed as the exchange that has every word — the place to read
+    expect(results[0].exchange.id).toBe('both-c');
+    expect(results[0].matchedBy).toBe('keyword');
+  });
+
+  it('at the same rank the keyword match goes first; up to the limit', async () => {
     seed([
       { id: 'both-words', user: 'the Paddle webhook arrives late', vector: near(0, 1.2, 300) },
       // one conversation near BOTH concept vectors (two exchanges of the same file would do; here one row in between)
