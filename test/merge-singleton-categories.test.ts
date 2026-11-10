@@ -81,6 +81,30 @@ describe('merge-singleton-categories.mjs', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it('with no argument it only previews — the merge needs --apply (SEC-9: it was the one clean-up script that applied by default)', () => {
+    const before = fs.readFileSync(dbPath);
+
+    const r = run();
+
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toMatch(/merge "Deployment Pipelines" \(1f\) → "Deployment Pipeline"/);
+    expect(r.stdout).toMatch(/\(dry-run, no change\)/);
+    expect(r.stdout).toMatch(/--apply/);
+    expect(fs.readFileSync(dbPath).equals(before)).toBe(true);
+    expect(tables()).not.toContain('category_merge_log');
+    expect(categoryIds()).toEqual([ids.stable, ids.singleton, ids.unrelated].sort());
+  });
+
+  it('--apply together with a preview switch is refused before the database is opened', () => {
+    const before = fs.readFileSync(dbPath);
+
+    for (const r of [run(['--apply', '--dry-run']), run(['--apply'], { DRY_RUN: '1' })]) {
+      expect(r.status).toBe(1);
+      expect(r.stderr).toMatch(/--apply/);
+    }
+    expect(fs.readFileSync(dbPath).equals(before)).toBe(true);
+  });
+
   it('DRY_RUN=1 previews the merge and leaves the database byte-identical — no merge-log table either', () => {
     const before = fs.readFileSync(dbPath);
     const tablesBefore = tables();
@@ -117,8 +141,8 @@ describe('merge-singleton-categories.mjs', () => {
     expect(categoryIds()).toEqual([ids.stable, ids.singleton, ids.unrelated].sort());
   });
 
-  it('a real run moves the fact, removes the singleton and logs which facts moved', () => {
-    const r = run();
+  it('--apply moves the fact, removes the singleton and logs which facts moved', () => {
+    const r = run(['--apply']);
 
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toMatch(/merged 1 categories, reassigned 1 facts\. categories 3 → 2/);
@@ -142,7 +166,7 @@ describe('merge-singleton-categories.mjs', () => {
     )`);
     db.close();
 
-    const r = run();
+    const r = run(['--apply']);
 
     expect(r.status, r.stderr).toBe(0);
     const after = open();

@@ -135,7 +135,8 @@ describe('redact-secret-facts.mjs', () => {
     expect(undoText).not.toContain(BOT_TOKEN);
     expect(undoText).not.toContain(API_KEY);
     const [header, ...entries] = undoText.trim().split('\n').map((l) => JSON.parse(l));
-    expect(header).toMatchObject({ kind: 'redact-secret-facts-undo', version: 1, count: 2 });
+    // 벡터 표가 없는 DB 라 백업 표도 없다(있으면 그 이름이 여기 적힌다 — 아래 CE-10 테스트)
+    expect(header).toMatchObject({ kind: 'redact-secret-facts-undo', version: 2, count: 2, vec_backup_table: null });
     expect(header.applied_at).toBe(after['fact-token'].updated_at);
     expect(entries.map((e) => e.id).sort()).toEqual(['fact-kr-key', 'fact-token']);
     expect(entries.every((e) => e.is_active === 1 && e.updated_at === T0)).toBe(true);
@@ -181,6 +182,85 @@ describe('redact-secret-facts.mjs', () => {
     expect(after['fact-token']).toEqual({ is_active: 1, updated_at: T0 });
     expect(after['fact-kr-key']).toEqual({ is_active: 0, updated_at: '2026-11-11T00:00:00.000Z' });
     expect(after['fact-old-token']).toEqual({ is_active: 0, updated_at: T0 });
+  });
+
+  it('--apply 는 끈 사실의 벡터 행도 지우고, --undo 는 그 바이트 그대로 되돌린다 (검수 CE-10)', async () => {
+    // 실제 스키마(벡터 표 포함)의 DB. 예전에는 is_active 만 바꿔, 비밀값이 든 문장의 벡터가 색인에 남았다.
+    const realPath = path.join(tmp, 'real.sqlite');
+    const saved = { cfg: process.env.MEMORY_BANK_CONFIG_DIR, db: process.env.MEMORY_BANK_DB_PATH };
+    process.env.MEMORY_BANK_CONFIG_DIR = path.join(tmp, 'cfg-real');
+    process.env.MEMORY_BANK_DB_PATH = realPath;
+    const { initDatabase, getVecQuant, embeddingToVecBlob, vecParamSql } = await import('../src/db.js');
+    const vecRows = (table: string): Record<string, string> => {
+      const db = initDatabase();
+      try {
+        return Object.fromEntries((db.prepare(`SELECT id, embedding FROM ${table} ORDER BY id`).all() as Array<{ id: string; embedding: Buffer }>)
+          .map((r) => [r.id, Buffer.from(r.embedding).toString('hex')]));
+      } finally {
+        db.close();
+      }
+    };
+    try {
+      const db = initDatabase();
+      try {
+        const ins = db.prepare(`INSERT INTO facts (id, fact, fact_kr, category, scope_type, source_exchange_ids, created_at, updated_at, is_active)
+          VALUES (?, ?, ?, 'knowledge', 'global', '[]', ?, ?, 1)`);
+        ins.run('fact-token', `User keeps the bot credentials (Token: ${BOT_TOKEN}) in the config file.`, '봇 설정은 설정 파일에 있다', T0, T0);
+        ins.run('fact-normal', 'Public APIs use REST.', '공개 API 는 REST 를 쓴다', T0, T0);
+        const vec = (seed: number) => Array.from({ length: 384 }, (_, i) => Math.sin(seed + i) / 20);
+        for (const [table, offset] of [['vec_facts', 0], ['vec_facts_kr', 100]] as const) {
+          const q = getVecQuant(db, table);
+          const put = db.prepare(`INSERT INTO ${table} (id, embedding) VALUES (?, ${vecParamSql(q)})`);
+          put.run('fact-token', embeddingToVecBlob(vec(1 + offset), q));
+          put.run('fact-normal', embeddingToVecBlob(vec(2 + offset), q));
+        }
+      } finally {
+        db.close();
+      }
+      const before = { en: vecRows('vec_facts'), kr: vecRows('vec_facts_kr') };
+      expect(Object.keys(before.en)).toEqual(['fact-normal', 'fact-token']);
+
+      const undoPath = path.join(tmp, 'undo-real.jsonl');
+      const applied = run('--db', realPath, '--apply', '--undo-file', undoPath);
+      expect(applied.code).toBe(0);
+      expect(applied.out).toMatch(/deactivated 1 fact\(s\)/);
+      expect(applied.out).toMatch(/removed 2 vector row\(s\)/);
+      expect(Object.keys(vecRows('vec_facts')), '끈 사실의 벡터는 색인에 없다').toEqual(['fact-normal']);
+      expect(Object.keys(vecRows('vec_facts_kr'))).toEqual(['fact-normal']);
+      expect(fs.readFileSync(undoPath, 'utf8'), '되돌리기 파일에는 벡터도 본문도 없다').not.toContain(BOT_TOKEN);
+
+      const undone = run('--db', realPath, '--undo', undoPath);
+      expect(undone.code).toBe(0);
+      expect(undone.out).toMatch(/restored 1 of 1 fact\(s\)/);
+      expect({ en: vecRows('vec_facts'), kr: vecRows('vec_facts_kr') }, '벡터가 지우기 전 바이트 그대로 돌아온다').toEqual(before);
+    } finally {
+      if (saved.cfg === undefined) delete process.env.MEMORY_BANK_CONFIG_DIR; else process.env.MEMORY_BANK_CONFIG_DIR = saved.cfg;
+      if (saved.db === undefined) delete process.env.MEMORY_BANK_DB_PATH; else process.env.MEMORY_BANK_DB_PATH = saved.db;
+    }
+  });
+
+  it('--undo 는 벡터를 지우기 전 버전이 쓴 되돌리기 파일(version 1)도 받는다', () => {
+    const undoPath = path.join(tmp, 'undo.jsonl');
+    expect(run('--db', dbPath, '--apply', '--undo-file', undoPath).code).toBe(0);
+    const [headerLine, ...rest] = fs.readFileSync(undoPath, 'utf8').trim().split('\n');
+    const { vec_backup_table: _dropped, ...header } = JSON.parse(headerLine);
+    fs.writeFileSync(undoPath, [JSON.stringify({ ...header, version: 1 }), ...rest].join('\n') + '\n');
+
+    const { code, out } = run('--db', dbPath, '--undo', undoPath);
+    expect(code).toBe(0);
+    expect(out).toMatch(/restored 2 of 2 fact\(s\)/);
+    expect(rows()['fact-token']).toEqual({ is_active: 1, updated_at: T0 });
+  });
+
+  it('--undo 는 이 스크립트가 쓰지 않는 이름의 백업 표를 건드리지 않는다', () => {
+    const undoPath = path.join(tmp, 'undo.jsonl');
+    expect(run('--db', dbPath, '--apply', '--undo-file', undoPath).code).toBe(0);
+    const [headerLine, ...rest] = fs.readFileSync(undoPath, 'utf8').trim().split('\n');
+    fs.writeFileSync(undoPath, [JSON.stringify({ ...JSON.parse(headerLine), vec_backup_table: 'facts' }), ...rest].join('\n') + '\n');
+    const before = dbHash();
+
+    expect(run('--db', dbPath, '--undo', undoPath).code).toBe(1);
+    expect(dbHash()).toBe(before);
   });
 
   it('--undo 는 이 스크립트의 되돌리기 파일이 아니면 거부한다', () => {
