@@ -124,3 +124,58 @@ describe('세션당 사실 상한', () => {
     expect(savedFacts()).toEqual(['b1-f0', 'b1-f1', 'b1-f2', 'b2-f0', 'b2-f1', 'b2-f2']);
   });
 });
+
+/**
+ * MEMORY_BANK_MAX_EXTRACT_CALLS 는 세션당 추출 배치 수다. 값에 상한이 없어서 1000 을 주면
+ * 400교환(80배치) 세션이 추출 호출 80회를 냈다 — 저장되는 사실은 어차피 60건까지인데.
+ */
+describe('세션당 추출 배치 수 (MEMORY_BANK_MAX_EXTRACT_CALLS)', () => {
+  const ENV = 'MEMORY_BANK_MAX_EXTRACT_CALLS';
+  afterEach(() => { delete process.env[ENV]; });
+  const oneFact = (call: number) => [{ fact: `b${call}-f0`, category: 'decision', scope_type: 'project', confidence: 0.9 }];
+
+  it('값이 상한(60)을 넘으면 60 배치로 자른다 — 400교환 세션에 값 1000', async () => {
+    process.env[ENV] = '1000';
+    seedExchanges(400);
+    reply = oneFact;
+    const { runFactExtraction, MAX_EXTRACT_CALLS_CEILING } = await import('../src/fact-extractor.js');
+    const result = await runFactExtraction(db, SID, '/tmp/cap');
+
+    expect(MAX_EXTRACT_CALLS_CEILING).toBe(60);
+    expect(calls, '80배치 전부가 아니라 상한까지만').toBe(60);
+    expect(result.saved).toBe(60);
+  });
+
+  it('기본값은 12, 상한 이하의 값은 그대로 쓴다', async () => {
+    const { extractCallBudget } = await import('../src/fact-extractor.js');
+    delete process.env[ENV];
+    expect(extractCallBudget()).toEqual({ calls: 12 });
+    process.env[ENV] = '30';
+    expect(extractCallBudget()).toEqual({ calls: 30 });
+    process.env[ENV] = '60';
+    expect(extractCallBudget()).toEqual({ calls: 60 });
+    process.env[ENV] = '61';
+    expect(extractCallBudget()).toEqual({ calls: 60, clampedFrom: 61 });
+    process.env[ENV] = '999999999999';
+    expect(extractCallBudget()).toEqual({ calls: 60, clampedFrom: 999999999999 });
+  });
+
+  it('정수가 아닌 값·0·음수는 기본값이다 (앞부분만 읽어 다른 수가 되지 않는다)', async () => {
+    const { extractCallBudget } = await import('../src/fact-extractor.js');
+    for (const raw of ['', '0', '-3', 'abc', '1e3', '12.9', '20 calls', ' ']) {
+      process.env[ENV] = raw;
+      expect(extractCallBudget(), JSON.stringify(raw)).toEqual({ calls: 12 });
+    }
+    process.env[ENV] = ' 20 ';
+    expect(extractCallBudget(), '앞뒤 공백은 허용').toEqual({ calls: 20 });
+  });
+
+  it('값 30 인 80배치 세션은 추출 호출 30회', async () => {
+    process.env[ENV] = '30';
+    seedExchanges(400);
+    reply = oneFact;
+    const { runFactExtraction } = await import('../src/fact-extractor.js');
+    await runFactExtraction(db, SID, '/tmp/cap');
+    expect(calls).toBe(30);
+  });
+});
