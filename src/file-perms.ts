@@ -49,6 +49,8 @@ export interface TightenResult {
   changed: string[];
   /** Paths that could not be changed, with the reason. */
   failed: Array<{ path: string; error: string }>;
+  /** Symlinked folders below the index dir (or the archive link) that were left as they are — not followed. */
+  skippedLinks: string[];
 }
 
 function tighten(target: string, mode: number, result: TightenResult): void {
@@ -69,14 +71,36 @@ function tighten(target: string, mode: number, result: TightenResult): void {
  *
  * The archive is closed at its top directory only — it holds hundreds of
  * thousands of files, and a 0700 parent already keeps other accounts out.
- * Symlinks are never followed, and executables (the native client under
- * `bin/`) keep their mode.
+ * Executables (the native client under `bin/`) keep their mode.
+ *
+ * Symlinks: the index dir itself may be one (the index kept on another volume
+ * and linked into the config dir). The database is created and opened through
+ * it, so the directory it points at is the one tightened — skipping it as "a
+ * symlink" left that directory 0755 and the database 0644 while the pass
+ * recorded itself as done. A symlink BELOW the index dir (a `sync` folder
+ * linked into a cloud folder) and a linked archive are not followed: where
+ * they point is the user's layout. They are returned in `skippedLinks` so the
+ * caller can say so.
  */
 export function tightenConfigTree(indexDir: string): TightenResult {
-  const result: TightenResult = { changed: [], failed: [] };
+  const result: TightenResult = { changed: [], failed: [], skippedLinks: [] };
   if (!POSIX) return result;
 
-  const dirs = [indexDir, path.join(indexDir, 'sync'), path.join(indexDir, 'logs')];
+  // Only when the index dir is itself the link: an ordinary install keeps the paths it was given.
+  let root = indexDir;
+  let linked = false;
+  try { linked = fs.lstatSync(indexDir).isSymbolicLink(); } catch { /* not there — the loop below skips it */ }
+  if (linked) {
+    try {
+      root = fs.realpathSync(indexDir);
+    } catch (error) {
+      // A link whose target cannot be resolved: nothing was tightened — a failure, not a finished pass.
+      result.failed.push({ path: indexDir, error: (error as Error).message });
+      return result;
+    }
+  }
+
+  const dirs = [root, path.join(root, 'sync'), path.join(root, 'logs')];
   const archiveDir = path.join(path.dirname(indexDir), 'conversation-archive');
   for (const dir of [...dirs, archiveDir]) {
     let stat: fs.Stats;
@@ -85,7 +109,8 @@ export function tightenConfigTree(indexDir: string): TightenResult {
     } catch {
       continue; // not there — nothing to tighten
     }
-    if (!stat.isDirectory()) continue; // a symlink or a file: not ours to change
+    if (stat.isSymbolicLink()) { result.skippedLinks.push(dir); continue; } // not followed, but reported
+    if (!stat.isDirectory()) continue; // a file: not ours to change
     tighten(dir, OWNER_ONLY_DIR_MODE, result);
     if (dir === archiveDir) continue;
 
@@ -127,8 +152,12 @@ export function tightenConfigTreeOnce(indexDir: string): TightenResult | null {
     process.stderr.write(`memory-bank: could not make ${result.failed.length} path(s) owner-only (first: ${first.path}: ${first.error}) — will retry\n`);
     return result;
   }
+  if (result.skippedLinks.length > 0) {
+    // Said once (the marker below ends the pass): these were not followed, so their modes are whatever they were.
+    process.stderr.write(`memory-bank: left ${result.skippedLinks.length} symlinked folder(s) as they are (${result.skippedLinks.join(', ')}) — a symlink is not followed; set the permissions of what it points at yourself\n`);
+  }
   try {
-    fs.writeFileSync(marker, `${new Date().toISOString()} changed=${result.changed.length}\n`, { mode: OWNER_ONLY_FILE_MODE });
+    fs.writeFileSync(marker, `${new Date().toISOString()} changed=${result.changed.length} skipped_links=${result.skippedLinks.length}\n`, { mode: OWNER_ONLY_FILE_MODE });
   } catch (error) {
     process.stderr.write(`memory-bank: could not record the owner-only pass (${marker}): ${(error as Error).message}\n`);
   }

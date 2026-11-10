@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -116,7 +116,7 @@ describe.skipIf(process.platform === 'win32')('owner-only storage', () => {
       expect(mode(path.join(archiveDir, 'project-a', 'summary.txt'))).toBe(0o644);
       expect(mode(path.join(indexDir, 'bin', 'memory-bank-inject-client'))).toBe(0o755);
       // A second pass finds nothing left to change.
-      expect(tightenConfigTree(indexDir)).toEqual({ changed: [], failed: [] });
+      expect(tightenConfigTree(indexDir)).toEqual({ changed: [], failed: [], skippedLinks: [] });
     });
 
     it('gets that pass the first time its database is opened, and only then', async () => {
@@ -146,6 +146,64 @@ describe.skipIf(process.platform === 'win32')('owner-only storage', () => {
       expect(result.failed).toEqual([]);
       expect(mode(outside)).toBe(0o755);
       expect(mode(path.join(outside, 'not-ours.txt'))).toBe(0o644);
+    });
+
+    it('tightens the directory a symlinked index dir points at (SEC-7)', () => {
+      // The index kept somewhere else (another volume) and linked into the config dir. The database is
+      // created and opened through the link, so the directory behind it is the one that holds the text.
+      // The pass used to skip it as "a symlink", change nothing there, and still record itself as done.
+      const real = path.join(tmp, 'elsewhere', 'index-data');
+      fs.mkdirSync(path.dirname(real), { recursive: true });
+      fs.renameSync(indexDir, real);
+      fs.symlinkSync(real, indexDir);
+      expect(othersCanAccess(path.join(real, 'db.sqlite'))).toBe(true);
+
+      const result = tightenConfigTreeOnce(indexDir);
+
+      expect(result?.failed).toEqual([]);
+      expect(result?.skippedLinks).toEqual([]);
+      for (const dir of [real, path.join(real, 'sync'), path.join(real, 'logs')]) expect(mode(dir), dir).toBe(0o700);
+      for (const file of ['db.sqlite', 'backup-20261003-pre-cleanup.sqlite', 'sync/facts.jsonl', 'logs/inject-context.jsonl']) {
+        expect(mode(path.join(real, file)), file).toBe(0o600);
+      }
+      expect(mode(path.join(real, 'bin', 'memory-bank-inject-client')), 'executables keep their mode').toBe(0o755);
+      expect(fs.lstatSync(indexDir).isSymbolicLink(), 'the link itself is left as it is').toBe(true);
+      expect(fs.existsSync(path.join(real, PERMS_MARKER))).toBe(true);
+      expect(tightenConfigTreeOnce(indexDir)).toBeNull();
+    });
+
+    it('says which symlinked folder below the index dir it left alone (SEC-7)', () => {
+      const outside = path.join(tmp, 'outside');
+      fs.mkdirSync(outside, { mode: 0o755 });
+      fs.writeFileSync(path.join(outside, 'not-ours.txt'), 'x', { mode: 0o644 });
+      fs.rmSync(path.join(indexDir, 'sync'), { recursive: true });
+      fs.symlinkSync(outside, path.join(indexDir, 'sync'));
+      const written: string[] = [];
+      const spy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => { written.push(String(chunk)); return true; });
+      let result;
+      try {
+        result = tightenConfigTreeOnce(indexDir);
+      } finally {
+        spy.mockRestore();
+      }
+
+      // Not followed — where the link points is the user's layout — but not passed over in silence either.
+      expect(result?.skippedLinks).toEqual([path.join(indexDir, 'sync')]);
+      expect(mode(outside)).toBe(0o755);
+      expect(mode(path.join(outside, 'not-ours.txt'))).toBe(0o644);
+      expect(written.join(''), 'stderr names the folder').toContain(path.join(indexDir, 'sync'));
+      expect(written.join('')).toMatch(/symlink/);
+      // The rest was tightened and the pass is recorded: the link is reported once, not at every open.
+      expect(mode(path.join(indexDir, 'db.sqlite'))).toBe(0o600);
+      expect(fs.readFileSync(path.join(indexDir, PERMS_MARKER), 'utf8')).toMatch(/skipped_links=1/);
+    });
+
+    it('does not report a finished pass when the index link points nowhere (SEC-7)', () => {
+      fs.rmSync(indexDir, { recursive: true });
+      fs.symlinkSync(path.join(tmp, 'unmounted-volume', 'index-data'), indexDir);
+      const result = tightenConfigTree(indexDir);
+      expect(result.changed).toEqual([]);
+      expect(result.failed.map((f) => f.path)).toEqual([indexDir]);
     });
 
     it('preparePrivateDbFile leaves a non-standard layout alone', () => {
