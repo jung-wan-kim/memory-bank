@@ -11,14 +11,18 @@ import { importFromSync } from '../dist/sync-import.js';
 import { ensureNativeAbi } from '../dist/node-abi.js';
 import { getIndexDir } from '../dist/paths.js';
 
-/** This hook runs async — its stderr goes nowhere — so failures also land in logs/sync-import.jsonl. */
+/**
+ * This hook runs async — its stderr goes nowhere — so failures also land in logs/sync-import.jsonl.
+ * Owner-only when created here, as when the import itself creates it (sync-import.ts appendImportLog):
+ * whichever of the two writes first makes the file.
+ */
 function logFailure(entry) {
   try {
     const dir = path.join(getIndexDir(), 'logs');
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const file = path.join(dir, 'sync-import.jsonl');
     try { if (fs.statSync(file).size > 1024 * 1024) fs.renameSync(file, `${file}.1`); } catch { /* no file yet */ }
-    fs.appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n');
+    fs.appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n', { mode: 0o600 });
   } catch (e) {
     console.error('sync-import: cannot write log:', e instanceof Error ? e.message : e);
   }

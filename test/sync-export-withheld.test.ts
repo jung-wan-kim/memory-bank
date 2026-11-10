@@ -121,6 +121,47 @@ describe('sync 내보내기: 가져오기가 거부할 사실은 싣지 않는�
     }
   });
 
+  it('뺀 것이 있으면 stderr 에 건수·종류와 정리 스크립트를 알린다 — 내보내기가 바뀐 실행에서만 (R2-SEC-3)', async () => {
+    await seed();
+    const { exportForSync } = await import('../src/sync-export.js');
+    const { initDatabase } = await import('../src/db.js');
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => { lines.push(args.map(String).join(' ')); });
+    const notices = () => lines.filter((l) => l.startsWith('sync-export: left out'));
+    try {
+      exportForSync();
+      expect(notices()).toHaveLength(1);
+      const [notice] = notices();
+      expect(notice).toContain('left out 4 active fact(s) an import refuses');
+      for (const part of ['secret-telegram-bot-token 1', 'secret-slack-webhook-url 1', 'fact-session-environment 1', 'override-instructions 1']) {
+        expect(notice, part).toContain(part);
+      }
+      expect(notice).toContain('node scripts/redact-secret-facts.mjs lists them, --apply deactivates them');
+      expect(notice, '건수와 종류만').not.toContain(BOT_TOKEN.slice(11));
+      expect(notice).not.toContain('secret-token'); // 사실 id 도 싣지 않는다
+
+      // 바뀐 것이 없는 실행은 다시 알리지 않는다(세션이 끝날 때마다 같은 줄이 나오지 않게)
+      lines.length = 0;
+      expect(exportForSync().written).toEqual([]);
+      expect(notices()).toEqual([]);
+
+      // 자격증명 모양 사실을 끈 뒤: 건수가 바뀌었으니 다시 알리되, 정리 스크립트 안내는 없다
+      const db = initDatabase();
+      try {
+        db.prepare(`UPDATE facts SET is_active = 0 WHERE id IN ('secret-token', 'secret-kr')`).run();
+      } finally {
+        db.close();
+      }
+      lines.length = 0;
+      exportForSync();
+      expect(notices()).toHaveLength(1);
+      expect(notices()[0]).toContain('left out 2 active fact(s) an import refuses');
+      expect(notices()[0]).not.toContain('redact-secret-facts');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('뺄 것이 없으면 0건이고, 바뀐 것이 없으면 다시 쓰지 않는다', async () => {
     const { initDatabase } = await import('../src/db.js');
     const db = initDatabase();

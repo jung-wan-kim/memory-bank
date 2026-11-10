@@ -161,6 +161,114 @@ describe('secretRejectReason', () => {
     }
   });
 
+  // 2차 검수 R2-SEC-2: 문장 속 값 규칙이 키워드 바로 뒤의 UUID·해시를 자격증명으로 봤다
+  // ("… pagination token <UUID> …" 99.7% 거부). 키워드가 식별자의 이름으로 쓰인 자리다.
+  describe('키워드 바로 뒤의 UUID·해시 (문장 속 값 규칙)', () => {
+    const UUID = '4b1d6f0e-7a3c-4e52-9d18-6c0f2a9b5e71';
+    const SHA1 = j(HEX32, '7a8b9c0d'); // 16진 40자
+    const SHA256 = HEX32.repeat(2); // 16진 64자
+
+    it('이음말·조사 없이 키워드 바로 뒤에 온 UUID·16진 40자·64자는 통과한다', () => {
+      for (const text of [
+        `The pagination token ${UUID} is returned by the list call.`,
+        `The pagination token ${UUID.toUpperCase()} is returned by the list call.`,
+        `The session token (${UUID}) is logged with every request.`,
+        `캐시 토큰 ${SHA256} 는 내용 해시다.`,
+        `The build token ${SHA1} is the commit it was built from.`,
+        `The idempotency token \`${UUID}\` was reused by the retry.`,
+      ]) {
+        expect(secretRejectReason(text), text).toBeNull();
+      }
+    });
+
+    it('값이라고 밝힌 문장(is·값·조사)과 대입 꼴은 UUID·해시여도 그대로 거부한다', () => {
+      for (const text of [
+        `The service token is ${UUID} for the deploy.`,
+        `The API key was ${SHA1} until the rotation.`,
+        `배포 토큰은 ${SHA256} 이다.`,
+        `API 키 값은 ${UUID} 이다.`,
+      ]) {
+        expect(secretRejectReason(text), text).toBe('secret-credential-in-prose');
+      }
+      expect(secretRejectReason(`token: ${UUID}`)).toBe('secret-credential-assignment');
+      expect(secretRejectReason(`password = ${SHA1}`)).toBe('secret-credential-assignment');
+    });
+
+    it('UUID·해시 꼴에서 한 글자라도 벗어나면 키워드 바로 뒤여도 거부한다', () => {
+      for (const text of [
+        `The deploy token ${HEX32} is used by the pipeline.`, // 16진 32자 — 해시 길이가 아니다
+        `The deploy token ${SHA1}0 is used by the pipeline.`, // 41자
+        `The deploy token ${UUID}_v2 is used by the pipeline.`, // UUID 뒤에 덧붙은 값
+        `The deploy token ${j('Xk29fLq8Zr71', 'TbV4mNq7Zp2L')} is used by the pipeline.`,
+      ]) {
+        expect(secretRejectReason(text), text).toBe('secret-credential-in-prose');
+      }
+    });
+  });
+
+  // 2차 검수 R2-SEC-1: 대입 규칙은 키워드 바로 뒤에 ':' 나 '=' 가 와야 했다. 환경변수 이름은
+  // 키워드 뒤에 접미가 붙거나(…_KEY_PROD) 목록에 없는 낱말 뒤의 KEY 로 끝난다(SERVICE_ROLE_KEY).
+  describe('환경변수 이름 꼴 대입 (대문자 이름 속의 KEY·TOKEN·SECRET·PASSWORD 낱말)', () => {
+    const VALUE = j(BODY, 'h1J2k3L4'); // 영문 대소문자·숫자 32자
+
+    it('키워드 뒤에 접미가 붙은 이름, KEY 로만 끝나는 이름의 대입을 잡는다', () => {
+      for (const text of [
+        `${j('API', '_KEY', '_PROD')}=${VALUE}`,
+        `${j('BOT', '_TOKEN', '_DEV')}=${VALUE}`,
+        `${j('SECRET', '_KEY', '_BASE')}=${HEX32.repeat(2)}`,
+        `${j('SERVICE_ROLE', '_KEY')}=${VALUE}`,
+        `${j('ENCRYPTION', '_KEY')}: ${VALUE}`,
+        `${j('DB', '_PASSWD', '_STAGING')} = "${VALUE}"`,
+        `export ${j('WEBHOOK', '_SECRET', '_V2')}='${VALUE}'`,
+        `{"${j('SERVICE_ROLE', '_KEY')}": "${VALUE}"}`,
+        `The staging env file sets ${j('API', '_KEY', '_PROD')}=${VALUE} for the deploy job.`,
+        `스테이징 환경 파일에 ${j('SERVICE_ROLE', '_KEY')}=${VALUE} 가 있다`,
+        // 낱말이 없는 이름의 값 자리에 들어 있어도 지나치지 않는다
+        `BUILD_ARGS=${j('API', '_KEY', '_PROD')}=${VALUE}`,
+      ]) {
+        const reason = secretRejectReason(text);
+        expect(reason, text.slice(0, 24)).toBe('secret-credential-assignment');
+        expect(reason).not.toContain(VALUE);
+      }
+    });
+
+    it('값이 아닌 것, 자리표시자, 낱말이 없는 이름, 공개 키는 통과한다', () => {
+      for (const text of [
+        `${j('API', '_KEY', '_PROD')}=<your-key-here>`,
+        `${j('API', '_KEY', '_PROD')}=YOUR_API_KEY_GOES_HERE_PLEASE`,
+        `${j('SERVICE_ROLE', '_KEY')}=change-me-before-deploying-to-prod-2026`,
+        `${j('BOT', '_TOKEN', '_DEV')} is read from the keychain at startup.`,
+        `${j('API', '_KEY', '_PROD')}=$(op read op://vault/item/field)`,
+        'MAX_TOKENS=2048 for the extraction call.',
+        // 이름에 낱말이 없다: KEY·TOKEN 이 다른 낱말의 일부일 뿐이다
+        `MONKEY_PATCH_VERSION=${VALUE}`,
+        `KEYBOARD_LAYOUT_ID=${VALUE}`,
+        `TOKENIZER_CACHE_ID=${VALUE}`,
+        `BUILD_ID=${HEX32}`,
+        // 공개하도록 만든 키
+        `${j('NEXT_PUBLIC_SUPABASE_ANON', '_KEY')}=${j('sb', '_publishable_', BODY)}`,
+      ]) {
+        expect(secretRejectReason(text), text.slice(0, 40)).toBeNull();
+      }
+    });
+
+    it('긴 입력에서도 선형으로 끝난다', () => {
+      for (const long of [
+        'ABC=ABC='.repeat(5_000),
+        `${j('API', '_KEY', '_PROD')}=`.repeat(3_000),
+        'A'.repeat(60_000),
+        'A_'.repeat(30_000),
+        `${'AB_'.repeat(20)}=`.repeat(1_000),
+        `${j('API', '_KEY', '_PROD')}=${'ab-'.repeat(20_000)}`,
+        `${j('API', '_KEY', '_PROD')}${' '.repeat(60_000)}=x`,
+      ]) {
+        const started = Date.now();
+        expect(secretRejectReason(long)).toBeNull();
+        expect(Date.now() - started, `${long.slice(0, 12)}… (${long.length}자)`).toBeLessThan(1000);
+      }
+    });
+  });
+
   it('문자열이 아니면 판정하지 않는다 (없는 fact_kr 등)', () => {
     expect(secretRejectReason(undefined)).toBeNull();
     expect(secretRejectReason(null)).toBeNull();
@@ -187,6 +295,9 @@ describe('secretRejectReason', () => {
       j('s', 'k.', 'eyJ', 'a'.repeat(60_000)),
       j('1'.repeat(60_000), ':', 'a'.repeat(60_000)),
       'Authorization: Basic '.repeat(10_000),
+      // 키워드 바로 뒤의 UUID·해시가 끝없이 이어지는 줄 (건너뛴 일치마다 다음 일치를 본다)
+      'token 4b1d6f0e-7a3c-4e52-9d18-6c0f2a9b5e71 '.repeat(2_000),
+      j('토큰 ', HEX32.repeat(2), ' ').repeat(1_000),
     ]) {
       const started = Date.now();
       expect(secretRejectReason(long)).toBeNull();

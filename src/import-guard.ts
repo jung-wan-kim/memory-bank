@@ -1,3 +1,7 @@
+import fs from 'fs';
+import path from 'path';
+import { createHash } from 'crypto';
+import { fileURLToPath } from 'url';
 import type Database from 'better-sqlite3';
 import { factRejectReason } from './fact-validity.js';
 import { secretRejectReason } from './secret-scan.js';
@@ -147,6 +151,42 @@ export function syncFactRefusal(
   const guard = importGuardReason(f);
   if (guard) return { kind: 'instruction-like', reason: guard };
   return null;
+}
+
+/** sha256 over the content of these files, in this order — or null when one of them cannot be read. */
+export function fingerprintOfFiles(files: string[]): string | null {
+  try {
+    const hash = createHash('sha256');
+    for (const file of files) hash.update(fs.readFileSync(file));
+    return hash.digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A fingerprint of the code behind syncFactRefusal, or null when it cannot be
+ * taken. What that function answers depends on the fact it is given and on
+ * the three modules it is made of — this one, fact-validity and secret-scan,
+ * which import nothing else at run time (pinned by
+ * test/sync-export-judgment-reuse.test.ts). The fingerprint is the text of
+ * those three files as loaded: it changes with any change to a rule, a
+ * release or not.
+ *
+ * The sync export keeps its last judgment only while this value stays the
+ * same (sync-export.ts). null — the files are not where this module is — means
+ * "judge again", never "unchanged".
+ */
+export function syncJudgmentFingerprint(): string | null {
+  try {
+    const self = fileURLToPath(import.meta.url);
+    const ext = path.extname(self);
+    // Built into one file with its imports (a bundle): that file is all three.
+    if (path.basename(self, ext) !== 'import-guard') return fingerprintOfFiles([self]);
+    return fingerprintOfFiles(['fact-validity', 'import-guard', 'secret-scan'].map((name) => path.join(path.dirname(self), name + ext)));
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------

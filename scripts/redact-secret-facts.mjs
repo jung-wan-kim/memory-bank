@@ -20,7 +20,13 @@
  *       (redact_secret_backup_<UTC time>), which the undo file names.
  *   node scripts/redact-secret-facts.mjs [--db PATH] --undo FILE
  *       Put back the rows an --apply run changed, where they are still as that
- *       run left them — their vectors too, from the backup table.
+ *       run left them — their vectors too, from the backup table. Once every
+ *       row of the file is back, that run's backup table is dropped (it used
+ *       to stay, one more per apply/undo round). While a fact of the file was
+ *       changed since and is left as it is, the table stays: that fact's
+ *       vectors exist only there.
+ *   node scripts/redact-secret-facts.mjs --help
+ *       Print the usage below. Opens nothing.
  *
  * Deactivation hides a fact from injection, search and the next sync export
  * (the export lists active facts only). It does not remove the text from the
@@ -38,6 +44,23 @@ import { ensureNativeAbi } from '../dist/node-abi.js';
 import { parseCliArgs, assertOnlyArgs } from '../dist/cli-args.js';
 
 ensureNativeAbi('redact-secret-facts');
+
+const USAGE = `Usage:
+  node scripts/redact-secret-facts.mjs [--db PATH]
+      Dry run (default): lists id, kind of credential, active/inactive. Changes nothing.
+  node scripts/redact-secret-facts.mjs [--db PATH] --apply [--undo-file PATH]
+      Deactivates the active ones (is_active = 0) and removes their rows from the vector
+      index (vec_facts, vec_facts_kr). Before any row changes, the previous is_active /
+      updated_at are written to the undo file (default: next to the database) and the
+      removed vector bytes are kept in a table of the same database,
+      redact_secret_backup_<UTC time>, which the undo file names.
+  node scripts/redact-secret-facts.mjs [--db PATH] --undo FILE
+      Puts back the rows that run changed where they are still as it left them, vectors
+      included, and drops that run's backup table once every row of the file is back.
+  node scripts/redact-secret-facts.mjs --help
+      Prints this text.
+
+A fact's text is never printed or written. Deactivation does not un-leak a credential: rotate it.`;
 
 const UNDO_KIND = 'redact-secret-facts-undo';
 // Version 2 names the vector backup table. A version-1 file (written before vectors were removed) is still undone.
@@ -62,11 +85,17 @@ function fail(message) {
 
 let args;
 try {
-  args = parseCliArgs(process.argv.slice(2), { values: ['--db', '--undo-file', '--undo'], flags: ['--apply'] });
-  if (args.values['--undo'] !== undefined) assertOnlyArgs(args, ['--db', '--undo'], '--undo');
+  args = parseCliArgs(process.argv.slice(2), { values: ['--db', '--undo-file', '--undo'], flags: ['--apply', '--help'] });
+  if (args.flags.has('--help')) assertOnlyArgs(args, ['--help'], '--help');
+  else if (args.values['--undo'] !== undefined) assertOnlyArgs(args, ['--db', '--undo'], '--undo');
   else if (!args.flags.has('--apply')) assertOnlyArgs(args, ['--db'], 'a dry run (add --apply)');
 } catch (e) {
   fail(e.message);
+}
+
+if (args.flags.has('--help')) {
+  console.log(USAGE);
+  process.exit(0);
 }
 
 const dbPath = args.values['--db'] || getDbPath();
@@ -212,14 +241,29 @@ function undo() {
     // Only rows still exactly as the apply run left them: a fact changed since
     // (reactivated, edited, consolidated) is not overwritten.
     const restore = db.prepare('UPDATE facts SET is_active = 1, updated_at = ? WHERE id = ? AND is_active = 0 AND updated_at = ?');
+    const current = db.prepare('SELECT is_active, updated_at FROM facts WHERE id = ?');
     let vectorsRestored = 0;
+    let alreadyRestored = 0;
+    let backup = 'none'; // what became of the backup table: none (the file names none, or it is gone) | dropped | kept
     const restored = db.transaction(() => {
+      // Where each row of the file stands: as the apply run left it (restored now), as it was before
+      // that run (an earlier --undo of this file put it back), or changed since (left as it is).
+      const pending = [];
+      for (const r of rows) {
+        const now = current.get(r.id);
+        if (now && now.is_active === 0 && now.updated_at === header.applied_at) pending.push(r);
+        else if (now && now.is_active === 1 && now.updated_at === r.updated_at) alreadyRestored++;
+      }
       // The vectors go back with the row. A vector table whose dtype/scale changed since the apply run
       // cannot take the kept bytes: nothing is restored then (the fact would come back unsearchable).
-      const kept = backupTable === null ? [] : (() => {
-        if (!tableExists(db, backupTable)) throw new Error(`vector backup table ${backupTable} is gone — the facts would come back without their vectors`);
-        return db.prepare(`SELECT fact_id, vec_table, embedding, quant FROM ${backupTable}`).all();
-      })();
+      // A backup table that is gone is an error only while a row still needs it.
+      const haveBackup = backupTable !== null && tableExists(db, backupTable);
+      if (pending.length > 0 && backupTable !== null && !haveBackup) {
+        throw new Error(`vector backup table ${backupTable} is gone — the facts would come back without their vectors`);
+      }
+      const kept = haveBackup && pending.length > 0
+        ? db.prepare(`SELECT fact_id, vec_table, embedding, quant FROM ${backupTable}`).all()
+        : [];
       const quants = {};
       for (const k of kept) {
         if (!VEC_TABLES.includes(k.vec_table)) throw new Error(`${backupTable} names an unknown vector table`);
@@ -229,7 +273,7 @@ function undo() {
         }
       }
       let n = 0;
-      for (const r of rows) {
+      for (const r of pending) {
         if (restore.run(r.updated_at, r.id, header.applied_at).changes === 0) continue;
         n++;
         for (const k of kept) {
@@ -239,11 +283,28 @@ function undo() {
           vectorsRestored++;
         }
       }
+      // Every row of the file is back: the backup table has nothing left to give, and it used to stay —
+      // one more table per apply/undo round. While a fact was changed since and left as it is, its
+      // vectors exist only in that table, so the table stays.
+      if (haveBackup) {
+        if (n + alreadyRestored === rows.length) {
+          db.exec(`DROP TABLE ${backupTable}`);
+          backup = 'dropped';
+        } else {
+          backup = 'kept';
+        }
+      }
       return n;
     }).immediate();
+    const changedSince = rows.length - restored - alreadyRestored;
+    const notes = [];
+    if (alreadyRestored > 0) notes.push(`${alreadyRestored} already restored`);
+    if (changedSince > 0) notes.push(`${changedSince} changed since the apply run and were left as they are`);
     console.log(`db: ${dbPath}`);
-    console.log(`restored ${restored} of ${rows.length} fact(s)${restored < rows.length ? ` — ${rows.length - restored} changed since the apply run and were left as they are` : ''}`);
-    if (backupTable !== null) console.log(`put back ${vectorsRestored} vector row(s) from ${backupTable}.`);
+    console.log(`restored ${restored} of ${rows.length} fact(s)${notes.length > 0 ? ` — ${notes.join(', ')}` : ''}`);
+    if (backupTable !== null && restored > 0) console.log(`put back ${vectorsRestored} vector row(s) from ${backupTable}.`);
+    if (backup === 'dropped') console.log(`dropped ${backupTable}: every fact of that run is back.`);
+    if (backup === 'kept') console.log(`kept ${backupTable}: the vectors of the ${changedSince} fact(s) left as they are exist only there.`);
   } catch (e) {
     fail(`undo failed, no row changed: ${e instanceof Error ? e.message : e}`);
   } finally {
