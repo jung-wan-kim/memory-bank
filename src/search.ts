@@ -79,6 +79,11 @@ export interface SearchOptions {
   coding_agent?: string; // Filter by coding agent (e.g., 'claude-code', 'codex', 'opencode')
   /** Also return machine-generated turns (NOISE_EXCHANGE_SQL). Default false. */
   include_noise?: boolean;
+  /**
+   * Keyword pass: only exchanges that contain EVERY word of the query — no partial-match ladder. Used by
+   * the multi-concept search, where "some of the words" is not a match.
+   */
+  require_all_tokens?: boolean;
 }
 
 /** First characters of the prompts another memory plugin's observer session sends — not a person asking. */
@@ -212,7 +217,7 @@ export async function searchConversationsDetailed(
   query: string,
   options: SearchOptions = {}
 ): Promise<{ results: SearchHit[]; meta: SearchMeta }> {
-  const { limit = 10, mode = 'both', after, before, coding_agent, include_noise = false } = options;
+  const { limit = 10, mode = 'both', after, before, coding_agent, include_noise = false, require_all_tokens = false } = options;
 
   // Validate date parameters
   if (after) validateISODate(after, '--after');
@@ -340,7 +345,10 @@ export async function searchConversationsDetailed(
               },
             };
           }
-          k = Math.min(k * 4, VEC_KNN_K_MAX);
+          // Each round is a full scan of the index, so take as few as possible: at least ×4, and when the
+          // pass rate seen so far says that cannot fill `want` either, twice what the rate implies (the
+          // ceiling when nothing has passed yet).
+          k = Math.min(VEC_KNN_K_MAX, Math.max(k * 4, turns.length === 0 ? VEC_KNN_K_MAX : Math.ceil((k * want * 2) / turns.length)));
         }
       };
 
@@ -553,7 +561,11 @@ export async function searchConversationsDetailed(
                   }
                   return rows;
                 }
-                inner = Math.min(n, inner * 4, TEXT_LOOKAHEAD_MAX);
+                // Same stepping as the vector pass: at least ×4, or what the pass rate so far implies.
+                inner = Math.min(n, TEXT_LOOKAHEAD_MAX, Math.max(
+                  inner * 4,
+                  passing.length === 0 ? TEXT_LOOKAHEAD_MAX : Math.ceil((inner * lim * 2) / passing.length),
+                ));
               }
             };
             // Rarest-token AND ladder (see comment above orTokens): walk AND
@@ -563,14 +575,12 @@ export async function searchConversationsDetailed(
             // other query terms (lower rungs still contribute). df=0 tokens
             // are dropped (they match nothing).
             const orFallbackRows = (lim: number): ExchangeRow[] => {
-              let rare: string[] = [];
-              try {
-                rare = [...new Set(orTokens)]
-                  .map((t) => ({ t, df: (countStmt.get(ftsTerm(t)) as { c: number }).c }))
-                  .filter((x) => x.df > 0)
-                  .sort((a, b) => a.df - b.df)
-                  .map((x) => x.t);
-              } catch { return []; }
+              // A failing frequency probe is not "no matches": it reaches the handler below, which says so.
+              const rare = [...new Set(orTokens)]
+                .map((t) => ({ t, df: (countStmt.get(ftsTerm(t)) as { c: number }).c }))
+                .filter((x) => x.df > 0)
+                .sort((a, b) => a.df - b.df)
+                .map((x) => x.t);
               // Rungs: AND-of-rarest prefixes (most selective first), then
               // every token individually in df order — so hits matching only
               // the OTHER query terms still surface after the rare ones.
@@ -612,7 +622,9 @@ export async function searchConversationsDetailed(
             // Contract: the text pass returns AT MOST `limit` rows in every
             // mode, all-token (AND/exact) matches always first — identical
             // fetch depth to the original all-AND implementation.
-            if (ftsTokens.length <= MAX_FTS_TOKENS) {
+            if (require_all_tokens) {
+              textResults = ftsRows(ftsExpr, limit);
+            } else if (ftsTokens.length <= MAX_FTS_TOKENS) {
               // Short query: AND first (precision — identical to original
               // behavior), ladder fallback only when AND matches nothing.
               textResults = ftsRows(ftsExpr, limit);
@@ -824,6 +836,7 @@ export function multiConceptResultsToJson(results: MultiConceptResult[], concept
     results: results.map((r) => ({
       ...exchangeForJson(r.exchange),
       snippet: r.snippet,
+      matchedBy: r.matchedBy,
       conceptSimilarities: r.conceptSimilarities,
       averageSimilarity: r.averageSimilarity,
     })),
@@ -952,6 +965,67 @@ export async function formatResults(results: SearchHit[], meta?: SearchMeta): Pr
   return output + notes;
 }
 
+/**
+ * Keyword side of the multi-concept search: exchanges that contain every word of every concept, one per
+ * conversation, in the keyword pass's order. Each carries its real similarity to every concept, computed
+ * from its stored vector (NaN when the exchange has no vector row — unknown, not zero).
+ */
+async function keywordConceptMatches(
+  concepts: string[],
+  options: Omit<SearchOptions, 'mode'>,
+  limit: number,
+): Promise<MultiConceptResult[]> {
+  const { results, meta } = await searchConversationsDetailed(concepts.join(' '), {
+    ...options,
+    mode: 'text',
+    limit: limit * 5,
+    require_all_tokens: true,
+  });
+  if (meta.text?.path !== 'fts') {
+    // Without the keyword index the pass is a LIKE scan for the joined text — not "every word". This side
+    // contributes nothing then, and says so; the semantic side still answers.
+    console.error(`memory-bank search: multi-concept keyword matching skipped (${meta.text?.reason ?? 'keyword index unavailable'})`);
+    return [];
+  }
+
+  const perConversation = new Map<string, SearchHit>();
+  for (const hit of results) {
+    if (!perConversation.has(hit.exchange.archivePath)) perConversation.set(hit.exchange.archivePath, hit);
+  }
+  const hits = [...perConversation.values()].slice(0, limit);
+  if (hits.length === 0) return [];
+
+  await initEmbeddings();
+  const embeddings: number[][] = [];
+  for (const concept of concepts) embeddings.push(await generateEmbedding(concept, 'query'));
+
+  const db = getSearchDb();
+  const quant = getVecQuant(db, 'vec_exchanges');
+  const distance = db.prepare(`SELECT vec_distance_l2(embedding, ${vecParamSql(quant)}) AS d FROM vec_exchanges WHERE id = ?`);
+  const blobs = embeddings.map((embedding) => embeddingToVecBlob(embedding, quant));
+
+  return hits.map((hit) => {
+    const conceptSimilarities = blobs.map((blob) => {
+      const row = distance.get(blob, hit.exchange.id) as { d: number } | undefined;
+      return row ? l2DistanceToSimilarity(normalizeVecDistance(row.d, quant)) : Number.NaN;
+    });
+    return {
+      exchange: hit.exchange,
+      snippet: hit.snippet,
+      conceptSimilarities,
+      averageSimilarity: conceptSimilarities.reduce((sum, sim) => sum + sim, 0) / conceptSimilarities.length,
+      matchedBy: 'keyword' as const,
+    };
+  });
+}
+
+/**
+ * Conversations that match ALL concepts, at most `limit`:
+ *  1. exchanges that contain every word of every concept (keyword index), then
+ *  2. conversations in which every concept has a semantically near exchange, by average similarity.
+ * The second alone — intersecting each concept's nearest 5×limit exchanges — returned nothing on a large
+ * index even when dozens of exchanges contained all the words (the lists rarely share a conversation).
+ */
 export async function searchMultipleConcepts(
   concepts: string[],
   options: Omit<SearchOptions, 'mode'> = {}
@@ -1002,7 +1076,8 @@ export async function searchMultipleConcepts(
         exchange: firstResult.exchange,
         snippet: firstResult.snippet,
         conceptSimilarities,
-        averageSimilarity
+        averageSimilarity,
+        matchedBy: 'semantic',
       });
     }
   }
@@ -1010,8 +1085,15 @@ export async function searchMultipleConcepts(
   // Sort by average similarity (highest first)
   multiConceptResults.sort((a, b) => b.averageSimilarity - a.averageSimilarity);
 
+  // Exact word matches first, then the semantic matches of other conversations.
+  const keywordResults = await keywordConceptMatches(concepts, options, limit);
+  const keywordPaths = new Set(keywordResults.map((r) => r.exchange.archivePath));
+
   // Apply limit
-  return multiConceptResults.slice(0, limit);
+  return [
+    ...keywordResults,
+    ...multiConceptResults.filter((r) => !keywordPaths.has(r.exchange.archivePath)),
+  ].slice(0, limit);
 }
 
 // === Knowledge Graph Enhanced Search ===
@@ -1131,14 +1213,18 @@ export async function formatMultiConceptResults(
   for (let index = 0; index < results.length; index++) {
     const result = results[index];
     const date = new Date(result.exchange.timestamp).toISOString().split('T')[0];
-    const avgPct = Math.round(result.averageSimilarity * 100);
+    // A keyword match whose exchange has no vector row has no similarity (NaN): shown as n/a, never as 0%.
+    const pct = (value: number) => (Number.isFinite(value) ? `${Math.round(value * 100)}%` : 'n/a');
+    const avgPct = pct(result.averageSimilarity);
 
-    // Header with average match percentage
-    output += `${index + 1}. [${result.exchange.project}, ${date}] - ${avgPct}% avg match\n`;
+    // Header: how it matched, with the average semantic similarity
+    output += result.matchedBy === 'keyword'
+      ? `${index + 1}. [${result.exchange.project}, ${date}] - every word in one exchange (${avgPct} avg semantic)\n`
+      : `${index + 1}. [${result.exchange.project}, ${date}] - ${avgPct} avg match\n`;
 
     // Show individual concept scores
     const scores = result.conceptSimilarities
-      .map((sim, i) => `${concepts[i]}: ${Math.round(sim * 100)}%`)
+      .map((sim, i) => `${concepts[i]}: ${pct(sim)}`)
       .join(', ');
     output += `   Concepts: ${scores}\n`;
 

@@ -76,8 +76,30 @@ describe('vector search with row filters (bounded over-fetch)', () => {
 
     const { results, meta } = await searchConversationsDetailed('anything', { mode: 'vector', limit: 10, after: '2026-01-01' });
     expect(results.map((r) => r.exchange.id)).toEqual(recent.slice(0, 10).map((r) => r.id));
-    // k grew 80 → 320; the index holds 132 rows, 12 of them pass the filter.
-    expect(meta.vector).toEqual({ k: 320, candidates: 132, matched: 12, truncated: false });
+    // Nothing passed among the nearest 80, so the next round went straight to the ceiling;
+    // the index holds 132 rows, 12 of them pass the filter.
+    expect(meta.vector).toEqual({ k: 4096, candidates: 132, matched: 12, truncated: false });
+  });
+
+  it('grows k by the pass rate it has seen instead of scanning again and again', async () => {
+    const db = initDatabase();
+    // every 10th of 1,500 rows passes the filter: 8 of the nearest 80
+    const rows: SeedRow[] = Array.from({ length: 1500 }, (_, i) => ({
+      id: `row-${String(i).padStart(4, '0')}`,
+      theta: 0.05 + i * 0.0008,
+      timestamp: i % 10 === 0 ? '2026-10-20T00:00:00.000Z' : '2025-03-01T00:00:00.000Z',
+    }));
+    seedExchanges(db, rows);
+    db.close();
+
+    const { results, meta } = await searchConversationsDetailed('anything', { mode: 'vector', limit: 40, after: '2026-01-01' });
+    expect(results).toHaveLength(40);
+    expect(results.every((r) => r.exchange.timestamp.startsWith('2026'))).toBe(true);
+    // 320 at first (40 × 8) → about 32 pass → next k = max(1280, 320 × 40 × 2 / 32 = 800) = 1280: two rounds, done
+    expect(meta.vector).toMatchObject({ k: 1280, candidates: 1280, truncated: false });
+    // about every 10th of the nearest 1,280 (int8 ties at the edge make it ±a few)
+    expect(meta.vector!.matched).toBeGreaterThanOrEqual(120);
+    expect(meta.vector!.matched).toBeLessThanOrEqual(136);
   });
 
   it('an index that runs out before `limit` is not reported as truncated', async () => {

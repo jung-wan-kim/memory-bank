@@ -39,7 +39,8 @@ EXAMPLES:
   # Explicit combined mode
   memory-bank search --both "React Router data loading"
 
-  # Multi-concept search (AND - every concept must have a semantic hit in the conversation)
+  # Multi-concept search (AND - exchanges containing every word first, then conversations
+  # semantically near every concept)
   memory-bank search "React Router" "authentication" "JWT"
 `;
 
@@ -111,7 +112,7 @@ export function parseSearchArgs(argv: string[]): SearchCliArgs {
 
   if (queries.length === 0) throw new Error('no search query given');
   if (queries.length > 1 && modeFlag) {
-    throw new Error(`${modeFlag} applies to one query; a multi-concept search (several queries) is always semantic`);
+    throw new Error(`${modeFlag} applies to one query; a multi-concept search (several queries) does not take a mode`);
   }
 
   return {

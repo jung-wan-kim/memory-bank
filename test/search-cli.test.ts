@@ -65,7 +65,7 @@ describe('parseSearchArgs', () => {
   });
 
   it('a multi-concept search does not take a mode', () => {
-    expect(() => parseSearchArgs(['--text', 'a', 'b'])).toThrow(/multi-concept/);
+    expect(() => parseSearchArgs(['--text', 'a', 'b'])).toThrow(/multi-concept search \(several queries\) does not take a mode/);
     expect(parseSearchArgs(['a', 'b'])).toMatchObject({ queries: ['a', 'b'] });
   });
 });

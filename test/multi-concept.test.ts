@@ -10,10 +10,12 @@ describe('multi-concept search', () => {
     // Should return results
     expect(Array.isArray(results)).toBe(true);
 
-    // Results should be sorted by average similarity
-    if (results.length > 1) {
-      expect(results[0].averageSimilarity).toBeGreaterThanOrEqual(results[1].averageSimilarity);
-    }
+    // Exact word matches come first (in keyword order); the semantic matches after them are sorted by
+    // average similarity.
+    const semantic = results.filter((r) => r.matchedBy === 'semantic').map((r) => r.averageSimilarity);
+    expect(semantic).toEqual([...semantic].sort((a, b) => b - a));
+    const firstSemantic = results.findIndex((r) => r.matchedBy === 'semantic');
+    expect(results.slice(firstSemantic === -1 ? results.length : firstSemantic).every((r) => r.matchedBy === 'semantic')).toBe(true);
   });
 
   it('should have lower similarity for unrelated concepts than related ones', async () => {

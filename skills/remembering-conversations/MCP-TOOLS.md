@@ -71,8 +71,10 @@ to 300 characters with at most 5 related facts.
 `assistantMessage` clipped to 500 characters), `clipped`, `similarity`, `matchedBy`, `snippet`. The full
 text of an exchange is read with `read`.
 
-**Multi-concept search** — `query: ["authentication", "React Router", "error handling"]` returns
-conversations in which every concept has a semantic hit. `mode` is ignored.
+**Multi-concept search** — `query: ["authentication", "React Router", "error handling"]` returns, up to
+`limit`: first the exchanges that contain every word of every concept (`every word in one exchange`, one
+per conversation), then the conversations in which every concept has a semantically near exchange
+(`N% avg match`). Each result lists its similarity to every concept. `mode` is ignored.
 
 ## read
 

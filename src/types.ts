@@ -52,8 +52,14 @@ export interface SearchResult {
 export interface MultiConceptResult {
   exchange: ConversationExchange;
   snippet: string;
+  /** Similarity of the conversation to each concept (NaN when unknown: a keyword match with no stored vector). */
   conceptSimilarities: number[];
   averageSimilarity: number;
+  /**
+   * 'keyword': one exchange contains every word of every concept (listed first).
+   * 'semantic': every concept has a semantically near exchange in the conversation.
+   */
+  matchedBy?: 'keyword' | 'semantic';
 }
 
 // === Fact Types ===
