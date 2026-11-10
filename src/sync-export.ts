@@ -274,10 +274,11 @@ export function exportForSync(): {
     };
 
     // The same facts under the same judgment code were judged by an earlier run: its result
-    // stands (JudgedFacts). Anything else — a changed row, changed code, no usable record — is judged now.
+    // stands (JudgedFacts). Anything else — a changed row, changed code, no usable record, no
+    // fingerprint of the code (null equals no recorded one) — is judged now.
     const judgedBy = syncJudgmentFingerprint();
     const input = { sha256: digestJsonl(factLines).sha256, rows: factLines.length };
-    const recorded = judgedBy === null ? null : readJudgedFacts();
+    const recorded = readJudgedFacts();
     const remembered = recorded !== null && recorded.judged_by === judgedBy
       && recorded.input.sha256 === input.sha256 && recorded.input.rows === input.rows ? recorded : null;
     let fresh: ReturnType<typeof judgeFacts> | null = null; // set once the facts were judged in this call
