@@ -12,6 +12,8 @@ import {
   deactivateFact,
   insertRevision,
   getFactKorean,
+  factContentTimes,
+  raiseFactContentTime,
 } from './fact-db.js';
 import { factTextRejectReason, factKrRejectReason } from './fact-validity.js';
 import { secretRejectReason } from './secret-scan.js';
@@ -81,16 +83,26 @@ interface ComparisonTally {
 }
 
 /**
- * The pair in creation order `(created_at, id)` — the same key the drain
- * cursor walks. Which fact is "existing" and which is "new" is a property of
- * the pair, not of which one is the driver: a backlog is driven oldest first,
- * so the nearest neighbour is often the LATER fact (measured on the 2,256-fact
- * backlog of 2026-11: 388 of 849 comparisons). Reading that pair driver-as-new
- * told the LLM the older sentence was the newer one — CONTRADICTION then
- * switched off the latest decision and EVOLUTION overwrote it.
+ * The pair in the order its CONTENT was stated: `(content time, id)`. Which
+ * fact is "existing" and which is "new" is a property of the pair, not of
+ * which one is the driver: a backlog is driven oldest first, so the nearest
+ * neighbour is often the LATER fact (measured on the 2,256-fact backlog of
+ * 2026-11: 388 of 849 comparisons). Reading that pair driver-as-new told the
+ * LLM the older sentence was the newer one — CONTRADICTION then switched off
+ * the latest decision and EVOLUTION overwrote it.
+ *
+ * Content time, not created_at: a merge keeps the older ROW, which then holds
+ * the later fact's sentence (EVOLUTION) or a statement the later fact
+ * confirmed (DUPLICATE). By created_at that row read as the older of its next
+ * pair even against a fact created in between — the same misreading, one merge
+ * later (5 of 100 comparisons on real pairs). The merge records the later of
+ * the two content times on the surviving fact (fact-db.ts, facts.content_at);
+ * for a fact never merged into it is created_at, so such pairs order as before.
  */
-function inCreationOrder(a: Fact, b: Fact): [older: Fact, newer: Fact] {
-  const aFirst = a.created_at < b.created_at || (a.created_at === b.created_at && a.id < b.id);
+function inContentOrder(a: Fact, b: Fact, times: Map<string, string>): [older: Fact, newer: Fact] {
+  const ta = times.get(a.id) ?? a.created_at;
+  const tb = times.get(b.id) ?? b.created_at;
+  const aFirst = ta < tb || (ta === tb && a.id < b.id);
   return aFirst ? [a, b] : [b, a];
 }
 
@@ -130,7 +142,8 @@ async function consolidateOne(
   }).filter((s) => s.fact.id !== driver.id);
   if (candidates.length === 0) return 'none';
 
-  const [existingFact, newFact] = inCreationOrder(candidates[0].fact, driver);
+  const candidate = candidates[0].fact;
+  const [existingFact, newFact] = inContentOrder(candidate, driver, factContentTimes(db, [candidate.id, driver.id]));
   // Tag ONLY the provider call's rejection as an LlmCallError. Anything after
   // this (parseJsonResponse, the rewrite's embedding, applyConsolidationResult
   // DB writes) throws as a plain error, so the drain loop can hold on an
@@ -490,8 +503,10 @@ interface AppliedPlan {
 const HANGUL = /[\uAC00-\uD7A3]/;
 
 /**
- * Apply a verdict to its pair. `existingFact` is the OLDER fact and `newFact`
- * the later one (consolidateOne orders them; see inCreationOrder).
+ * Apply a verdict to its pair. `existingFact` is the fact with the OLDER
+ * content and `newFact` the later one (consolidateOne orders them; see
+ * inContentOrder). The fact that stays records the later of the two content
+ * times.
  *
  * `opts.embedding` is the vector of the sentence the verdict writes. It is
  * required when the rewritten fact has a stored vector: writing the sentence
@@ -559,6 +574,12 @@ function applyConsolidationPlan(
       const now = rewriteKorean(db, rewrite);
       korean.sentence = now && !now.vector && preparedKorean?.vector && preparedKorean.text === now.text ? preparedKorean : now;
     }
+    // What the surviving fact says is now as recent as the later of the two
+    // (see inContentOrder) — read here, the pair's times as they are stored.
+    const times = factContentTimes(db, [existingFact.id, newFact.id]);
+    const existingTime = times.get(existingFact.id) ?? existingFact.created_at;
+    const newTime = times.get(newFact.id) ?? newFact.created_at;
+    raiseFactContentTime(db, plan.relation === 'CONTRADICTION' ? newFact.id : existingFact.id, existingTime > newTime ? existingTime : newTime);
     // The fact that vanishes in a merge hands its confirmations and sources to
     // the one that stays — read here, inside the transaction, not from the
     // snapshot taken before the LLM call. (Its ontology relations are not

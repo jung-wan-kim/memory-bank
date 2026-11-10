@@ -254,6 +254,61 @@ export function setFactKorean(db: Database.Database, id: string, text: string, v
   }).immediate();
 }
 
+// ── Content time ────────────────────────────────────────────────────────────
+//
+// facts.content_at — when the fact's CURRENT content was last stated: the
+// latest creation time among the facts merged into it. NULL means the row was
+// never merged into, and its content is as old as the row (created_at).
+//
+// A merge keeps the older row. After EVOLUTION that row holds the later fact's
+// sentence, after DUPLICATE a statement the later fact confirmed — but its
+// created_at stays the old one, so ordering a pair by created_at alone
+// presented the latest content as the "existing" fact (consolidator.ts).
+//
+// The column is ensured here, on first use by the consolidator (idempotent),
+// not in db.ts's schema block — like extraction_log.seen_exchanges. It is
+// local bookkeeping: sync does not carry it, and a store without it (or a
+// handle that cannot add it) reads every content time as created_at.
+
+const contentAtColumn = new WeakMap<Database.Database, boolean>();
+
+/** Make sure facts.content_at exists. false when it does not and cannot be added (read-only handle, old DB). */
+export function ensureFactContentAtColumn(db: Database.Database): boolean {
+  const known = contentAtColumn.get(db);
+  if (known !== undefined) return known;
+  let present: boolean;
+  try {
+    const cols = db.prepare(`SELECT name FROM pragma_table_info('facts')`).all() as Array<{ name: string }>;
+    present = cols.some((c) => c.name === 'content_at');
+    if (!present && cols.length > 0) {
+      db.prepare('ALTER TABLE facts ADD COLUMN content_at TEXT').run();
+      present = true;
+    }
+  } catch (e) {
+    // Another process added it between the check and the ALTER — the goal is met.
+    present = /duplicate column name/i.test(e instanceof Error ? e.message : String(e));
+  }
+  contentAtColumn.set(db, present);
+  return present;
+}
+
+/** Content time of each given fact that exists: content_at, else created_at. */
+export function factContentTimes(db: Database.Database, ids: string[]): Map<string, string> {
+  const times = new Map<string, string>();
+  if (ids.length === 0) return times;
+  const expr = ensureFactContentAtColumn(db) ? 'COALESCE(content_at, created_at)' : 'created_at';
+  const rows = db.prepare(`SELECT id, ${expr} AS t FROM facts WHERE id IN (${ids.map(() => '?').join(', ')})`)
+    .all(...ids) as Array<{ id: string; t: string }>;
+  for (const r of rows) times.set(r.id, r.t);
+  return times;
+}
+
+/** Move a fact's content time forward to `time` (never back). A no-op on a store without the column. */
+export function raiseFactContentTime(db: Database.Database, id: string, time: string): void {
+  if (!ensureFactContentAtColumn(db)) return;
+  db.prepare('UPDATE facts SET content_at = ? WHERE id = ? AND COALESCE(content_at, created_at) < ?').run(time, id, time);
+}
+
 export function deactivateFact(db: Database.Database, id: string): void {
   db.prepare('UPDATE facts SET is_active = 0, updated_at = ? WHERE id = ?').run(
     new Date().toISOString(),
