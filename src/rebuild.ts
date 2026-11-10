@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3';
 import fs from 'fs';
 import { EXCHANGES_FTS_AD_DDL, ensureExchangeTurnIndex, getVecQuant, initDatabase, pauseForOtherWriters, vecParamSql } from './db.js';
 import { newBackupPath, writeRowBackup } from './row-backup.js';
+import { planSnapshotDedupe, repointFactsAtKeptSnapshots } from './snapshot-dedupe.js';
 import { getArchiveDir } from './paths.js';
 import { removeAllSummaries } from './archive-io.js';
 import { verifyIndex, repairIndex, listArchiveConversations, RepairOutcome } from './verify.js';
@@ -20,7 +21,10 @@ import { parseGuarded } from './conversation-guard.js';
  */
 
 export interface RebuildCounts {
-  /** Kept as they are — the rebuild never writes these. */
+  /**
+   * Kept: no row of these is added, removed or rewritten — with one exception,
+   * a fact's source ids that name an older copy of a turn (RebuildResult.repointedFacts).
+   */
   preserved: {
     facts: number;
     activeFacts: number;
@@ -199,9 +203,11 @@ export const FACT_LAYER_TABLES = [
 ] as const;
 
 /**
- * Copy the fact layer into a new sqlite file (rows only). The rebuild does not
- * touch these tables; the copy exists so that a bug or a crash in a command
- * that empties half of the database can never cost what cannot be re-derived.
+ * Copy the fact layer into a new sqlite file (rows only). The rebuild changes
+ * one thing in these tables (source ids that name an older copy of a turn —
+ * after this copy is written); the copy exists so that a bug or a crash in a
+ * command that empties half of the database can never cost what cannot be
+ * re-derived, and it holds the source lists as they were.
  */
 export function backupFactLayer(db: Database.Database, backupPath: string): Record<string, number> {
   return writeRowBackup(db, backupPath, FACT_LAYER_TABLES.map((table) => ({ table, select: `SELECT * FROM ${table}` })));
@@ -391,6 +397,12 @@ export interface RebuildResult {
   backupPath: string;
   /** Backup of the exchanges cleared for good (allowIndexLoss); null when there were none. */
   lostExchangesBackupPath: string | null;
+  /**
+   * Facts whose source list named an older copy of a turn and was moved to the
+   * copy the re-index re-creates (see rebuildConversationIndex). The one thing
+   * a rebuild changes in the fact layer; 0 when no turn had more than one row.
+   */
+  repointedFacts: number;
   cleared: { exchanges: number; toolCalls: number };
   /** Summary files deleted; null when they were left alone (the default). */
   removedSummaries: number | null;
@@ -447,7 +459,9 @@ export function formatRebuildCounts(counts: RebuildCounts, reach: RebuildReach):
 /**
  * The whole `index --rebuild`: print what stays, what goes and what will not
  * come back; refuse if exchanges would be lost for good and that was not
- * accepted; back up the fact layer; empty the conversation tables in place;
+ * accepted; back up the fact layer; point the facts that name an older copy
+ * of a turn at the copy that comes back (the only change to the fact layer —
+ * source ids, nothing else); empty the conversation tables in place;
  * re-index from the ARCHIVE (the projects dir only holds the recent weeks —
  * re-indexing from it brought back 915 of 290,398 archived conversations on
  * the measured machine) through the same guarded path as repair.
@@ -461,6 +475,7 @@ export async function rebuildConversationIndex(opts: RebuildOptions = {}): Promi
   let reach: RebuildReach;
   let backupPath: string;
   let lostExchangesBackupPath: string | null = null;
+  let repointedFacts = 0;
   let cleared: { exchanges: number; toolCalls: number };
 
   const db = initDatabase();
@@ -504,12 +519,37 @@ export async function rebuildConversationIndex(opts: RebuildOptions = {}): Promi
       }
     }
 
+    // Facts name exchanges by id. A turn that has several rows (the copies an
+    // older build left as the answer grew) comes back from the re-index as ONE
+    // row — the fullest copy, under that copy's id — so a source entry that
+    // names a shorter copy pointed at nothing afterwards, and once the rows
+    // are cleared nothing says which turn it was (measured on four projects of
+    // a live DB: 16,230 of 38,913 entries, in 540 of 589 facts). So those
+    // entries are moved to the copy that stays while the rows are still here —
+    // the same step, by the same function, as scripts/dedupe-exchange-snapshots.mjs.
+    // Only source_exchange_ids changes; the lists as they were are in the
+    // fact-layer backup written above.
+    try {
+      const copies = planSnapshotDedupe(db);
+      repointedFacts = copies.factsToRewrite > 0 ? repointFactsAtKeptSnapshots(db) : 0;
+      if (copies.extraRows > 0) {
+        console.log(
+          `Turns indexed more than once: ${copies.turns} (${copies.extraRows} older copies) — ` +
+          `${repointedFacts} fact(s) that named an older copy now name the copy the re-index re-creates`);
+      }
+    } catch (error) {
+      throw new Error(
+        `rebuild stopped — nothing was cleared. Moving fact sources off the older copies of a turn failed: ` +
+        `${error instanceof Error ? error.message : String(error)}. Backups written by this run: ` +
+        [backupPath, lostExchangesBackupPath].filter(Boolean).join(', '));
+    }
+
     cleared = clearConversationIndex(db, {
       onBatch: ({ table, deleted }) => { if (deleted % 20000 === 0) console.log(`  cleared ${deleted} ${table} rows...`); },
     });
     console.log(`Cleared ${cleared.exchanges} exchanges and ${cleared.toolCalls} tool calls`);
 
-    // The promise of this command, checked: nothing in the fact layer moved.
+    // The promise of this command, checked: no row of the fact layer was added or removed.
     const after = countForRebuild(db).preserved;
     if (JSON.stringify(after) !== JSON.stringify(counts.preserved)) {
       throw new Error(`fact layer changed during the rebuild: before ${JSON.stringify(counts.preserved)}, after ${JSON.stringify(after)} — backup: ${backupPath}`);
@@ -533,5 +573,5 @@ export async function rebuildConversationIndex(opts: RebuildOptions = {}): Promi
   if (issues.missingSummary.length > 0) {
     console.log(`${issues.missingSummary.length} conversation(s) have no summary — sync fills them in a few per run, or run --repair (it prints the LLM call count first).`);
   }
-  return { counts, reach, backupPath, lostExchangesBackupPath, cleared, removedSummaries, reindex, missingSummaries: issues.missingSummary.length };
+  return { counts, reach, backupPath, lostExchangesBackupPath, repointedFacts, cleared, removedSummaries, reindex, missingSummaries: issues.missingSummary.length };
 }

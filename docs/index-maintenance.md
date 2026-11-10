@@ -31,6 +31,22 @@ Conversations that carry an exclusion marker, and files that hold nothing
 indexable (no exchange yet, only the plugin's own worker prompts, only machine
 noise such as agent warm-up turns), are in none of the lists.
 
+One more line can appear above the results, and it is not a finding:
+
+```
+Compressed files with bytes after their last complete zstd frame: N (A to B bytes each) — read up to that frame; the bytes after it are not a frame and are ignored
+```
+
+These `.zst` files hold their conversation in complete frames and have a few
+more bytes after the last one that do not begin a frame (on one measured
+archive: 528 of 228,765 files, tails of 1 to 1,078 bytes). They are read up to
+the last complete frame — by verify, repair, rebuild, search and `read` alike —
+and are **not** counted as unreadable; the line only says how many there are
+and how long the ignored tails are. What stays an unreadable file: one that
+ends inside a frame, and one whose bytes after a complete frame *begin* like a
+frame (the frame magic, or its first bytes) without being a whole one — that is
+what a compressor leaves when it is interrupted.
+
 ## `index-conversations --repair [--prune-missing] [--no-summaries] [--yes]`
 
 Runs verify, prints a plan (rows to delete, conversations to re-index, summary
@@ -66,7 +82,10 @@ mistyped flag stops the command.
 ## `index-conversations --rebuild [--allow-index-loss] [--reset-summaries]`
 
 Empties the conversation index **in place** and re-creates it from the archive.
-The database file is never deleted, and the fact layer is not written.
+The database file is never deleted. Of the fact layer one thing is written:
+source ids that name an older copy of a turn are moved to the copy that comes
+back (step 6) — no fact, relation, category or tag is added, removed or
+reworded.
 
 **Close the other Claude Code sessions first.** A rebuild clears every row, and
 a session that keeps indexing meanwhile writes rows the rebuild has no copy of
@@ -115,11 +134,29 @@ in one transaction (about 2 seconds on an index of 340,000 exchanges).
    The backups it had written stay (the message names them). A row of such a
    file indexed later, *during* the clear, is cleared without a copy — the
    reason to close the other sessions before starting.
-6. Clears `tool_calls` and `exchanges` in batches of 2,000, pausing for other
+6. Points the facts that name an older copy of a turn at the copy the
+   re-index re-creates. A turn that an older build indexed while its answer
+   was still being written has several rows, each under its own id; the
+   re-index makes one row per turn — the fullest copy — so a source id that
+   names a shorter copy would point at nothing afterwards, and once the rows
+   are cleared nothing says which turn it was. This is the step
+   `dedupe-exchange-snapshots.mjs --apply` does, by the same function (the
+   facts are found without the write lock and written 500 per transaction):
+
+   ```
+   Turns indexed more than once: T (R older copies) — F fact(s) that named an older copy now name the copy the re-index re-creates
+   ```
+
+   Only `facts.source_exchange_ids` changes (`updated_at` stays), and the lists
+   as they were are in the fact-layer backup of step 5. If this step fails the
+   rebuild stops with nothing cleared. Running `dedupe-exchange-snapshots.mjs
+   --apply` before a rebuild is not needed for this; it does the same and also
+   removes the older copies, which the rebuild is about to clear anyway.
+7. Clears `tool_calls` and `exchanges` in batches of 2,000, pausing for other
    writers at least once a second; swaps `vec_exchanges` for an empty table of
    the same definition and rebuilds the text index (two transactions); and
    checks that the fact layer counts did not move.
-7. Re-indexes the archive through the repair path. No summary is written or
+8. Re-indexes the archive through the repair path. No summary is written or
    deleted (`--reset-summaries` deletes them all; sync and `--repair` write
    them back, one LLM call each).
 
@@ -202,7 +239,11 @@ each item below:
 - `dedupe-exchange-snapshots.mjs --apply` keeps, per `(archive_path,
   line_start)`, the row with the largest `line_end`, points facts that named a
   removed row at it, and backs up rows, id map and the facts' original sources
-  to `backups/dedupe-snapshots-<timestamp>.sqlite`. A session that indexes
+  to `backups/dedupe-snapshots-<timestamp>.sqlite`. The facts are found
+  without the write lock and written 500 per transaction (or until a batch has
+  taken 400ms), each read again inside its batch, with a pause between
+  batches — as one transaction that step held the write lock for 2 to 5
+  seconds on a database of 46,000 facts. A session that indexes
   while it runs can leave duplicate rows the run did not see: it then ends
   with `WARNING: duplicate rows remain … run again` and exit 1. `--create-index`
   also builds the `(archive_path, line_start)` index that new databases are
@@ -242,10 +283,21 @@ node scripts/requeue-zero-markers.mjs [--db PATH] --undo FILE                   
   refused). If the file cannot be written, no row changes.
 - `--undo FILE` puts the markers back for the sessions nothing has touched
   since (no marker and no claim today) and says how many it left alone.
+- The survey that finds the markers runs without the write lock. `--apply`
+  then judges the chosen sessions again under it — the same judgment, narrowed
+  to them — so a session claimed, extracted or given a fact since the survey is
+  left alone. Of the fact table that second judgment reads the rows stored
+  since the survey (`facts read again under the write lock: N stored since the
+  survey (of M)`); it reads every row again when a row the survey had read is
+  gone or replaced, or when a chosen session has an exchange the survey had not
+  seen (the line then says `all M` and why).
 - **Cost.** Each requeued session is extracted by the backfill worker: up to
   `MEMORY_BANK_MAX_EXTRACT_CALLS` extraction batches per session (default 12,
-  at most 60; a batch that fails for a transient reason is tried again), plus
-  the classification and relation calls for the facts it saves,
+  at most 60; a batch that fails for a transient reason is tried again). The
+  facts it saves are then classified together — one classification call per 20
+  facts, not one per fact (a reply whose numbering cannot be trusted is asked
+  again: at most n + 3 calls for n facts) — and each saved fact gets at most
+  one relation call (none when it has no close neighbour).
   `BACKFILL_EXTRACT_MAX` sessions per run, once the session has been quiet for
   `BACKFILL_QUIET_MINUTES`. Use `--limit`.
 

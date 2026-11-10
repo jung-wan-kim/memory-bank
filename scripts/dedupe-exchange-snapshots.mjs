@@ -19,14 +19,19 @@
  *     the id map and the affected facts' original source_exchange_ids are
  *     written to <index dir>/backups/dedupe-snapshots-<timestamp>.sqlite and
  *     counted before anything is changed.
- *   - Facts are re-pointed before the rows are deleted; rows go in batches
- *     (2,000 rows or 400ms, whichever comes first, with a pause in between —
- *     deleteExchanges, src/db.ts). An interrupted run is finished by running
- *     it again.
+ *   - Facts are re-pointed before the rows are deleted. The facts to change are
+ *     found without the write lock and written 500 per transaction (or until
+ *     the batch has taken 400ms), each read again inside it, with a pause in
+ *     between — repointFactsAtKeptSnapshots, src/snapshot-dedupe.ts. Rows go
+ *     in batches too (2,000 rows or 400ms, whichever comes first, with a pause
+ *     in between — deleteExchanges, src/db.ts). An interrupted run is finished
+ *     by running it again.
  *   - CLOSE THE OTHER CLAUDE CODE SESSIONS before --apply. The backup reads a
- *     snapshot and the deletes leave gaps, so another process still gets the
- *     write lock (measured on a copy of a live DB, 11,982 rows removed: no
- *     failed lock wait, the longest 1.4s) — but a session that indexes while
+ *     snapshot and the writes leave gaps, so another process still gets the
+ *     write lock (measured twice on a copy of a live DB under load, 13,573
+ *     facts re-pointed and 11,982 rows removed: no failed lock wait, the
+ *     longest 0.6s; with the re-point as one transaction the longest was 2.2s
+ *     and 4.1s) — but a session that indexes while
  *     this runs can write duplicate rows the run did not see: it then ends
  *     with "duplicate rows remain … run again" and exit 1. (The dry run only
  *     reads.)

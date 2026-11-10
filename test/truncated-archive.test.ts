@@ -194,4 +194,100 @@ describe.runIf(hasZstd)('끝이 잘린 .zst 보관 파일', () => {
     await expect(rebuildConversationIndex({})).rejects.toBeInstanceOf(RebuildNotConfirmedError);
     expect(state()).toBe(before);
   });
+
+  /**
+   * 온전한 프레임 뒤에 프레임이 아닌 바이트가 붙은 `.zst` 는 잘린 파일이 아니다(검수 STORE2-01).
+   *
+   * 실제 보관 폴더에 이런 파일이 528개 있었다(꼬리 1~1,078바이트, 프레임 매직으로 시작하는 꼬리 0개) — 첫 프레임이
+   * 대화 전부다. 잘린 파일을 막는 검사가 이 파일들까지 읽기 오류로 만들어 verify 가 528개를 읽을 수 없는 파일로
+   * 나열했고, rebuild 는 그 대화의 행을 되살릴 수 없는 행으로 셌다.
+   */
+  describe('온전한 프레임 뒤에 꼬리 바이트가 붙은 파일은 잘린 파일이 아니다', () => {
+    const appendTail = (file: string, tail: Buffer) => fs.appendFileSync(file + '.zst', tail);
+    /** verifyIndex 를 돌리며 그동안 찍힌 줄을 모은다. */
+    async function verifyAndCapture() {
+      const { verifyIndex } = await import('../src/verify.js');
+      const printed: string[] = [];
+      const log = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => { printed.push(args.join(' ')); });
+      try {
+        return { issues: await verifyIndex(), printed };
+      } finally {
+        log.mockRestore();
+      }
+    }
+    const tailLines = (printed: string[]) => printed.filter((l) => /after their last complete zstd frame/.test(l));
+
+    it('parseGuarded 는 온전한 프레임까지 읽는다(턴 전부)', async () => {
+      const { parseGuarded } = await import('../src/conversation-guard.js');
+      const { file, turns } = await archiveAndIndex('tail.jsonl', bigConversation(120));
+      appendTail(file, Buffer.from([0xde, 0xbf, 0x15, 0xa2, 0x07]));
+      const parsed = await parseGuarded(file, 'proj', file);
+      expect(parsed.exchanges.length).toBe(turns);
+    });
+
+    it('verify 는 읽을 수 없는 파일로 세지 않고 꼬리 바이트 파일로 따로 한 줄 알린다; repair 는 색인을 건드리지 않는다', async () => {
+      const { repairIndex } = await import('../src/verify.js');
+      const five = await archiveAndIndex('five.jsonl', bigConversation(120));
+      const one = await archiveAndIndex('one.jsonl', bigConversation(4));
+      const fine = await archiveAndIndex('fine.jsonl', bigConversation(3));
+      appendTail(five.file, Buffer.from([0xde, 0xbf, 0x15, 0xa2, 0x07]));
+      appendTail(one.file, Buffer.from([0x1c]));
+      const before = state();
+
+      const { issues, printed } = await verifyAndCapture();
+
+      expect(issues.corrupted).toEqual([]);
+      expect(issues.outdated).toEqual([]);
+      expect(issues.notIndexed).toEqual([]);
+      expect(issues.orphaned).toEqual([]);
+      expect([...issues.trailingBytes].sort((a, b) => a.bytes - b.bytes)).toEqual([
+        { path: one.file, bytes: 1 },
+        { path: five.file, bytes: 5 },
+      ]);
+      // 한 줄: 파일 수와 꼬리 길이 범위
+      expect(tailLines(printed)).toHaveLength(1);
+      expect(tailLines(printed)[0]).toMatch(/: 2 \(1 to 5 bytes each\)/);
+
+      const outcome = await repairIndex(issues, { noSummaries: true });
+      expect(outcome.reindexedFiles).toBe(0);
+      expect(outcome.failed).toEqual([]);
+      expect(state()).toBe(before);
+      expect(rowsOf(five.file)).toBe(120);
+      expect(rowsOf(fine.file)).toBe(3);
+    });
+
+    it('꼬리 바이트 파일이 없으면 그 줄을 찍지 않는다', async () => {
+      await archiveAndIndex('fine.jsonl', bigConversation(3));
+      const { issues, printed } = await verifyAndCapture();
+      expect(issues.trailingBytes).toEqual([]);
+      expect(tailLines(printed)).toEqual([]);
+    });
+
+    it('온전한 프레임 뒤에 매직으로 시작하는 미완 프레임이 붙은 파일은 여전히 읽을 수 없는 파일이다', async () => {
+      const cut = await archiveAndIndex('unfinished.jsonl', bigConversation(6));
+      const next = zstdCompressSync!(Buffer.from(bigConversation(2), 'utf-8'));
+      appendTail(cut.file, next.subarray(0, Math.floor(next.length / 2)));
+      const { issues, printed } = await verifyAndCapture();
+      expect(issues.corrupted.map((c) => c.path)).toEqual([cut.file]);
+      expect(issues.corrupted[0].error).toMatch(/incomplete/);
+      expect(issues.trailingBytes).toEqual([]);
+      expect(tailLines(printed)).toEqual([]);
+    });
+
+    it('rebuild 는 꼬리 바이트 파일의 행을 되살릴 수 있는 행으로 보고, 거부하지 않고 다시 색인한다', async () => {
+      const { rebuildConversationIndex } = await import('../src/rebuild.js');
+      const tail = await archiveAndIndex('tail.jsonl', bigConversation(12));
+      const fine = await archiveAndIndex('fine.jsonl', bigConversation(3));
+      appendTail(tail.file, Buffer.from([0x7f, 0x2b, 0x44, 0x01, 0x00, 0x09]));
+
+      const result = await rebuildConversationIndex({ yes: true });
+
+      expect(result.reach.unreadable).toEqual({ exchanges: 0, files: 0 });
+      expect(result.reach.unreachable).toEqual({ exchanges: 0, files: 0 });
+      expect(result.lostExchangesBackupPath).toBeNull();
+      expect(result.reindex.failed).toEqual([]);
+      expect(rowsOf(tail.file)).toBe(12);
+      expect(rowsOf(fine.file)).toBe(3);
+    });
+  });
 });

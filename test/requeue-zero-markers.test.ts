@@ -334,6 +334,101 @@ describe('requeue-zero-markers.mjs', () => {
     expect(out).toMatch(/nothing to requeue/);
     expect(Object.keys(markers()).sort()).toEqual(before);
     expect(fs.existsSync(undoFile)).toBe(false);
+    // 잠금 안에서 다시 읽은 것은 조사 뒤에 저장된 두 행뿐이다(조사가 읽은 두 행은 다시 읽지 않는다).
+    expect(out).toMatch(/facts read again under the write lock: 2 stored since the survey \(of 4\)$/m);
+  });
+
+  // 검수 CE-02-R: 잠금 안 재확인이 사실 표 전체(실DB: 출처 목록 61MB)를 다시 읽어 쓰기 잠금을 1.2~5.0초 쥐었다.
+  it('잠금 안에서는 조사가 이미 읽은 사실 행을 다시 읽지 않는다 — 그 사이 저장된 행이 없으면 0행', async () => {
+    const { code, out } = run('--db', dbPath, '--apply', '--undo-file', path.join(tmp, 'undo.jsonl'));
+    expect(code, out).toBe(0);
+    expect(out).toMatch(/removed 2 marker\(s\)/);
+    expect(out).toMatch(/facts read again under the write lock: 0 stored since the survey \(of 2\)$/m);
+  });
+
+  it('조사가 읽은 사실 행이 그 사이 지워지고 그 자리에 새 행이 들어오면 사실 표 전체를 다시 읽는다', async () => {
+    const { code, out, undoFile } = await applyWhileLocked((holder) => {
+      // 조사가 읽은 마지막 행을 지우고 새 사실을 넣는다 — 새 행이 지워진 행의 rowid 를 물려받는다.
+      const gone = holder.prepare(`SELECT rowid AS r FROM facts WHERE id = 'f-malformed-sources'`).get() as { r: number };
+      holder.prepare(`DELETE FROM facts WHERE id = 'f-malformed-sources'`).run();
+      holder.prepare(`INSERT INTO facts (id, fact, category, scope_type, source_exchange_ids, created_at, updated_at)
+                      VALUES ('f-took-its-rowid', 'Builds run on the release branch.', 'constraint', 'global', ?, ?, ?)`)
+        .run(JSON.stringify(['victim-old-2']), FRESH, FRESH);
+      const now = holder.prepare(`SELECT rowid AS r FROM facts WHERE id = 'f-took-its-rowid'`).get() as { r: number };
+      expect(now.r).toBe(gone.r); // "조사 뒤의 행 = 더 큰 rowid" 만 믿으면 이 행을 놓친다
+    });
+
+    expect(code, out).toBe(0);
+    expect(out).toMatch(/facts read again under the write lock: all 2 \(a fact row the survey had read is gone or was replaced\)$/m);
+    expect(out).toMatch(/1 of the 2 chosen session\(s\) no longer qualified/);
+    expect(out).toMatch(/removed 1 marker\(s\)/);
+    const left = markers();
+    expect(left['victim-old']).toEqual({ extracted: 0, saved: 0, processed_at: MARK }); // 사실이 저장된 세션은 그대로
+    expect(Object.keys(left)).not.toContain('victim-new');
+    const lines = fs.readFileSync(undoFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    expect(lines.slice(1).map((r) => r.session_id)).toEqual(['victim-new']);
+  });
+
+  it('조사가 읽은 마지막 사실 행의 출처 목록이 그 사이 바뀌어도 사실 표 전체를 다시 읽는다', async () => {
+    const { code, out } = await applyWhileLocked((holder) => {
+      holder.prepare(`UPDATE facts SET source_exchange_ids = ? WHERE id = 'f-malformed-sources'`).run(JSON.stringify(['victim-new-1']));
+    });
+    expect(code, out).toBe(0);
+    expect(out).toMatch(/facts read again under the write lock: all 2 /);
+    expect(out).toMatch(/1 of the 2 chosen session\(s\) no longer qualified/);
+    expect(Object.keys(markers())).toContain('victim-new');
+    expect(Object.keys(markers())).not.toContain('victim-old');
+  });
+
+  it('고른 세션에 조사가 보지 못한 교환이 생기면 사실 표 전체를 다시 읽는다 — 옛 사실 행이 그 교환을 지목할 수 있다', async () => {
+    // 조사 전부터 있던 사실이, 아직 색인되지 않은(지웠다가 다시 색인될) 교환 id 를 지목한다.
+    const db = new Database(dbPath);
+    try {
+      db.prepare(`INSERT INTO facts (id, fact, category, scope_type, source_exchange_ids, created_at, updated_at)
+                  VALUES ('f-names-a-turn-not-indexed-now', 'Hotfixes skip the staging step.', 'constraint', 'global', ?, ?, ?)`)
+        .run(JSON.stringify(['victim-new-9']), MARK, MARK);
+    } finally {
+      db.close();
+    }
+    const { code, out } = await applyWhileLocked((holder) => {
+      holder.prepare(`INSERT INTO exchanges
+        (id, project, timestamp, user_message, assistant_message, archive_path, line_start, line_end, session_id, is_sidechain, cwd, last_indexed)
+        VALUES ('victim-new-9', '-repos-app', '2026-08-20T09:00:00.000Z', 'question', 'answer', '/archive/victim-new.jsonl', 19, 20, 'victim-new', 0, '/repos/app', ?)`)
+        .run(AFTER);
+    });
+
+    expect(code, out).toBe(0);
+    expect(out).toMatch(/facts read again under the write lock: all 3 \(a chosen session has an exchange the survey had not seen\)$/m);
+    expect(out).toMatch(/1 of the 2 chosen session\(s\) no longer qualified/);
+    expect(out).toMatch(/removed 1 marker\(s\)/);
+    expect(Object.keys(markers())).toContain('victim-new');
+    expect(Object.keys(markers())).not.toContain('victim-old');
+  });
+
+  // 교체된 옛 사본의 id 는 exchanges 에 없다. 그 id 를 지목하는 사실은 출처 옮기기(대기열)가 돌기 전까지
+  // 어느 세션의 것인지 exchanges 만으로는 알 수 없다 — 대기열의 (옛 id → 새 id) 로 세션을 찾는다.
+  it('교체된 옛 사본(출처 옮기기 대기 중)을 지목하는 사실도 그 세션의 사실로 센다', async () => {
+    const db = new Database(dbPath);
+    try {
+      db.prepare(`INSERT INTO exchange_repoints (from_id, to_id, session_id, queued_at) VALUES ('victim-new-0-shorter', 'victim-new-0', NULL, 1)`).run();
+      db.prepare(`INSERT INTO facts (id, fact, category, scope_type, source_exchange_ids, created_at, updated_at)
+                  VALUES ('f-from-shorter-copy', 'Releases are cut on Thursdays.', 'constraint', 'global', ?, ?, ?)`)
+        .run(JSON.stringify(['victim-new-0-shorter']), MARK, MARK);
+    } finally {
+      db.close();
+    }
+    const { code, out } = run('--db', dbPath);
+    expect(code, out).toBe(0);
+    expect(out).toMatch(/already yielded facts in an earlier extraction: 2$/m);
+    expect(out).toMatch(/sessions to requeue: 1 \(3 exchange\(s\)\)$/m);
+  });
+
+  it('출처 옮기기 대기열 표가 없는 옛 DB 에서도 그대로 돈다', async () => {
+    const db = new Database(dbPath);
+    try { db.exec('DROP TABLE exchange_repoints'); } finally { db.close(); }
+    const { code, out } = run('--db', dbPath);
+    expect(code, out).toBe(0);
+    expect(out).toMatch(/sessions to requeue: 2 \(6 exchange\(s\)\)$/m);
   });
 
   it('0건 표식과 본 대화 교환이 많아도 dry-run 이 표식마다 교환 전체를 훑지 않는다', () => {

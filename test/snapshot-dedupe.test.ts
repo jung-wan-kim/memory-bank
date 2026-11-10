@@ -144,6 +144,130 @@ describe('applySnapshotDedupe', () => {
     }
   });
 
+  // The re-point used to be ONE write transaction that also searched every fact's source list
+  // (measured on a copy of a live DB, 13,573 facts: the write lock held 3.3 to 5.4s, and another
+  // process's write failed after its 5s wait). Now the search runs without the lock and the
+  // writes go a few hundred facts at a time.
+  describe('re-pointing the facts never holds the write lock for the whole job', () => {
+    /** 25 more facts that name a removed snapshot (a1-2), so the re-point takes several batches. */
+    function seedManyFacts(db: Database.Database, n = 25): void {
+      const fact = db.prepare(`INSERT INTO facts (id, fact, category, scope_type, source_exchange_ids, created_at, updated_at) VALUES (?, ?, 'decision', 'global', ?, 't', 'u')`);
+      for (let i = 0; i < n; i++) fact.run(`m-${String(i).padStart(2, '0')}`, `fact number ${i}`, JSON.stringify(['a1-2', 'a10-11']));
+    }
+    /** A second connection that does not wait: its write succeeds only when nobody holds the write lock. */
+    function canWriteNow(): boolean {
+      const other = new Database(dbPath);
+      try {
+        other.pragma('busy_timeout = 0');
+        other.exec('BEGIN IMMEDIATE');
+        other.exec('COMMIT');
+        return true;
+      } catch {
+        return false;
+      } finally {
+        other.close();
+      }
+    }
+
+    it('the facts are written in batches, and another connection gets the write lock between two of them', () => {
+      const db = open();
+      try {
+        seedManyFacts(db);
+        const batches: number[] = [];
+        const otherCouldWrite: boolean[] = [];
+        const result = applySnapshotDedupe(db, path.join(cfg, 'backup.sqlite'), {
+          repoint: { batchSize: 10, pauseMs: 0, onBatch: (done) => { batches.push(done); otherCouldWrite.push(canWriteNow()); } },
+        });
+        // 2 seeded facts + 25: three batches of at most 10
+        expect(result).toMatchObject({ deletedRows: 3, rewrittenFacts: 27, remainingExtraRows: 0 });
+        expect(batches).toEqual([10, 20, 27]);
+        expect(otherCouldWrite).toEqual([true, true, true]);
+        const s = sources(db);
+        for (let i = 0; i < 25; i++) expect(s[`m-${String(i).padStart(2, '0')}`]).toBe(JSON.stringify(['a1-9', 'a10-11']));
+        expect(s['f-stale']).toBe(JSON.stringify(['a1-9', 'a10-11']));
+        expect(s['f-both']).toBe(JSON.stringify(['a1-9', 'b1-3']));
+      } finally {
+        db.close();
+      }
+    });
+
+    it('a batch also ends when it has held the lock for maxBatchMs', () => {
+      const db = open();
+      try {
+        seedManyFacts(db);
+        const batches: number[] = [];
+        // 0ms: every fact is its own transaction
+        const result = applySnapshotDedupe(db, path.join(cfg, 'backup.sqlite'), {
+          repoint: { maxBatchMs: 0, pauseMs: 0, onBatch: (done) => batches.push(done) },
+        });
+        expect(result.rewrittenFacts).toBe(27);
+        expect(batches).toEqual(Array.from({ length: 27 }, (_, i) => i + 1));
+      } finally {
+        db.close();
+      }
+    });
+
+    it('a fact that changed after it was read is judged again inside its batch, not overwritten with the list computed earlier', () => {
+      const db = open();
+      try {
+        seedManyFacts(db);
+        const setSources = db.prepare('UPDATE facts SET source_exchange_ids = ? WHERE id = ?');
+        const changed: string[] = [];
+        const result = applySnapshotDedupe(db, path.join(cfg, 'backup.sqlite'), {
+          repoint: {
+            batchSize: 5, pauseMs: 0,
+            onBatch: () => {
+              if (changed.length > 0) return;
+              // Between the first batch and the rest, "another process" changes facts that are still waiting:
+              const waiting = (db.prepare(`SELECT id FROM facts WHERE id LIKE 'm-%' AND source_exchange_ids LIKE '%a1-2%' ORDER BY id`).all() as Array<{ id: string }>).map((r) => r.id);
+              expect(waiting.length).toBeGreaterThanOrEqual(4);
+              setSources.run(JSON.stringify(['a10-11', 'new-row']), waiting[0]);         // no longer names a removed row
+              setSources.run(JSON.stringify(['b1-2', 'new-row', 'a1-4']), waiting[1]);   // names other removed rows now
+              setSources.run('not json any more', waiting[2]);                           // unreadable now
+              db.prepare('DELETE FROM facts WHERE id = ?').run(waiting[3]);              // gone
+              changed.push(...waiting.slice(0, 4));
+            },
+          },
+        });
+        const s = sources(db);
+        expect(s[changed[0]]).toBe(JSON.stringify(['a10-11', 'new-row']));          // left as the other process wrote it
+        expect(s[changed[1]]).toBe(JSON.stringify(['b1-3', 'new-row', 'a1-9']));    // re-pointed from what is stored NOW
+        expect(s[changed[2]]).toBe('not json any more');                            // left alone
+        expect(s[changed[3]]).toBeUndefined();
+        // 27 facts named a removed row; of the four changed meanwhile only one still did
+        expect(result.rewrittenFacts).toBe(27 - 3);
+        // and no fact names a removed row any more
+        for (const [id, list] of Object.entries(s)) {
+          if (!list.startsWith('[')) continue;
+          for (const removed of ['a1-2', 'a1-4', 'b1-2']) expect(JSON.parse(list), id).not.toContain(removed);
+        }
+      } finally {
+        db.close();
+      }
+    });
+
+    it('a source list that is valid JSON but not an array is left alone (it used to stop the run after the backup)', () => {
+      const db = open();
+      try {
+        db.prepare(`INSERT INTO facts (id, fact, category, scope_type, source_exchange_ids, created_at, updated_at) VALUES ('f-object', 'odd sources', 'decision', 'global', ?, 't', 'u')`)
+          .run(JSON.stringify({ first: 'a1-2' }));
+        const result = applySnapshotDedupe(db, path.join(cfg, 'backup.sqlite'));
+        expect(result).toMatchObject({ deletedRows: 3, rewrittenFacts: 2, remainingExtraRows: 0 });
+        expect(sources(db)['f-object']).toBe(JSON.stringify({ first: 'a1-2' }));
+      } finally {
+        db.close();
+      }
+    });
+
+    it('the defaults: a few hundred facts per transaction, the lock given up after 400ms, a pause between batches', async () => {
+      const { REPOINT_BATCH_ROWS } = await import('../src/snapshot-dedupe.js');
+      const { DELETE_BATCH_MAX_MS, DELETE_BATCH_PAUSE_MS } = await import('../src/db.js');
+      expect(REPOINT_BATCH_ROWS).toBe(500);
+      expect(DELETE_BATCH_MAX_MS).toBe(400);
+      expect(DELETE_BATCH_PAUSE_MS).toBeGreaterThan(100); // longer than the longest sleep of a waiting connection's busy handler
+    });
+  });
+
   it('a backup that cannot be written changes nothing', () => {
     const db = open();
     const taken = path.join(cfg, 'taken.sqlite');
