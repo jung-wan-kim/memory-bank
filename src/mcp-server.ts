@@ -528,7 +528,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
-    const { name, arguments: args } = request.params;
+    const { name } = request.params;
+    // `arguments` is optional in tools/call. Left out, it is the empty object: the tools that need no argument
+    // answer as they do for {}, and the others name the argument that is missing (the object schemas used to
+    // be given `undefined`, and every tool answered "expected object, received undefined").
+    const args = request.params.arguments ?? {};
 
     if (name === 'search') {
       const params = SearchInputSchema.parse(args);

@@ -399,6 +399,31 @@ describe('MCP server over stdio', () => {
     });
   });
 
+  // R2-SEARCH-5 — `arguments` is optional in tools/call. The handlers gave `undefined` to an object schema, so
+  // the three tools that need no argument answered "expected object, received undefined".
+  describe('a call that leaves `arguments` out', () => {
+    const bare = async (name: string) => {
+      const result = await client.callTool({ name });
+      const content = result.content as Array<{ type: string; text: string }>;
+      return { text: content.map((c) => c.text).join('\n'), isError: result.isError === true };
+    };
+
+    it.each(['list_tags', 'search_ontology', 'graph_stats'])('%s answers as it does for {}', async (name) => {
+      const answer = await bare(name);
+      expect(answer.isError, answer.text.slice(0, 200)).toBe(false);
+      expect(answer.text).toBe((await call(name, {})).text);
+    });
+
+    it('a tool with a required argument still refuses, naming the argument', async () => {
+      for (const [name, required] of [['search', 'query'], ['read', 'path'], ['tag_fact', 'fact_id']] as const) {
+        const answer = await bare(name);
+        expect(answer.isError, name).toBe(true);
+        expect(answer.text, name).toContain(required);
+        expect(answer.text, name).not.toMatch(/expected object, received undefined/);
+      }
+    });
+  });
+
   it('the server wrote nothing unexpected to stderr', () => {
     expect(serverStderr).not.toMatch(/Server error|UnhandledPromiseRejection|TypeError|ReferenceError/);
   });
