@@ -79,7 +79,13 @@ fn main() -> ExitCode {
     let index_dir = paths::index_dir();
 
     // Harness-generated prompts and very short ones are not worth a search — logged so skips stay measurable.
-    let skip_reason = if input.invalid_envelope { Some("hook-envelope") } else { gate::injection_query(&input.prompt).skip_reason() };
+    // Then the host switches, on this process's environment (hostSkipReason in inject-host-skip.ts): the daemon
+    // that would answer reads its own, and it may be another session's MCP server.
+    let skip_reason = if input.invalid_envelope {
+        Some("hook-envelope")
+    } else {
+        gate::injection_query(&input.prompt).skip_reason().or_else(|| host_skip_reason(&meta))
+    };
     if let Some(reason) = skip_reason {
         log::append_skipped(&index_dir, reason, &input, &meta);
         return ExitCode::SUCCESS;
@@ -92,6 +98,19 @@ fn main() -> ExitCode {
         }
         Err(reason) => fallback::exec_node(reason, &meta.req_id, &raw, started.elapsed()),
     }
+}
+
+/// hostSkipReason (inject-host-skip.ts): MEMORY_BANK_INJECT_HEADLESS=0 switches injection off for Claude Code's
+/// non-interactive entry points (CLAUDE_CODE_ENTRYPOINT `sdk-*`), MEMORY_BANK_INJECT_CODEX=0 for the Codex client.
+fn host_skip_reason(meta: &log::Meta) -> Option<&'static str> {
+    let off = |name: &str| std::env::var(name).map(|v| v == "0").unwrap_or(false);
+    if off("MEMORY_BANK_INJECT_HEADLESS") && meta.entrypoint.as_deref().unwrap_or("").starts_with("sdk-") {
+        return Some("headless");
+    }
+    if off("MEMORY_BANK_INJECT_CODEX") && meta.client == "codex" {
+        return Some("codex-off");
+    }
+    None
 }
 
 /// Print the block, then mark its facts as shown for this session — only once the write went through to the

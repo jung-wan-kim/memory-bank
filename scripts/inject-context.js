@@ -25,6 +25,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { injectionQuery } from '../dist/prompt-gate.js';
+import { hostSkipReason } from '../dist/inject-host-skip.js';
 import { appendInjectLog, pluginVersion, sessionKey } from '../dist/inject-log.js';
 import { injectSocketPathIn, ownPackageVersion } from '../dist/version-guard.js';
 import { selfHealDeps } from '../dist/deps-heal.js';
@@ -258,7 +259,10 @@ async function main() {
   // Harness-generated prompts (task notifications, slash-command expansions …)
   // and very short ones are not worth a search. Logged here so skips stay
   // measurable — they used to return silently before any log line.
-  const skipReason = invalidEnvelope ? 'hook-envelope' : injectionQuery(prompt).reason;
+  // Then the host switches (MEMORY_BANK_INJECT_HEADLESS=0 / _CODEX=0), on THIS process's environment: the daemon
+  // that would answer is whichever session's MCP server holds the socket, and it reads its own environment — a
+  // switch given to this run only was ignored whenever a daemon answered (dist/inject-host-skip.js).
+  const skipReason = invalidEnvelope ? 'hook-envelope' : injectionQuery(prompt).reason ?? hostSkipReason(meta);
   if (skipReason) {
     appendInjectLog({
       status: 'skipped', reason: skipReason, project: cwd, prompt_len: prompt.length,

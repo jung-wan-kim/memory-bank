@@ -6,6 +6,7 @@ import { loadLedger } from './inject-ledger.js';
 import { injectionQuery } from './prompt-gate.js';
 import { factTextKey } from './fact-text.js';
 import { formatInjectBlock, PRODUCTION_SELECT_OPTIONS, selectInjectFacts, type SelectedLine } from './inject-select.js';
+import { hostSkipReason } from './inject-host-skip.js';
 // detectRepeat 는 exchanges 전체(335k) 벡터검색이다. OS 페이지 캐시가 식은 상태에서
 // 583~844ms 가 걸려 주입 지연의 대부분을 차지했다(2026-10-03 실측: 데몬 웜 24ms).
 // 게다가 cwd 와 슬러그를 비교하던 버그로 2,686회 주입 동안 결과를 한 번도 내지
@@ -35,32 +36,9 @@ export interface InjectRequestMeta {
   client_impl?: 'native' | 'node';
 }
 
-/**
- * Hosts the user switched injection off for, by who made the request:
- *  - MEMORY_BANK_INJECT_HEADLESS=0 — Claude Code's non-interactive entry points
- *    (`claude -p`, the Agent SDK: CLAUDE_CODE_ENTRYPOINT `sdk-*`), reason 'headless'.
- *  - MEMORY_BANK_INJECT_CODEX=0 — the Codex hook client, reason 'codex-off'. Codex
- *    sends no interactive/headless marker, so this is all of Codex or none.
- * Unset (the default) both are injected as before. Why the switches exist: since
- * 2026-10-08 interactive Claude Code received 5% of the injected characters
- * (Codex 72.9%, headless 21.4% — measured 2026-11-10); those sessions are new
- * every time, so the per-session ledger never stops the same block from going
- * out again (one 5,223-char prompt template received the same 882-char block
- * 1,133 times). Whether that injection is worth its tokens is the user's call.
- *
- * The variables are read where the block is computed: the MCP server's
- * environment for the warm daemon, the hook's own for the cold fallback — set
- * them where both see them (settings.json `env`), like MEMORY_BANK_REPEAT_DETECT.
- * Returns the skip reason, or null to go on.
- */
-export function hostSkipReason(
-  meta: Pick<InjectRequestMeta, 'client' | 'entrypoint'>,
-  env: Record<string, string | undefined> = process.env,
-): 'headless' | 'codex-off' | null {
-  if (env.MEMORY_BANK_INJECT_HEADLESS === '0' && (meta.entrypoint ?? '').startsWith('sdk-')) return 'headless';
-  if (env.MEMORY_BANK_INJECT_CODEX === '0' && meta.client === 'codex') return 'codex-off';
-  return null;
-}
+// hostSkipReason lives in its own import-free module so the hook client can judge the host before it asks the
+// daemon (inject-host-skip.ts). Re-exported: this is where the block's own computation applies it.
+export { hostSkipReason };
 
 /**
  * The block plus the ledger keys (fact id + text key per injected fact) that
