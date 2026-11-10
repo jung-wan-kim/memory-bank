@@ -2,7 +2,8 @@
 //! Resolves with the answer, or the fallback reason the JS client would have used:
 //! 'no-daemon' (nothing listening), 'daemon-timeout' (3s for the answer; 20s from the FIRST warming line —
 //! later warming lines do not extend it, so a daemon that only ever says warming cannot hold the prompt),
-//! 'daemon-closed' (hung up without a full answer), 'daemon-error' (bad line / ok:false).
+//! 'daemon-closed' (hung up without a full answer), 'daemon-error' (bad line / ok:false),
+//! 'socket-path-too-long' (no socket name fits under this index dir — there is no daemon to ask).
 //!
 //! Both deadlines are absolute (wall clock from the connect, like the JS setTimeout — the write counts), not per read: the
 //! socket is read in raw chunks with the remaining time as the read timeout, and lines are split here — a
@@ -58,7 +59,9 @@ fn parse_line(raw_line: &[u8]) -> Line {
 pub fn ask(index_dir: &Path, input: &Input, meta: &Meta) -> Result<Answer, &'static str> {
     let root = paths::plugin_root();
     let version = root.as_deref().and_then(paths::plugin_version);
-    let sock = paths::inject_socket_path(index_dir, version.as_deref());
+    let Some(sock) = paths::inject_socket_path(index_dir, version.as_deref()) else {
+        return Err("socket-path-too-long");
+    };
     // A unix-socket connect answers at once (ENOENT / ECONNREFUSED) — the JS 300ms connect timer never fires here.
     let mut stream = UnixStream::connect(&sock).map_err(|_| "no-daemon")?;
     // The 3s answer deadline starts here, before the request is written (JS arms it on connect): a daemon that

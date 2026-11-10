@@ -36,14 +36,23 @@ pub fn plugin_version(root: &std::path::Path) -> Option<String> {
     }
 }
 
+/// Longest unix socket path the plugin uses, in bytes (MAX_UNIX_SOCKET_PATH_BYTES in version-guard.ts — macOS
+/// sun_path is 104 bytes including the terminating NUL).
+pub const MAX_UNIX_SOCKET_PATH_BYTES: usize = 103;
+
 /// The inject daemon's socket path for one plugin version (injectSocketPathIn in version-guard.ts): the
-/// versioned name when the version string is usable and the path fits a unix socket, else the legacy name.
-pub fn inject_socket_path(index_dir: &std::path::Path, version: Option<&str>) -> PathBuf {
+/// versioned name when the version string is usable and the path fits a unix socket, else the legacy name —
+/// and None when the legacy name does not fit either: the daemon is not running under such an index dir.
+pub fn inject_socket_path(index_dir: &std::path::Path, version: Option<&str>) -> Option<PathBuf> {
+    let fits = |p: &PathBuf| p.as_os_str().len() <= MAX_UNIX_SOCKET_PATH_BYTES;
+    if let Some(v) = version {
+        if !v.is_empty() && v.len() <= 32 && v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'+' || b == b'-') {
+            let versioned = index_dir.join(format!("inject-daemon-{v}.sock"));
+            if fits(&versioned) {
+                return Some(versioned);
+            }
+        }
+    }
     let legacy = index_dir.join("inject-daemon.sock");
-    let v = match version {
-        Some(v) if !v.is_empty() && v.len() <= 32 && v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'+' || b == b'-') => v,
-        _ => return legacy,
-    };
-    let versioned = index_dir.join(format!("inject-daemon-{v}.sock"));
-    if versioned.as_os_str().len() <= 103 { versioned } else { legacy }
+    if fits(&legacy) { Some(legacy) } else { None }
 }

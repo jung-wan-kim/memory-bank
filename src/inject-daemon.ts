@@ -5,7 +5,7 @@ import { getIndexDir } from './paths.js';
 import { computeInjectResult } from './inject-core.js';
 import { initEmbeddings, embeddingsReady } from './embeddings.js';
 import { injectionQuery } from './prompt-gate.js';
-import { injectSocketPathIn, ownPackageVersion } from './version-guard.js';
+import { injectSocketPathIn, ownPackageVersion, MAX_UNIX_SOCKET_PATH_BYTES } from './version-guard.js';
 
 /**
  * Warm inject daemon — a unix-socket sidecar inside the long-lived MCP server.
@@ -41,6 +41,15 @@ import { injectSocketPathIn, ownPackageVersion } from './version-guard.js';
  *    the next owner's file when it closes (libuv unlinks by name).
  *  - The owner checks that its file is still there: when the name is gone it
  *    binds again (an unreachable owner would otherwise look fine forever).
+ *  - No daemon when the socket path does not fit a unix socket (a deep config
+ *    dir): Node would bind the first 104 bytes of it — a name the clients do
+ *    not look at, shared with every other config dir of the same prefix. One
+ *    line on stderr says so; the hook clients compute the block themselves.
+ *  - A failed bind is re-tried at once only once, and only for a reason seen on
+ *    disk (a dead file removed, or the name gone); everything else waits for
+ *    the timer. A re-try loop without a pause runs on nextTick and microtasks
+ *    alone: the event loop never reaches stdin and the MCP server stops
+ *    answering (v1.8.0 review: `initialize` unanswered, one CPU core held).
  *  - Socket mode 600 — same-user only; the payload is the user's own prompt.
  *  - Requests are line-delimited JSON; a malformed request gets {ok:false} and
  *    never throws into the MCP server.
@@ -152,13 +161,27 @@ export interface InjectDaemonHandle {
   close(): Promise<void>;
 }
 
-export function injectSocketPath(): string {
+/** This server's socket path, or null when the index dir is too deep for a unix socket (no daemon then). */
+export function injectSocketPath(): string | null {
   return injectSocketPathIn(getIndexDir(), ownPackageVersion());
+}
+
+/** Is the name itself there — a dangling symlink is still a name (existsSync follows the link and would say "gone"). */
+function nameExists(p: string): boolean {
+  try { fs.lstatSync(p); return true; } catch { return false; }
 }
 
 export function startInjectDaemon(): InjectDaemonHandle {
   const sockPath = injectSocketPath();
+  if (sockPath === null) {
+    console.error(`[memory-bank] inject daemon off: the socket path under ${getIndexDir()} is longer than a unix socket allows `
+      + `(${MAX_UNIX_SOCKET_PATH_BYTES} bytes) — prompts are answered by the hook's own, slower computation. `
+      + 'A shorter MEMORY_BANK_CONFIG_DIR / XDG_CONFIG_HOME turns the fast path back on.');
+    return { owning: () => false, listening: () => false, close: () => Promise.resolve() };
+  }
   let stopped = false;
+  /** Immediate re-tries since the last timer tick or successful bind — at most one, the rest is the timer's. */
+  let immediateRetries = 0;
   /** A listen() or the probe that follows its EADDRINUSE is in flight — one attempt at a time. */
   let attempting = false;
   /** Identity of the socket file this server created, while it listens. */
@@ -218,6 +241,7 @@ export function startInjectDaemon(): InjectDaemonHandle {
 
   const onListen = () => {
     attempting = false;
+    immediateRetries = 0;
     if (stopped) { // close() came while this listen was in flight
       try { server.close(); } catch { /* already closed */ }
       return;
@@ -249,16 +273,22 @@ export function startInjectDaemon(): InjectDaemonHandle {
       let retry = false;
       try {
         if (await removeIfDead(sockPath, OWN_SOCKET_MIN_AGE_MS)) retry = true;
-        else if (!fs.existsSync(sockPath)) retry = true; // the owner left between our listen() and the probe
+        else if (!nameExists(sockPath)) retry = true; // the owner left between our listen() and the probe
       } finally {
         attempting = false;
       }
-      if (retry) tryListen();
+      // Once: when the bind fails again although the name looked free, whatever holds it is not visible from
+      // here, and asking again without a pause would never let the event loop turn. The timer asks again.
+      if (retry && immediateRetries < 1) {
+        immediateRetries++;
+        tryListen();
+      }
     })();
   });
 
   const tick = () => {
     if (stopped) return;
+    immediateRetries = 0;
     if (!server.listening) return tryListen();
     // Listening, but the name is gone (a server that lost the name to another one unlinks it when it exits; a
     // cleanup may remove it): no client can reach this socket. Let go of it and bind again. close() unlinks by

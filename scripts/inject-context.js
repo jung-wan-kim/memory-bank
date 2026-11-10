@@ -80,16 +80,19 @@ function injectSocketPath() {
   // the daemon never used, and only the native client reached it.)
   const base = process.env.MEMORY_BANK_CONFIG_DIR || process.env.PERSONAL_SUPERPOWERS_DIR
     || path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'superpowers');
-  // Same version → same socket as this install's daemon (never an older one's).
+  // Same version → same socket as this install's daemon (never an older one's). null: the index dir is too deep
+  // for a unix socket — the daemon is not running there (inject-daemon.ts), and net.connect would not fail on the
+  // long path but reach whoever listens on its first 104 bytes.
   return injectSocketPathIn(path.join(base, 'conversation-index'), ownPackageVersion());
 }
 
 /**
  * Ask the warm daemon. Resolves { context, ledgerKeys } on an answer, or
- * { failed: 'no-daemon' | 'daemon-timeout' | 'daemon-closed' | 'daemon-error' }
+ * { failed: 'no-daemon' | 'daemon-timeout' | 'daemon-closed' | 'daemon-error' | 'socket-path-too-long' }
  * (never rejects) so the caller falls back — the hook must never break a user
  * prompt. 'daemon-closed': the daemon hung up without a full answer; waiting out
- * the warming deadline after that only delays the fallback.
+ * the warming deadline after that only delays the fallback. 'socket-path-too-long':
+ * no socket name fits under this config dir, so there is no daemon to ask.
  */
 function askDaemon(prompt, cwd, sessionId, meta) {
   return new Promise((resolve) => {
@@ -98,9 +101,11 @@ function askDaemon(prompt, cwd, sessionId, meta) {
     let warmed = false; // the warming deadline is armed once — a daemon that only ever says warming cannot hold the prompt
     let timer = null;
     const done = (v) => { if (!settled) { settled = true; clearTimeout(timer); resolve(v); } };
+    const sockPath = injectSocketPath();
+    if (sockPath === null) return done({ failed: 'socket-path-too-long' });
     let conn;
     try {
-      conn = net.connect(injectSocketPath());
+      conn = net.connect(sockPath);
     } catch {
       return done({ failed: 'no-daemon' });
     }

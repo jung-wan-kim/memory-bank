@@ -23,7 +23,7 @@ function repeatDetectEnabled(): boolean {
 export interface InjectRequestMeta {
   client?: string;
   entrypoint?: string;
-  /** Cold fallback only: why the daemon did not answer ('no-daemon', 'daemon-timeout', 'daemon-closed', 'daemon-error'). */
+  /** Cold fallback only: why the daemon did not answer ('no-daemon', 'daemon-timeout', 'daemon-closed', 'daemon-error', 'socket-path-too-long'). */
   fallback_reason?: string;
   /**
    * One id per hook run, sent to the daemon and used again by the fallback. When
