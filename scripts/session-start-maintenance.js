@@ -21,8 +21,14 @@
  * resumable, so a later probe only delays it.
  *
  * Every start appends one line to logs/maintenance.jsonl (ran / skipped and
- * why, compaction outcome, probe timings, spawned workers): stdio is ignored by
- * the spawning hook, and a run that leaves no trace cannot be measured.
+ * why, vector reconcile and compaction outcome, statistics run, probe timings,
+ * spawned workers): stdio is ignored by the spawning hook, and a run that
+ * leaves no trace cannot be measured.
+ *
+ * Fact-side housekeeping added 2026-11-10 (dist/db-maintenance.js): vector rows
+ * of inactive / absent facts are removed and missing ones written back before
+ * the compaction, and ANALYZE gathers planner statistics for the fact and
+ * ontology tables after it (never the conversation tables — see ANALYZE_TABLES).
  * MEMORY_BANK_SESSION_START_SPAWN=0 logs the workers it would spawn instead of
  * spawning them (tests).
  */
@@ -36,6 +42,7 @@ import { getIndexDir } from '../dist/paths.js';
 import { buildReembedPending } from '../dist/reembed-selector.js';
 import { getExtractionConfig, pendingExtractionCoreQuery } from '../dist/pending-extraction.js';
 import { compactSparseVecTables } from '../dist/vec-compact.js';
+import { analyzeFactTables, reconcileFactVectors } from '../dist/db-maintenance.js';
 import { ensureNativeAbi } from '../dist/node-abi.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -228,6 +235,16 @@ async function main() {
 
     const db = initDatabase();
     try {
+      // 0. Fact vector tables in step with the facts table: drop the vectors of
+      //    inactive / absent facts, write back the vector of an active fact
+      //    that lost its row. Before the compaction, so the holes this leaves
+      //    are counted by it.
+      try {
+        entry.vec_reconcile = reconcileFactVectors(db);
+      } catch (e) {
+        entry.vec_reconcile_error = e instanceof Error ? e.message : String(e);
+      }
+
       // 1. Fact vector tables: rebuild any table whose holes would free a chunk
       //    (vec0 never reuses deleted slots; the injection KNN scans them all).
       try {
@@ -241,6 +258,16 @@ async function main() {
         }
       } catch (e) {
         entry.compaction_error = e instanceof Error ? e.message : String(e);
+      }
+
+      // 1b. Planner statistics for the fact / ontology tables (a few ms: the
+      //     sample is capped). Without them every fact query that carries
+      //     `is_active = 1` could run through an index on that 2-valued column.
+      try {
+        const analyzed = analyzeFactTables(db);
+        entry.analyze = { tables: analyzed.tables.length, stat_rows: analyzed.stat_rows, ms: analyzed.ms };
+      } catch (e) {
+        entry.analyze_error = e instanceof Error ? e.message : String(e);
       }
 
       // 2a. Auto-resume vector upgrades: if any rows still carry old-model
@@ -293,6 +320,8 @@ async function main() {
     const failures = [
       ...entry.compaction.filter((c) => c.action === 'failed').map((c) => `compaction ${c.table}: ${c.error}`),
       ...(entry.compaction_error ? [`compaction: ${entry.compaction_error}`] : []),
+      ...(entry.vec_reconcile_error ? [`vec reconcile: ${entry.vec_reconcile_error}`] : []),
+      ...(entry.analyze_error ? [`analyze: ${entry.analyze_error}`] : []),
       ...Object.entries(entry.probes).filter(([, p]) => p.error).map(([name, p]) => `probe ${name}: ${p.error}`),
       ...(entry.spawn_error ? [`spawn ${entry.spawn_error}`] : []),
     ];
