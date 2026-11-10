@@ -101,6 +101,16 @@ describe('MCP server over stdio', () => {
     expect(tools.every((t) => t.inputSchema.type === 'object')).toBe(true);
   });
 
+  // F8 — a search for a string of made-up words printed "87% match" for all ten hits (real queries: 85-91%).
+  // The tool says what the figure is, so a reader does not take it for a confidence.
+  it('the search tool says what "N% match" can and cannot tell', async () => {
+    const { tools } = await client.listTools();
+    const search = tools.find((t) => t.name === 'search')!;
+    expect(search.description).toMatch(/cosine similarity/);
+    expect(search.description).toMatch(/unrelated text[^.]*8\d%/);
+    expect(search.description).toMatch(/not (as )?a confidence/);
+  });
+
   it('every tool the search agent is allowed is one the running server registers', async () => {
     const { tools } = await client.listTools();
     const names = new Set(tools.map((t) => t.name));
