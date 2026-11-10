@@ -107,6 +107,18 @@ const RRF_K = 60;
 /** Most keyword matches one look-ahead reads to find `limit` rows that are not machine noise. */
 const TEXT_LOOKAHEAD_MAX = 4096;
 
+/**
+ * One query token as an FTS5 term. A Hangul word of two or more characters is a PREFIX term: unicode61
+ * splits on whitespace, so a word with a particle attached ("검색을") is a different token from the bare
+ * word ("검색") and an exact term misses it (measured: 6–22% of the matches of common words). Everything
+ * else stays an exact term (Latin words already go through the porter stemmer; a one-character Hangul
+ * prefix would match half the vocabulary). Prefix terms work under detail=column and detail=full alike,
+ * and the match-count guard below bounds their ranking cost the same way.
+ */
+function ftsTerm(token: string): string {
+  return /^[\uAC00-\uD7A3]{2,}$/.test(token) ? `"${token}"*` : `"${token}"`;
+}
+
 /** The turn a row belongs to. A growing session is re-indexed with the same turn under a new id each time. */
 const turnKey = (row: { archive_path: string; line_start: number }): string => `${row.archive_path}\u0000${row.line_start}`;
 
@@ -382,7 +394,7 @@ export async function searchConversationsDetailed(
         .split(/[^\p{L}\p{N}]+/u)
         .map((t) => t.trim())
         .filter(Boolean);
-      const ftsExpr = ftsTokens.map((t) => `"${t}"`).join(' ');
+      const ftsExpr = ftsTokens.map(ftsTerm).join(' ');
       const MAX_FTS_TOKENS = 6;
       const MAX_OR_TOKENS = 10; // hard bound on posting-list unions (latency)
       let orTokens = ftsTokens;
@@ -554,7 +566,7 @@ export async function searchConversationsDetailed(
               let rare: string[] = [];
               try {
                 rare = [...new Set(orTokens)]
-                  .map((t) => ({ t, df: (countStmt.get(`"${t}"`) as { c: number }).c }))
+                  .map((t) => ({ t, df: (countStmt.get(ftsTerm(t)) as { c: number }).c }))
                   .filter((x) => x.df > 0)
                   .sort((a, b) => a.df - b.df)
                   .map((x) => x.t);
@@ -564,9 +576,9 @@ export async function searchConversationsDetailed(
               // the OTHER query terms still surface after the rare ones.
               const rungs: string[] = [];
               for (let k = Math.min(4, rare.length); k >= 2; k--) {
-                rungs.push(rare.slice(0, k).map((t) => `"${t}"`).join(' '));
+                rungs.push(rare.slice(0, k).map(ftsTerm).join(' '));
               }
-              for (const t of rare) rungs.push(`"${t}"`);
+              for (const t of rare) rungs.push(ftsTerm(t));
               // Two-pass fill with a per-rung quota: pass 1 lets each rung
               // take at most half the slots so one populous rung (many docs
               // matching one rare token) cannot crowd out hits that match the

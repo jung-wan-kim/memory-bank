@@ -328,3 +328,33 @@ describe('related knowledge section is bounded', () => {
     expect(text.length).toBeLessThan(1600);
   });
 });
+
+// SQ-15 — unicode61 splits on whitespace, so a Korean word with a particle attached ("검색을") is a
+// different token from the bare word ("검색") and an exact-token query misses it.
+describe('Korean keyword search matches a word with a particle attached', () => {
+  const rows: SeedRow[] = [
+    { id: 'ko-particles', theta: 0.1, userMessage: '검색을 개선했다' },
+    { id: 'ko-exact', theta: 0.2, userMessage: '검색 개선 계획' },
+    { id: 'ko-other', theta: 0.3, userMessage: '임베딩 모델을 바꿨다' },
+    { id: 'en-longer', theta: 0.4, userMessage: 'the zebrafish migration' },
+  ];
+
+  it('a Hangul query word matches tokens that start with it', async () => {
+    const db = initDatabase();
+    seedExchanges(db, rows);
+    db.close();
+    const { results, meta } = await searchConversationsDetailed('검색 개선', { mode: 'text', limit: 10 });
+    expect(ids(results).sort()).toEqual(['ko-exact', 'ko-particles']);
+    expect(meta.text).toEqual({ path: 'fts', truncated: false });
+    expect(ids(await searchConversations('임베딩 모델', { mode: 'text', limit: 10 }))).toEqual(['ko-other']);
+  });
+
+  it('a one-character Hangul word and Latin words still match whole tokens only', async () => {
+    const db = initDatabase();
+    seedExchanges(db, rows);
+    db.close();
+    expect(await searchConversations('zebra', { mode: 'text', limit: 10 })).toEqual([]);
+    expect(ids(await searchConversations('zebrafish', { mode: 'text', limit: 10 }))).toEqual(['en-longer']);
+    expect(await searchConversations('검', { mode: 'text', limit: 10 })).toEqual([]);
+  });
+});
