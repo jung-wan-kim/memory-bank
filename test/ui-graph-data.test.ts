@@ -14,11 +14,14 @@ import Database from 'better-sqlite3';
  * on session_id: rows-per-session squared. One long session shared by two
  * projects (a real archive has one of 66,101 exchanges) never came back.
  *
- * Two things are pinned here:
+ * Three things are pinned here:
  *  1. the response is what the original SQL returns (same keys, same rows) —
  *     the original statements are kept below as the definition;
  *  2. a long shared session answers at once, with the pair count the join
- *     would have produced.
+ *     would have produced;
+ *  3. the answer is computed once per state of the database files and carries
+ *     the time it was computed (`computedAt`) — a write by another process
+ *     makes the next request compute again (R2-REL-5).
  *
  * The server is a real child process on a free port, reading a seeded database
  * in a temp config dir with a temp HOME.
@@ -217,7 +220,7 @@ describe('/api/graph-data', () => {
       const reply = await get(server.port, '/api/graph-data');
       expect(reply.status).toBe(200);
       const data = JSON.parse(reply.body);
-      expect(Object.keys(data)).toEqual(['projects', 'toolUsage', 'connections', 'timeline', 'allTools', 'facts', 'domains', 'relations']);
+      expect(Object.keys(data)).toEqual(['projects', 'toolUsage', 'connections', 'timeline', 'allTools', 'facts', 'domains', 'relations', 'computedAt']);
       expect(data.timeline).toEqual([]);
 
       const want = reference();
@@ -250,6 +253,42 @@ describe('/api/graph-data', () => {
       const again = await get(server.port, '/api/graph-data');
       expect(again.status).toBe(200);
       expect(JSON.parse(again.body)).toEqual(data);
+    } finally {
+      server.kill();
+    }
+  }, 60_000);
+
+  it('remembers the answer while the database files are unchanged, says when it was computed, and computes again after a write', async () => {
+    // R2-REL-5: every open of the first page ran all the statements again (seconds on a real archive, the
+    // whole server waiting meanwhile). The answer is kept for as long as the database file and its
+    // write-ahead log have the modification time and size they had when it was computed.
+    const server = await startServer();
+    const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    try {
+      const before = Date.now();
+      const first = JSON.parse((await get(server.port, '/api/graph-data')).body);
+      const after = Date.now();
+      expect(typeof first.computedAt).toBe('string');
+      expect(new Date(first.computedAt).toISOString(), 'an ISO time').toBe(first.computedAt);
+      expect(Date.parse(first.computedAt)).toBeGreaterThanOrEqual(before);
+      expect(Date.parse(first.computedAt)).toBeLessThanOrEqual(after);
+
+      // Asked again later — by the API and by the first page: the same computation, with its time.
+      await pause(25);
+      expect(JSON.parse((await get(server.port, '/api/graph-data')).body)).toEqual(first);
+      const page = await get(server.port, '/');
+      expect(page.status).toBe(200);
+      expect(page.body).toContain(`"computedAt":"${first.computedAt}"`);
+
+      // Another process writes to the database: the next request computes again and sees the write…
+      await withFixtureDb((db) => { insertExchanges(db, [{ project: 'written-later', session: 's-later', branch: 'main', count: 3 }]); });
+      const fresh = JSON.parse((await get(server.port, '/api/graph-data')).body);
+      expect(fresh.projects.find((p: { project: string }) => p.project === 'written-later')).toMatchObject({ exchanges: 3, sessions: 1, branches: 1 });
+      expect(Date.parse(fresh.computedAt)).toBeGreaterThan(Date.parse(first.computedAt));
+      // …and that answer is the one kept from then on.
+      await pause(25);
+      expect(JSON.parse((await get(server.port, '/api/graph-data')).body)).toEqual(fresh);
+      expect((await get(server.port, '/')).body).toContain(`"computedAt":"${fresh.computedAt}"`);
     } finally {
       server.kill();
     }
