@@ -184,12 +184,63 @@ describe('훅 워커: 추출 전에 그 세션을 색인한다', () => {
     expect(log).not.toMatch(/extracted=0 saved=0/);
   });
 
-  it('색인 단계가 예외를 던져도 추출 단계로 가고 훅 불변식(exit 0)을 지킨다', () => {
+  it('색인 단계가 예외를 던져도 훅 불변식(exit 0)을 지킨다 — backfill 대상이 아닌 세션은 색인된 만큼 추출한다', () => {
     writeStubs({ preindex: 'THROW' });
     const { code, order, log } = runWorker();
     expect(code).toBe(0);
     expect(order).toContain('extract');
     expect(log).toMatch(/preindex session=.* status=failed — preindex exploded/);
+  });
+});
+
+/**
+ * 선색인이 실패했는데 색인에는 그 세션의 앞부분만 있던 경우(진행 중에 다른 세션의 sync 가
+ * 색인해 둔 것), 워커는 그 앞부분만 추출하고 완료 표식을 썼다. 표식이 있으면 backfill 이
+ * 집지 않으므로 뒷부분은 그 세션이 다시 끝나기 전에는 추출되지 않았다.
+ */
+describe('훅 워커: 선색인이 실패하면 일부만 색인된 세션을 "완료"로 만들지 않는다', () => {
+  for (const preindex of ['THROW', 'failed'] as const) {
+    it(`선색인 ${preindex === 'THROW' ? '예외' : 'failed 반환'} + backfill 이 집을 세션: 추출하지 않고(표식 없음) 사유를 남긴다`, () => {
+      writeStubs({ preindex, backfillEligible: true });
+      const { code, order, log } = runWorker();
+      expect(code).toBe(0);
+      expect(order, '추출(선점·LLM·표식)을 시작하지 않는다').not.toContain('extract');
+      expect(order.at(-1), 'DB 는 닫는다').toBe('db-close');
+      expect(log).toMatch(new RegExp(`SKIPPED \\(preindex_failed\\) session=${SID} .*완료 마커를 쓰지 않음.*backfill`));
+      expect(log, '정상 결과 줄처럼 보이면 안 된다').not.toMatch(/extracted=\d+ saved=\d+/);
+      // backfill 과 같은 술어에 조용함 조건만 끄고 이 세션 하나를 묻는다(공급자 일시 실패 때와 같은 탐침).
+      expect(order).toContain(`pending-cfg:${JSON.stringify({ minExchanges: 2, excludeProjects: ['/x'], quietMinutes: 0 })}`);
+      const probe = JSON.parse(order.find((l) => l.startsWith('probe:'))!.slice('probe:'.length));
+      expect(probe.args).toEqual(['/x', SID]);
+    });
+  }
+
+  it('선색인 실패 + backfill 대상이 아닌 세션(이전 표식이 있거나 교환 수 미달): 다른 경로가 없으므로 색인된 만큼 추출하고, 일부일 수 있음을 남긴다', () => {
+    writeStubs({ preindex: 'failed', backfillEligible: false });
+    const { code, order, log } = runWorker();
+    expect(code).toBe(0);
+    expect(order).toContain('extract');
+    const probeAt = order.findIndex((l) => l.startsWith('probe:'));
+    expect(probeAt, 'backfill 대상인지 묻는다').toBeGreaterThanOrEqual(0);
+    expect(probeAt, '추출 전에 묻는다').toBeLessThan(order.indexOf('extract'));
+    expect(log).toMatch(new RegExp(`WARN \\(preindex_failed\\) session=${SID} .*색인된 만큼만 추출`));
+    expect(log).toMatch(/extracted=2 saved=2/);
+  });
+
+  it('선색인이 성공했으면 묻지 않고 바로 추출한다', () => {
+    writeStubs({ backfillEligible: true });
+    const { order, log } = runWorker();
+    expect(order).toContain('extract');
+    expect(order.some((l) => l.startsWith('probe:'))).toBe(false);
+    expect(log).not.toMatch(/preindex_failed/);
+  });
+
+  it('대화 파일이 없어 색인하지 않은 것(no_transcript)은 실패가 아니다 — 묻지 않고 추출 단계로 간다', () => {
+    writeStubs({ preindex: 'no_transcript', backfillEligible: true });
+    const { order, log } = runWorker();
+    expect(order).toContain('extract');
+    expect(order.some((l) => l.startsWith('probe:'))).toBe(false);
+    expect(log).not.toMatch(/preindex_failed/);
   });
 });
 
