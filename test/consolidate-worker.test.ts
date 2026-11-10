@@ -167,6 +167,14 @@ describe('fact-consolidate-worker.js', () => {
     expect(health()).toMatchObject({ consecutiveFailures: 1, factId: null, kind: 'fatal' });
   }, 40_000);
 
+  it('a cursor that cannot be written is reported (the next run would silently redo this one)', () => {
+    fs.mkdirSync(cursorFile(), { recursive: true }); // a directory where the cursor file belongs
+    runWorker();
+
+    expect(logLines()).toEqual([expect.stringMatching(/^worker: cursor not written \(.+\) — the next run repeats this one$/)]);
+    expect(fs.existsSync(healthFile()), 'the run itself did not fail').toBe(false);
+  }, 40_000);
+
   it('an unusable health record is reported in the log and the count starts over', () => {
     breakIndex();
     fs.mkdirSync(path.dirname(healthFile()), { recursive: true });

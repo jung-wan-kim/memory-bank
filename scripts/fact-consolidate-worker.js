@@ -58,7 +58,11 @@ function writeCursor(cursor) {
     const tmp = `${CURSOR}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(cursor));
     fs.renameSync(tmp, CURSOR); // atomic
-  } catch { /* best-effort */ }
+  } catch (error) {
+    // The run's work is done either way, but without the cursor the next run
+    // starts where this one started and pays for the same comparisons again.
+    log(`worker: cursor not written (${oneLine(error instanceof Error ? error.message : error)}) — the next run repeats this one`);
+  }
 }
 
 function log(line) {

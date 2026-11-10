@@ -22,7 +22,12 @@ import Database from 'better-sqlite3';
 import { EMBEDDING_VERSION } from './embedding-version.js';
 import { getVecQuant, embeddingToVecBlob, vecParamSql, type VecQuant } from './db.js';
 
-/** cos(stored, fresh) below this = the stored vector is not this sentence's. The same sentence re-embeds to ≥ 0.9999. */
+/**
+ * cos(stored, fresh) below this = the stored vector is not this sentence's.
+ * Measured on a copy of a live DB (2026-11-10): 300 never-rewritten facts
+ * re-embedded to 1.000000 each, and the 518 stale rewritten ones were all
+ * ≤ 0.9969 — nothing lies between, so the exact value in that gap is not critical.
+ */
 export const SAME_SENTENCE_MIN_COSINE = 0.9995;
 
 export type FactKrPolicy = 'clear' | 'keep';
