@@ -27,10 +27,12 @@ INDEX_DIR="${MEMORY_BANK_CONFIG_DIR:-${PERSONAL_SUPERPOWERS_DIR:-${XDG_CONFIG_HO
 LOG_DIR="$INDEX_DIR/logs"
 [[ -d "$LOG_DIR" ]] || mkdir -p "$LOG_DIR" 2>/dev/null || true
 ERR_LOG="$LOG_DIR/inject-context.err.log"
-# Keep the error log bounded (~1MB): truncate before append when oversized (size read only when non-empty —
-# every subprocess here is paid on every prompt).
+# Keep the error log bounded (~1MB): once oversized it becomes `.old` (replacing the previous one) and a new log
+# starts — emptying it in place threw away the only record of what had been failing. If it cannot be moved it is
+# emptied as before, so the bound holds either way. (Size read only when non-empty — every subprocess here is paid
+# on every prompt; the `mv` runs once per megabyte of errors.)
 if [[ -s "$ERR_LOG" ]] && [[ $(wc -c < "$ERR_LOG" 2>/dev/null || echo 0) -gt 1048576 ]]; then
-  : > "$ERR_LOG"
+  mv -f "$ERR_LOG" "$ERR_LOG.old" 2>/dev/null || : > "$ERR_LOG"
 fi
 
 # Native thin client (native/inject-client, built by scripts/build-native-client.sh at SessionStart when cargo

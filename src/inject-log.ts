@@ -41,7 +41,11 @@ export interface InjectLogEntry {
    * the SessionStart key-facts block (scripts/fact-consolidate-hook.js).
    */
   via?: 'daemon' | 'fallback' | 'client' | 'session-start';
-  /** status='skipped' only — why (short prompt, task notification, slash command …). */
+  /**
+   * status='skipped' only — why (short prompt, task notification, slash command …). On a via='fallback' line:
+   * 'hook-budget' (too little of the hook's time left to start the cold computation) or 'daemon-timeout'
+   * (MEMORY_BANK_INJECT_COLD_ON_TIMEOUT=0 — the cold computation after a slow daemon was skipped).
+   */
   reason?: string;
   /** Length of the text actually searched, when it differs from the prompt (prompt-gate.ts). */
   query_len?: number;

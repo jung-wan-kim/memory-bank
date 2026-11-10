@@ -70,7 +70,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/inject-context.sh"
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/inject-context.sh",
+            "timeout": 30
           }
         ]
       }
