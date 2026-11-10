@@ -57,12 +57,12 @@ describe('sync log', () => {
     expect(lines()).toHaveLength(1);
   });
 
-  // The real command, under a HOME of its own (it reads ~/.claude/projects and locks under ~/.claude/run-locks).
+  // The real command, under a HOME of its own (it reads ~/.claude/projects and locks under ~/.claude/run-locks —
+  // a folder the command makes itself, so this HOME starts without one: test/sync-lock.test.ts).
   it('the sync command logs its run — including a conversation it could not read and therefore did not index', () => {
     const home = path.join(cfg, 'home');
     const project = path.join(home, '.claude', 'projects', 'proj');
     fs.mkdirSync(project, { recursive: true });
-    fs.mkdirSync(path.join(home, '.claude', 'run-locks'), { recursive: true }); // the singleton lock's parent
     const src = path.join(project, 'unreadable.jsonl');
     fs.writeFileSync(src, JSON.stringify({ type: 'user', message: { role: 'user', content: 'q' } }) + '\n');
     // A newer compressed copy in the archive wins over the plain copy the sync writes — and it is not zstd.

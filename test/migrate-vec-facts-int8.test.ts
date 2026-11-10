@@ -11,7 +11,8 @@ import { initDatabase, getVecQuant, embeddingToVecBlob, vecParamSql, normalizeVe
 import { assessDbHolders, holderCodeRoot, parseEtime, staleInstallDirs, listMemoryBankProcesses, isInside, VEC_SCALE_MIN_VERSION } from '../src/vec-migrate-guard.js';
 import { suppressConsole } from './test-utils.js';
 
-// scripts/migrate-vec-facts-int8.mjs imports ../dist — `npm test` builds first (pretest).
+// scripts/migrate-vec-facts-int8.mjs imports ../dist — run `npm run build` first (`npm test` does not
+// build: its pretest step only checks that dist/ is a build of the current sources).
 const ROOT = path.resolve(__dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts/migrate-vec-facts-int8.mjs');
 

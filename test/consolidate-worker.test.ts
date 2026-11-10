@@ -10,7 +10,8 @@ import { insertFact, deactivateFact, insertRevision } from '../src/fact-db.js';
 /**
  * scripts/fact-consolidate-worker.js run as the hook runs it: a child process
  * whose only lasting output is the file log and the state files. (It imports
- * dist/, so `npm run build` must have run — `npm test` does that in pretest.)
+ * dist/, so `npm run build` must have run — `npm test` does not build, its
+ * pretest step only checks that dist/ is a build of the current sources.)
  *
  * The incident this pins (2026-10-16 ~ 11-10): the candidate search threw
  * before any LLM call, and 2,552 runs left nothing but `processed=0 haiku=1`.

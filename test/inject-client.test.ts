@@ -8,7 +8,8 @@ import path from 'node:path';
  * 얇은 훅 클라이언트(scripts/inject-context.js)를 실제 자식 프로세스로 실행한다.
  * 수정 전에는 짧은 프롬프트를 로그 없이 버렸고, 작업 알림은 거르지 않고 데몬에
  * 보내 사실을 주입했다. 이제 둘 다 데몬에 닿기 전에 이유와 함께 skipped 로 남는다.
- * (dist 를 읽으므로 pretest 빌드 산출물로 돈다 — 등록된 실행 형태 그대로.)
+ * (dist 를 읽으므로 `npm run build` 가 만든 산출물로 돈다 — 등록된 실행 형태 그대로.
+ * `npm test` 는 빌드하지 않는다: pretest 는 dist 가 지금 소스의 빌드인지 검사만 한다.)
  */
 
 const REPO = path.resolve(__dirname, '..');

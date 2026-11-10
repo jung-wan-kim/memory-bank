@@ -14,7 +14,8 @@ import { findExactDuplicateGroups, applyExactDedupe, restoreExactDedupe, exactSe
  * Cleanup of exact duplicates (same scope, same sentence up to whitespace and
  * case). The module is tested directly; the script is run as a child process
  * for its arguments and for "a dry run cannot write". (The script imports
- * dist/: `npm run build` must have run — `npm test` does that in pretest.)
+ * dist/: `npm run build` must have run — `npm test` does not build, its
+ * pretest step only checks that dist/ is a build of the current sources.)
  */
 
 const REPO = path.resolve(__dirname, '..');
