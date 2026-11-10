@@ -5,6 +5,7 @@ import path from 'path';
 import { spawnSync } from 'child_process';
 import { initDatabase, getVecQuant, embeddingToVecBlob, vecParamSql } from '../src/db.js';
 import { vecTableFill } from '../src/vec-compact.js';
+import { EMBEDDING_VERSION } from '../src/embedding-version.js';
 import { suppressConsole } from './test-utils.js';
 
 // The pending-work probes scan the whole exchanges table (measured cold: ~44s and
@@ -19,6 +20,15 @@ afterAll(() => restoreConsole());
 interface LogLine {
   action: string; reason?: string; spawned?: string[]; failures?: string[]; warning?: string;
   compaction?: Array<{ table: string; action: string; error?: string }>;
+  vec_reconcile?: Array<{ table: string; removed: number; reinserted: number; missing_no_embedding: number }>;
+  analyze?: { tables: number; stat_rows: number; ms: number };
+}
+
+/** Active facts for the given ids — a vector whose fact is absent is removed by the run's reconcile step. */
+function addFacts(db: ReturnType<typeof initDatabase>, ids: string[], opts: { active?: boolean; embedding?: Buffer } = {}): void {
+  const ins = db.prepare(`INSERT INTO facts (id, fact, category, scope_type, source_exchange_ids, created_at, updated_at, is_active, embedding, embedding_version)
+    VALUES (?, ?, 'decision', 'global', '[]', 't', 't', ?, ?, ?)`);
+  db.transaction(() => { for (const id of ids) ins.run(id, `fact ${id}`, opts.active === false ? 0 : 1, opts.embedding ?? null, EMBEDDING_VERSION); })();
 }
 
 describe('session-start-maintenance throttle + compaction', () => {
@@ -115,6 +125,8 @@ describe('session-start-maintenance throttle + compaction', () => {
         for (let i = 0; i < 2048; i++) insK.run(`k-${i}`, Buffer.from(new Int8Array(384).fill(i % 50).buffer), 'n');
         db.prepare("DELETE FROM vec_facts_kr WHERE CAST(substr(id, 3) AS INTEGER) % 4 != 0").run();
       })();
+      addFacts(db, Array.from({ length: 1024 }, (_, i) => `f-${i * 3}`));
+      addFacts(db, Array.from({ length: 512 }, (_, i) => `k-${i * 4}`));
     } finally {
       db.close();
     }
@@ -199,6 +211,7 @@ describe('session-start-maintenance throttle + compaction', () => {
         for (let i = 0; i < 3072; i++) ins.run(`f-${i}`, embeddingToVecBlob(Array.from({ length: 384 }, (_, j) => Math.sin(i + j) * 0.05), q));
         db.prepare("DELETE FROM vec_facts WHERE CAST(substr(id, 3) AS INTEGER) % 3 != 0").run();
       })();
+      addFacts(db, Array.from({ length: 1024 }, (_, i) => `f-${i * 3}`));
       expect(vecTableFill(db, 'vec_facts')!.chunks).toBe(3);
     } finally {
       db.close();
@@ -214,5 +227,70 @@ describe('session-start-maintenance throttle + compaction', () => {
     } finally {
       db2.close();
     }
+  });
+
+  it('gathers planner statistics for the fact tables and logs the run', () => {
+    process.env.TEST_DB_PATH = dbPath;
+    const db = initDatabase();
+    try {
+      addFacts(db, Array.from({ length: 50 }, (_, i) => `f-${i}`));
+      expect(db.prepare(`SELECT count(*) AS n FROM sqlite_master WHERE name = 'sqlite_stat1'`).get()).toEqual({ n: 0 });
+    } finally {
+      db.close();
+    }
+    const r = run();
+    expect(r.status, r.stderr).toBe(0);
+    const ran = log()[0];
+    expect(ran.action).toBe('ran');
+    expect(ran.analyze?.tables).toBe(6);
+    expect(ran.analyze?.stat_rows).toBeGreaterThanOrEqual(5);
+    const db2 = initDatabase();
+    try {
+      const analyzed = (db2.prepare('SELECT DISTINCT tbl FROM sqlite_stat1').all() as Array<{ tbl: string }>).map((t) => t.tbl);
+      expect(analyzed).toContain('facts');
+      expect(analyzed).not.toContain('exchanges');
+    } finally {
+      db2.close();
+    }
+  });
+
+  it('brings the fact vector tables back in step with the facts table and logs the counts', () => {
+    process.env.TEST_DB_PATH = dbPath;
+    const vector = (seed: number) => Array.from({ length: 384 }, (_, j) => Math.sin(seed + j) * 0.05);
+    const db = initDatabase();
+    try {
+      const q = getVecQuant(db, 'vec_facts');
+      const ins = (table: string, id: string, seed: number) =>
+        db.prepare(`INSERT INTO ${table} (id, embedding) VALUES (?, ${vecParamSql(q)})`).run(id, embeddingToVecBlob(vector(seed), q));
+      addFacts(db, ['active-with-vector']);
+      addFacts(db, ['inactive-with-vector'], { active: false });
+      addFacts(db, ['active-lost-vector'], { embedding: Buffer.from(new Float32Array(vector(9)).buffer) });
+      ins('vec_facts', 'active-with-vector', 1);
+      ins('vec_facts', 'inactive-with-vector', 2);
+      ins('vec_facts', 'no-such-fact', 3);
+      ins('vec_facts_kr', 'inactive-with-vector', 2);
+    } finally {
+      db.close();
+    }
+    const r = run({ MEMORY_BANK_MAINTENANCE_INTERVAL_MIN: '0' });
+    expect(r.status, r.stderr).toBe(0);
+    expect(log()[0].action).toBe('ran');
+    expect(log()[0].vec_reconcile).toEqual([
+      { table: 'vec_facts', removed: 2, reinserted: 1, missing_no_embedding: 0 },
+      { table: 'vec_facts_kr', removed: 1, reinserted: 0, missing_no_embedding: 0 },
+    ]);
+    const db2 = initDatabase();
+    try {
+      expect(db2.prepare('SELECT id FROM vec_facts_rowids ORDER BY id').all()).toEqual([{ id: 'active-lost-vector' }, { id: 'active-with-vector' }]);
+      expect(db2.prepare('SELECT id FROM vec_facts_kr_rowids').all()).toEqual([]);
+    } finally {
+      db2.close();
+    }
+    // nothing left for the next run
+    run({ MEMORY_BANK_MAINTENANCE_INTERVAL_MIN: '0' });
+    expect(log()[1].vec_reconcile).toEqual([
+      { table: 'vec_facts', removed: 0, reinserted: 0, missing_no_embedding: 0 },
+      { table: 'vec_facts_kr', removed: 0, reinserted: 0, missing_no_embedding: 0 },
+    ]);
   });
 });

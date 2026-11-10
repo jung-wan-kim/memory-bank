@@ -147,6 +147,86 @@ export function migrateSchema(db: Database.Database): void {
   }
 }
 
+/** FTS sync on DELETE. Exported for the rebuild, which empties `exchanges` without it (see rebuild.ts). */
+export const EXCHANGES_FTS_AD_DDL = `
+    CREATE TRIGGER IF NOT EXISTS exchanges_fts_ad AFTER DELETE ON exchanges BEGIN
+      INSERT INTO exchanges_fts(exchanges_fts, rowid, user_message, assistant_message)
+      VALUES('delete', old.rowid, old.user_message, old.assistant_message);
+    END
+  `;
+
+/**
+ * FTS sync on UPDATE, limited to the two indexed columns. Without the column
+ * list every UPDATE of an exchange — the re-embed worker's
+ * `SET embedding = NULL, embedding_version = ?, last_indexed = ?` — deleted
+ * and re-inserted that row's whole text in the FTS index.
+ */
+const EXCHANGES_FTS_AU_DDL = `
+    CREATE TRIGGER IF NOT EXISTS exchanges_fts_au AFTER UPDATE OF user_message, assistant_message ON exchanges BEGIN
+      INSERT INTO exchanges_fts(exchanges_fts, rowid, user_message, assistant_message)
+      VALUES('delete', old.rowid, old.user_message, old.assistant_message);
+      INSERT INTO exchanges_fts(rowid, user_message, assistant_message)
+      VALUES (new.rowid, new.user_message, new.assistant_message);
+    END
+  `;
+
+/**
+ * Replace an exchanges_fts_au made by an older build (no column list) with the
+ * column-limited one, in one transaction so the trigger is never absent to
+ * another connection. An older process's CREATE TRIGGER IF NOT EXISTS finds
+ * the name taken and leaves it alone. Lock contention is not an error: the
+ * old trigger is only slower, and the next open tries again.
+ */
+function narrowFtsUpdateTrigger(db: Database.Database): void {
+  const current = () => (db.prepare(
+    `SELECT sql FROM sqlite_master WHERE type='trigger' AND name='exchanges_fts_au'`
+  ).get() as { sql: string } | undefined)?.sql ?? '';
+  const isNarrow = (sql: string) => /AFTER\s+UPDATE\s+OF\s+user_message\s*,\s*assistant_message\s+ON/i.test(sql);
+  if (isNarrow(current())) return;
+  try {
+    db.transaction(() => {
+      if (isNarrow(current())) return; // another process replaced it first
+      db.exec('DROP TRIGGER IF EXISTS exchanges_fts_au');
+      db.exec(EXCHANGES_FTS_AU_DDL);
+    }).immediate();
+  } catch (e) {
+    const msg = (e as Error)?.message ?? '';
+    if (!/database is locked|database table is locked|SQLITE_BUSY/i.test(msg)) throw e;
+    console.error('[db] exchanges_fts_au 트리거 교체 지연 — 락 경합, 다음 초기화에서 재시도');
+  }
+}
+
+/** One turn of one file: what insertExchange looks up to remove older snapshots of a turn. */
+export const EXCHANGE_TURN_INDEX = 'idx_exchanges_path_line';
+const EXCHANGE_TURN_INDEX_DDL =
+  `CREATE INDEX IF NOT EXISTS ${EXCHANGE_TURN_INDEX} ON exchanges(archive_path, line_start)`;
+
+/**
+ * Create the (archive_path, line_start) index while the exchanges table is
+ * EMPTY — a fresh DB, or right after `index --rebuild` emptied it. On a
+ * populated table the build reads every row to the end (line_start sits behind
+ * both message columns), under the write lock: on the measured 10GB DB a scan
+ * of that table took 23s cold and up to 6 minutes, far past every other
+ * process's 5s busy_timeout — not something a DB open may do. Without the
+ * index the same lookup runs through idx_archive_path (it visits that file's
+ * rows; measured 0.07ms per lookup at 600 rows of 10KB, 23ms at 600 rows of
+ * 200KB). A populated DB gets the index from
+ * `scripts/dedupe-exchange-snapshots.mjs --create-index`, run on purpose.
+ */
+export function ensureExchangeTurnIndex(db: Database.Database): void {
+  const has = db.prepare(
+    `SELECT 1 FROM sqlite_master WHERE type='index' AND name=?`
+  ).get(EXCHANGE_TURN_INDEX) !== undefined;
+  if (has) return;
+  if (db.prepare('SELECT 1 FROM exchanges LIMIT 1').get() !== undefined) return;
+  db.exec(EXCHANGE_TURN_INDEX_DDL);
+}
+
+/** Build the (archive_path, line_start) index whatever the table size — see ensureExchangeTurnIndex for the cost. */
+export function createExchangeTurnIndex(db: Database.Database): void {
+  db.exec(EXCHANGE_TURN_INDEX_DDL);
+}
+
 /**
  * Read-only handle for a hot read path that must neither write nor wait on
  * writers — the synchronous SessionStart hook. initDatabase() runs migrations
@@ -277,6 +357,7 @@ export function initDatabase(): Database.Database {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_coding_agent ON exchanges(coding_agent)
   `);
+  ensureExchangeTurnIndex(db);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_tool_name ON tool_calls(tool_name)
   `);
@@ -335,20 +416,9 @@ export function initDatabase(): Database.Database {
       VALUES (new.rowid, new.user_message, new.assistant_message);
     END
   `);
-  db.exec(`
-    CREATE TRIGGER IF NOT EXISTS exchanges_fts_ad AFTER DELETE ON exchanges BEGIN
-      INSERT INTO exchanges_fts(exchanges_fts, rowid, user_message, assistant_message)
-      VALUES('delete', old.rowid, old.user_message, old.assistant_message);
-    END
-  `);
-  db.exec(`
-    CREATE TRIGGER IF NOT EXISTS exchanges_fts_au AFTER UPDATE ON exchanges BEGIN
-      INSERT INTO exchanges_fts(exchanges_fts, rowid, user_message, assistant_message)
-      VALUES('delete', old.rowid, old.user_message, old.assistant_message);
-      INSERT INTO exchanges_fts(rowid, user_message, assistant_message)
-      VALUES (new.rowid, new.user_message, new.assistant_message);
-    END
-  `);
+  db.exec(EXCHANGES_FTS_AD_DDL);
+  db.exec(EXCHANGES_FTS_AU_DDL);
+  narrowFtsUpdateTrigger(db);
 
   // === Facts Schema ===
   db.exec(`
@@ -373,9 +443,16 @@ export function initDatabase(): Database.Database {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_facts_category ON facts(category)
   `);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_facts_active ON facts(is_active)
-  `);
+  // idx_facts_active(is_active) is no longer created, and is dropped where an
+  // older build made it. It indexes a 2-valued column and repeats the leading
+  // column of idx_facts_active_created_id; with no sqlite_stat1 rows the
+  // planner estimates every equality index at ~10 rows and picked it for
+  // `… AND is_active = 1` queries — measured live: the key-facts query 48ms vs
+  // 0.02ms through idx_facts_scope, facts-by-category 4.41s vs 0.046s per 60
+  // categories. A no-op (no write) once the index is gone. A 1.7.x process
+  // sharing the DB re-creates it on its next open and the next open of this
+  // code drops it again; until then the planner behaves as before this change.
+  db.exec(`DROP INDEX IF EXISTS idx_facts_active`);
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS fact_revisions (
@@ -608,6 +685,25 @@ export function initDatabase(): Database.Database {
   return db;
 }
 
+/**
+ * Longest tool_input stored per tool call (UTF-16 code units). tool_calls was
+ * the largest table of one measured DB — 1.5GB, 35.9% of the file, 938MiB of
+ * it tool_input — while its only reader shows the first 300 characters
+ * (ui/server.cjs); nothing parses it back as JSON. The full input stays in the
+ * archived transcript, which the `read` tool serves. Applies to rows written
+ * from now on; existing rows are left as they are.
+ */
+export const TOOL_INPUT_MAX_CHARS = 1000;
+
+function capToolInput(json: string): string {
+  if (json.length <= TOOL_INPUT_MAX_CHARS) return json;
+  let end = TOOL_INPUT_MAX_CHARS;
+  // Never cut between the two halves of a surrogate pair (a lone half is not valid text).
+  const last = json.charCodeAt(end - 1);
+  if (last >= 0xd800 && last <= 0xdbff) end--;
+  return `${json.slice(0, end)}…[truncated: ${json.length - end} more chars]`;
+}
+
 export function insertExchange(
   db: Database.Database,
   exchange: ConversationExchange,
@@ -627,6 +723,25 @@ export function insertExchange(
   //     serializes against the swap, so we can never quantize for a schema
   //     that changed between the read and the write.
   const insertAll = db.transaction(() => {
+    // Older snapshots of this turn. The id is md5(path:userLine-lastAssistantLine),
+    // so a turn indexed while its answer was still being written gets a NEW id
+    // on the next sync, and the shorter snapshot used to stay behind under the
+    // old one (measured live: 11,981 extra rows, up to 102 for one turn). One
+    // turn of one file = one (archive_path, line_start) = one row.
+    const staleSnapshots = db.prepare(
+      'SELECT id FROM exchanges WHERE archive_path = ? AND line_start = ? AND id <> ?'
+    ).all(exchange.archivePath, exchange.lineStart, exchange.id) as Array<{ id: string }>;
+    for (const stale of staleSnapshots) {
+      repointExchangeSources(db, stale.id, exchange.id);
+      deleteExchangeRows(db, stale.id);
+    }
+
+    // This exchange's own tool calls from an earlier indexing. The schema this
+    // file creates has no ON DELETE CASCADE on tool_calls.exchange_id (only
+    // some older DBs carry one), so the REPLACE below does not remove them and
+    // every re-index added the same calls again.
+    db.prepare('DELETE FROM tool_calls WHERE exchange_id = ?').run(exchange.id);
+
     db.prepare(`
       INSERT OR REPLACE INTO exchanges
       (id, project, timestamp, user_message, assistant_message, archive_path, line_start, line_end, last_indexed,
@@ -677,7 +792,7 @@ export function insertExchange(
           toolCall.id,
           toolCall.exchangeId,
           toolCall.toolName,
-          toolCall.toolInput ? JSON.stringify(toolCall.toolInput) : null,
+          toolCall.toolInput ? capToolInput(JSON.stringify(toolCall.toolInput)) : null,
           toolCall.toolResult || null,
           toolCall.isError ? 1 : 0,
           toolCall.timestamp
@@ -706,10 +821,73 @@ export function getFileLastIndexed(db: Database.Database, archivePath: string): 
   return row.lastIndexed;
 }
 
-export function deleteExchange(db: Database.Database, id: string): void {
-  // Delete from vector table
-  db.prepare(`DELETE FROM vec_exchanges WHERE id = ?`).run(id);
+/**
+ * Rows of one exchange, children first: tool_calls → vector → exchange. The
+ * tool_calls FK has no ON DELETE CASCADE in the schema this file creates, and
+ * better-sqlite3 turns foreign_keys on, so deleting the exchange first fails
+ * with SQLITE_CONSTRAINT_FOREIGNKEY whenever it has tool calls. No transaction
+ * of its own — every caller wraps it.
+ */
+function deleteExchangeRows(db: Database.Database, id: string): void {
+  db.prepare('DELETE FROM tool_calls WHERE exchange_id = ?').run(id);
+  db.prepare('DELETE FROM vec_exchanges WHERE id = ?').run(id);
+  db.prepare('DELETE FROM exchanges WHERE id = ?').run(id);
+}
 
-  // Delete from main table
-  db.prepare(`DELETE FROM exchanges WHERE id = ?`).run(id);
+/**
+ * Point what names exchange `fromId` as its source at `toId`: the entries of
+ * facts.source_exchange_ids and fact_revisions.source_exchange_id. Called when
+ * a snapshot of a turn is replaced by a fuller one — a fact extracted while
+ * only the shorter snapshot existed would otherwise name a row that is gone,
+ * and `trace_fact` skips sources it cannot find. (Facts carry every exchange
+ * id of their session: on one measured DB 13,573 facts named such a snapshot.)
+ * Reads every fact's source list, so it runs only when a snapshot really is
+ * being replaced. The fact itself is unchanged — updated_at is left alone.
+ */
+function repointExchangeSources(db: Database.Database, fromId: string, toId: string): void {
+  // Sources are a JSON array of id strings; the quotes make this an exact-entry match.
+  const from = JSON.stringify(fromId);
+  db.prepare(
+    'UPDATE facts SET source_exchange_ids = replace(source_exchange_ids, ?, ?) WHERE instr(source_exchange_ids, ?) > 0'
+  ).run(from, JSON.stringify(toId), from);
+  db.prepare('UPDATE fact_revisions SET source_exchange_id = ? WHERE source_exchange_id = ?').run(toId, fromId);
+}
+
+/** Delete one exchange with its tool calls and vector — all or nothing. */
+export function deleteExchange(db: Database.Database, id: string): void {
+  db.transaction(() => deleteExchangeRows(db, id)).immediate();
+}
+
+/** Delete many exchanges, each batch one transaction (see deleteExchangeRows for the order). */
+export function deleteExchanges(db: Database.Database, ids: readonly string[], batchSize = 2000): number {
+  // 2,000 per transaction: one transaction deleting 50K+ vec0 rows tripped
+  // SQLITE_CORRUPT_VTAB in the extension's chunk bookkeeping (observed live,
+  // scripts/purge-llm-sessions.mjs); small batches also let other writers in.
+  const deleteBatch = db.transaction((chunk: readonly string[]) => {
+    for (const id of chunk) deleteExchangeRows(db, id);
+  });
+  let deleted = 0;
+  for (let i = 0; i < ids.length; i += batchSize) {
+    const chunk = ids.slice(i, i + batchSize);
+    deleteBatch.immediate(chunk);
+    deleted += chunk.length;
+  }
+  return deleted;
+}
+
+/**
+ * True when this exchange is already indexed as it stands: same id (the id is
+ * derived from the file and its line range, and transcripts are append-only,
+ * so the same id is the same text), embedded with the current model, and its
+ * vector row present. A caller that sees true may skip embedding it again —
+ * before this check every sync re-embedded and re-wrote every exchange of a
+ * file that had grown by one line (measured live: 1,657 rows rewritten in a
+ * day for 25 new exchanges; one 1.07GB conversation took 109s per sync).
+ */
+export function isExchangeCurrent(db: Database.Database, id: string): boolean {
+  return db.prepare(`
+    SELECT 1 FROM exchanges e
+    WHERE e.id = ? AND e.embedding_version = ?
+      AND EXISTS (SELECT 1 FROM vec_exchanges_rowids v WHERE v.id = e.id)
+  `).get(id, EMBEDDING_VERSION) !== undefined;
 }

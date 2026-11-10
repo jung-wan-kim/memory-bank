@@ -24,10 +24,21 @@ interface JSONLMessage {
   };
 }
 
+/** Optional taps on the single pass parseConversation makes over the file. */
+export interface ParseObserver {
+  /**
+   * Called with the text of EVERY user message (string content or its text
+   * blocks — never tool results), including ones that end up in no exchange
+   * because no assistant message follows them.
+   */
+  userText?: (text: string) => void;
+}
+
 export async function parseConversation(
   filePath: string,
   projectName: string,
-  archivePath: string
+  archivePath: string,
+  observer?: ParseObserver
 ): Promise<ConversationExchange[]> {
   const exchanges: ConversationExchange[] = [];
   const fileStream = createArchiveReadStream(filePath);
@@ -62,9 +73,13 @@ export async function parseConversation(
         .update(`${archivePath}:${currentExchange.userLine}-${currentExchange.lastAssistantLine}`)
         .digest('hex');
 
-      // Update tool call exchange IDs
-      const toolCalls = currentExchange.toolCalls.map(tc => ({
+      // Tool call ids are derived from the exchange id and the call's position
+      // in it, so parsing the same file again yields the same ids. A random id
+      // per parse made every re-index add the same calls as new rows on a DB
+      // whose tool_calls FK has no ON DELETE CASCADE (any DB this code creates).
+      const toolCalls = currentExchange.toolCalls.map((tc, index) => ({
         ...tc,
+        id: `${exchangeId}:${index}`,
         exchangeId
       }));
 
@@ -124,9 +139,8 @@ export async function parseConversation(
         if (parsed.message.role === 'assistant') {
           for (const block of parsed.message.content) {
             if (block.type === 'tool_use') {
-              const toolCallId = crypto.randomUUID();
               toolCalls.push({
-                id: toolCallId,
+                id: '', // Set with the exchange id (finalizeExchange)
                 exchangeId: '', // Will be set when we know the exchange ID
                 toolName: block.name || 'unknown',
                 toolInput: block.input,
@@ -146,6 +160,10 @@ export async function parseConversation(
         // future feature needs real result/error data, MATCH tool_result blocks
         // to the preceding tool_use by tool_use_id and populate both columns —
         // do NOT trust the current always-0 `is_error`.
+      }
+
+      if (observer?.userText && parsed.message.role === 'user' && text) {
+        observer.userText(text);
       }
 
       // Skip empty messages
