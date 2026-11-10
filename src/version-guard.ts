@@ -142,13 +142,17 @@ export function ownPackageVersion(): string | null {
 }
 
 /**
- * Longest unix socket path this plugin uses, in bytes: macOS sun_path is 104 bytes including the terminating
- * NUL (Linux: 108). Node does not refuse a longer path — libuv binds, and connects to, its first bytes: another
- * name, outside the index dir when the directory part alone is too long, shared by every config dir with the
- * same prefix. Rust refuses it. So the limit is applied here, before either client or the daemon gets the path
- * (the native client carries the same constant — native/inject-client/src/paths.rs).
+ * Longest unix socket path this plugin uses, in bytes: sun_path minus its terminating NUL — 107 on Linux
+ * (sun_path[108]), 103 on macOS and the BSDs (sun_path[104]). Node does not refuse a longer path — libuv binds,
+ * and connects to, its first bytes: another name, outside the index dir when the directory part alone is too
+ * long, shared by every config dir with the same prefix. Rust refuses anything longer than this. So the limit is
+ * applied here, before either client or the daemon gets the path (the native client carries the same numbers —
+ * native/inject-client/src/paths.rs). Linux keeps its own, larger number: there 104–107 bytes always worked.
  */
-export const MAX_UNIX_SOCKET_PATH_BYTES = 103;
+export function maxUnixSocketPathBytes(platform: string = process.platform): number {
+  return platform === 'linux' ? 107 : 103;
+}
+export const MAX_UNIX_SOCKET_PATH_BYTES = maxUnixSocketPathBytes();
 
 /**
  * The inject daemon's socket path for one plugin version, or null when no name fits a unix socket.
@@ -176,8 +180,8 @@ export const MAX_UNIX_SOCKET_PATH_BYTES = 103;
  * pause — the MCP server never answered `initialize` and held a CPU core,
  * while the hook client connected to whoever listened on the cut-off name.
  */
-export function injectSocketPathIn(indexDir: string, version: string | null): string | null {
-  const fits = (p: string) => Buffer.byteLength(p) <= MAX_UNIX_SOCKET_PATH_BYTES;
+export function injectSocketPathIn(indexDir: string, version: string | null, maxBytes: number = MAX_UNIX_SOCKET_PATH_BYTES): string | null {
+  const fits = (p: string) => Buffer.byteLength(p) <= maxBytes;
   if (version && /^[0-9A-Za-z.+-]{1,32}$/.test(version)) {
     const versioned = path.join(indexDir, `inject-daemon-${version}.sock`);
     if (fits(versioned)) return versioned;

@@ -3,7 +3,7 @@ import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { injectSocketPathIn, MAX_UNIX_SOCKET_PATH_BYTES } from '../src/version-guard.js';
+import { injectSocketPathIn, maxUnixSocketPathBytes, MAX_UNIX_SOCKET_PATH_BYTES } from '../src/version-guard.js';
 import { suppressConsole } from './test-utils.js';
 
 /**
@@ -117,29 +117,42 @@ describe('injectSocketPathIn — 유닉스 소켓에 들어가지 않는 경로'
   const dirOfBytes = (n: number) => '/' + 'd'.repeat(n - 1);
   const legacyOf = (dir: string) => `${dir}/${LEGACY}`; // 이름 몫 19바이트
 
-  it('한도는 103바이트다 (macOS sun_path 104바이트에서 끝의 NUL 을 뺀 값 — 네이티브 클라이언트의 상수와 같다)', () => {
-    expect(MAX_UNIX_SOCKET_PATH_BYTES).toBe(103);
+  it('한도는 sun_path 에서 끝의 NUL 을 뺀 값: 리눅스 107, macOS·BSD 103 — 네이티브 클라이언트도 같은 수를 쓴다', () => {
+    expect(maxUnixSocketPathBytes('linux')).toBe(107);
+    for (const p of ['darwin', 'freebsd', 'openbsd']) expect(maxUnixSocketPathBytes(p), p).toBe(103);
+    expect(MAX_UNIX_SOCKET_PATH_BYTES, '이 기계의 한도').toBe(maxUnixSocketPathBytes(process.platform));
     const rs = fs.readFileSync(path.join(REPO, 'native', 'inject-client', 'src', 'paths.rs'), 'utf8');
-    expect(/const MAX_UNIX_SOCKET_PATH_BYTES: usize = (\d+);/.exec(rs)?.[1], '네이티브 클라이언트의 한도 상수').toBe('103');
+    expect(rs, '네이티브 클라이언트의 한도 상수').toContain('const MAX_UNIX_SOCKET_PATH_BYTES: usize = if cfg!(target_os = "linux") { 107 } else { 103 };');
   });
 
   it('버전 이름이 들어가면 버전 이름, 버전 이름만 넘치면 예전 이름', () => {
     expect(injectSocketPathIn(dirOfBytes(60), '1.8.0')).toBe(`${dirOfBytes(60)}/inject-daemon-1.8.0.sock`);
-    expect(injectSocketPathIn(dirOfBytes(80), '1.8.0')).toBe(legacyOf(dirOfBytes(80)));
+    expect(injectSocketPathIn(dirOfBytes(80), '1.8.0', 103)).toBe(legacyOf(dirOfBytes(80)));
   });
 
-  it('예전 이름이 꼭 103바이트면 그 이름, 104바이트부터는 경로를 주지 않는다', () => {
-    expect(Buffer.byteLength(legacyOf(dirOfBytes(84)))).toBe(103);
-    expect(injectSocketPathIn(dirOfBytes(84), '1.8.0')).toBe(legacyOf(dirOfBytes(84)));
-    expect(injectSocketPathIn(dirOfBytes(84), null)).toBe(legacyOf(dirOfBytes(84)));
-    expect(injectSocketPathIn(dirOfBytes(85), '1.8.0')).toBeNull();
-    expect(injectSocketPathIn(dirOfBytes(85), null), '버전을 못 읽어 예전 이름을 쓰는 경우도 같다').toBeNull();
-    expect(injectSocketPathIn(dirOfBytes(300), '1.8.0')).toBeNull();
+  // 이름 몫이 19바이트이므로 폴더가 (한도 − 19)바이트일 때 예전 이름이 꼭 한도에 닿는다
+  for (const [platform, max] of [['macOS·BSD', 103], ['리눅스', 107]] as const) {
+    it(`${platform}: 예전 이름이 꼭 ${max}바이트면 그 이름, ${max + 1}바이트부터는 경로를 주지 않는다`, () => {
+      const edge = dirOfBytes(max - 19);
+      const over = dirOfBytes(max - 18);
+      expect(Buffer.byteLength(legacyOf(edge))).toBe(max);
+      expect(injectSocketPathIn(edge, '1.8.0', max)).toBe(legacyOf(edge));
+      expect(injectSocketPathIn(edge, null, max)).toBe(legacyOf(edge));
+      expect(injectSocketPathIn(over, '1.8.0', max)).toBeNull();
+      expect(injectSocketPathIn(over, null, max), '버전을 못 읽어 예전 이름을 쓰는 경우도 같다').toBeNull();
+      expect(injectSocketPathIn(dirOfBytes(300), '1.8.0', max)).toBeNull();
+    });
+  }
+
+  it('리눅스에서는 104~107바이트 경로가 예전처럼 쓰인다 (그 길이는 리눅스에서 늘 묶였다)', () => {
+    const dir = dirOfBytes(86); // 예전 이름 105바이트
+    expect(injectSocketPathIn(dir, '1.8.0', maxUnixSocketPathBytes('linux'))).toBe(legacyOf(dir));
+    expect(injectSocketPathIn(dir, '1.8.0', maxUnixSocketPathBytes('darwin'))).toBeNull();
   });
 
   it('길이는 글자 수가 아니라 바이트로 잰다 (한글 폴더 이름)', () => {
     const dir = '/' + '가'.repeat(30); // 31자, 91바이트 → 예전 이름까지 110바이트
-    expect(legacyOf(dir).length).toBeLessThan(MAX_UNIX_SOCKET_PATH_BYTES);
+    expect(legacyOf(dir).length).toBeLessThan(103);
     expect(injectSocketPathIn(dir, '1.8.0')).toBeNull();
   });
 });

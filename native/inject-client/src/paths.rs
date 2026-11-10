@@ -36,9 +36,9 @@ pub fn plugin_version(root: &std::path::Path) -> Option<String> {
     }
 }
 
-/// Longest unix socket path the plugin uses, in bytes (MAX_UNIX_SOCKET_PATH_BYTES in version-guard.ts — macOS
-/// sun_path is 104 bytes including the terminating NUL).
-pub const MAX_UNIX_SOCKET_PATH_BYTES: usize = 103;
+/// Longest unix socket path the plugin uses, in bytes (maxUnixSocketPathBytes in version-guard.ts): sun_path
+/// minus its terminating NUL — 107 on Linux (sun_path[108]), 103 on macOS and the BSDs (sun_path[104]).
+pub const MAX_UNIX_SOCKET_PATH_BYTES: usize = if cfg!(target_os = "linux") { 107 } else { 103 };
 
 /// The inject daemon's socket path for one plugin version (injectSocketPathIn in version-guard.ts): the
 /// versioned name when the version string is usable and the path fits a unix socket, else the legacy name —

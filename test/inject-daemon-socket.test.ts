@@ -83,7 +83,8 @@ describe('injectSocketPathIn', () => {
     expect(injectSocketPathIn('/x/ci', null)).toBe('/x/ci/inject-daemon.sock');
     expect(injectSocketPathIn('/x/ci', '../../etc/x')).toBe('/x/ci/inject-daemon.sock');
     const deep = '/' + 'd'.repeat(80);
-    expect(injectSocketPathIn(deep, '1.7.0')).toBe(path.join(deep, 'inject-daemon.sock'));
+    // 한도를 직접 준다(macOS 의 103) — 리눅스의 한도 107 에서는 이 길이의 버전 이름도 들어간다
+    expect(injectSocketPathIn(deep, '1.7.0', 103)).toBe(path.join(deep, 'inject-daemon.sock'));
   });
 
   it('ownPackageVersion 은 package.json 의 버전', () => {
