@@ -56,9 +56,14 @@ function holdsAtLeast(dir: string, limit: number): boolean {
   }
 }
 
-/** The first of `candidates` that exists and is not crowded; the first one when none is (nothing better is known). */
+/** Whether a folder can be made in `dir` (it exists and this process may write to it). */
+function canHold(dir: string): boolean {
+  try { fs.accessSync(dir, fs.constants.W_OK | fs.constants.X_OK); return true; } catch { return false; }
+}
+
+/** The first of `candidates` a folder can be made in that is not crowded; the first one when none is (nothing better is known). */
 function fixtureBase(candidates: string[], limit = CROWDED_ENTRIES): string {
-  return candidates.find((dir) => fs.existsSync(dir) && !holdsAtLeast(dir, limit)) ?? candidates[0];
+  return candidates.find((dir) => canHold(dir) && !holdsAtLeast(dir, limit)) ?? candidates[0];
 }
 
 let base: string;
@@ -400,7 +405,12 @@ describe('where the fixture project is made (esbuild lists every ancestor folder
       expect(fixtureBase([roomy, crowded], 3)).toBe(roomy);
       expect(fixtureBase([crowded, path.join(roomy, 'no-such-folder')], 3), 'a folder that does not exist is no candidate').toBe(crowded);
       expect(fixtureBase([crowded, crowded], 3), 'none is better: the first').toBe(crowded);
+      // A folder this process may not write to is no candidate either. (Where permission bits do not say so —
+      // root, Windows — there is nothing to tell apart.)
+      fs.chmodSync(roomy, 0o555);
+      if (process.platform !== 'win32' && process.getuid?.() !== 0) expect(fixtureBase([crowded, roomy], 3), 'a read-only folder').toBe(crowded);
     } finally {
+      fs.chmodSync(roomy, 0o755);
       fs.rmSync(crowded, { recursive: true, force: true });
       fs.rmSync(roomy, { recursive: true, force: true });
     }
