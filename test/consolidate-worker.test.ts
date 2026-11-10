@@ -171,7 +171,11 @@ describe('fact-consolidate-worker.js', () => {
     fs.mkdirSync(cursorFile(), { recursive: true }); // a directory where the cursor file belongs
     runWorker();
 
-    expect(logLines()).toEqual([expect.stringMatching(/^worker: cursor not written \(.+\) — the next run repeats this one$/)]);
+    expect(logLines()).toEqual([
+      // The same path cannot be read either — said at the start, not passed over as "no cursor yet".
+      expect.stringMatching(/^worker: cursor file unusable \(EISDIR.*\) — starting from the beginning$/),
+      expect.stringMatching(/^worker: cursor not written \(.+\) — the next run repeats this one$/),
+    ]);
     expect(fs.existsSync(healthFile()), 'the run itself did not fail').toBe(false);
   }, 40_000);
 
@@ -221,6 +225,70 @@ describe('fact-consolidate-worker.js', () => {
     runWorker();
     expect(logLines()).toHaveLength(1);
   }, 90_000);
+
+  it('a next-attempt time 400 days out (written while the clock was ahead) is not waited for: the run goes ahead and says so once', () => {
+    breakIndex();
+    for (let i = 0; i < 6; i++) runWorker();
+    const sixth = health();
+    const skewed = new Date(Date.now() + 400 * 86_400_000).toISOString();
+    fs.writeFileSync(healthFile(), JSON.stringify({ ...sixth, nextAttemptAt: skewed }));
+    repairIndex();
+    const linesBefore = logLines().length;
+
+    const out = runWorker();
+
+    expect(out).not.toContain('fact-consolidate: not run');
+    expect(logLines().slice(linesBefore)).toEqual([
+      `worker: recorded next attempt ${skewed} is further ahead of the clock than the longest wait (6 h) — not waited for, running now`,
+    ]);
+    expect(JSON.parse(fs.readFileSync(cursorFile(), 'utf8')).id, 'the run went through').toBe(ids[2]);
+    expect(fs.existsSync(healthFile()), 'a clean run removes the record').toBe(false);
+  }, 60_000);
+
+  it('a cursor ahead of the clock is pulled back to now, logged and written back — a fact created after that is pending again', () => {
+    const skewed = new Date(Date.now() + 400 * 86_400_000).toISOString();
+    fs.mkdirSync(indexDir(), { recursive: true });
+    fs.writeFileSync(cursorFile(), JSON.stringify({ createdAt: skewed, id: 'ffffffff-ffff-ffff-ffff-ffffffffffff' }));
+    const before = Date.now();
+
+    runWorker();
+
+    const written = JSON.parse(fs.readFileSync(cursorFile(), 'utf8'));
+    expect(logLines()).toEqual([`worker: cursor time ${skewed} is ahead of the clock — pulled back to ${written.createdAt}`]);
+    expect(Date.parse(written.createdAt)).toBeGreaterThanOrEqual(before);
+    expect(Date.parse(written.createdAt)).toBeLessThanOrEqual(Date.now());
+
+    // A fact created now lies after the rewritten cursor: the next run examines it and moves the cursor onto it.
+    let fresh = '';
+    const prev = process.env.TEST_DB_PATH;
+    process.env.TEST_DB_PATH = dbPath;
+    try {
+      const db = initDatabase();
+      try {
+        fresh = insertFact(db, {
+          fact: 'Worker fixture fact created after the cursor was pulled back', category: 'decision',
+          scope_type: 'global', scope_project: null, source_exchange_ids: [], embedding: vec(9),
+        });
+      } finally {
+        db.close();
+      }
+    } finally {
+      if (prev === undefined) delete process.env.TEST_DB_PATH; else process.env.TEST_DB_PATH = prev;
+    }
+    runWorker();
+    expect(JSON.parse(fs.readFileSync(cursorFile(), 'utf8')).id).toBe(fresh);
+    expect(logLines(), 'said once, not on every run').toHaveLength(1);
+  }, 60_000);
+
+  it('a cursor file that cannot be used is reported — the run starts from the beginning', () => {
+    fs.mkdirSync(indexDir(), { recursive: true });
+    fs.writeFileSync(cursorFile(), '{"createdAt": 12');
+
+    runWorker();
+
+    expect(logLines()).toEqual(['worker: cursor file unusable (not JSON) — starting from the beginning']);
+    expect(JSON.parse(fs.readFileSync(cursorFile(), 'utf8')).id, 'walked from the first fact to the last, and rewritten').toBe(ids[2]);
+  }, 40_000);
 
   it('an unusable health record is reported in the log and the count starts over', () => {
     breakIndex();

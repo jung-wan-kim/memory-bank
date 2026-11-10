@@ -7,6 +7,7 @@ import {
   getNewFactsSince,
   getAllNewFactsSince,
   searchSimilarFactsSameScope,
+  countFactsDatedAfter,
   updateFact,
   deactivateFact,
   insertRevision,
@@ -265,11 +266,19 @@ export interface ConsolidationRunResult {
    * only, until scripts/translate-facts.mjs fills fact_kr.
    */
   rewritesWithoutKorean: number;
+  /**
+   * Active facts dated later than the run's "now" (stamped while the clock was
+   * ahead). They are not driven — the cursor would follow them ahead of the
+   * clock and nothing created at the real time would be pending again — and
+   * wait until their time comes. 0 on a store whose times are sane.
+   */
+  aheadOfClock: number;
 }
 
 export async function consolidateAllPending(
   db: Database.Database,
   since: { createdAt: string; id: string } | null,
+  opts: { now?: Date } = {},
 ): Promise<ConsolidationRunResult> {
   // NOTE: no initEmbeddings() here. Candidates are found with the facts'
   // ALREADY-STORED vectors (searchSimilarFactsSameScope does a vec MATCH on the
@@ -277,7 +286,9 @@ export async function consolidateAllPending(
   // model was a ~1s no-op on every run, wasteful because the consolidate worker
   // is spawned on SessionStart — most runs have an empty backlog. The model is
   // loaded only when a verdict rewrites a sentence (consolidateOne).
-  const newFacts = getAllNewFactsSince(db, since);
+  const notAfter = (opts.now ?? new Date()).toISOString();
+  const newFacts = getAllNewFactsSince(db, since, 2000, notAfter);
+  const aheadOfClock = countFactsDatedAfter(db, notAfter);
   let haikuCalls = 0;
   let merged = 0;
   let contradictions = 0;
@@ -378,7 +389,7 @@ export async function consolidateAllPending(
     cursor = { createdAt: newFact.created_at, id: newFact.id };
   }
 
-  return { processed, merged, contradictions, evolutions, haikuCalls, cursor, lastError, cappedSearches, rewrites, rewritesWithoutKorean };
+  return { processed, merged, contradictions, evolutions, haikuCalls, cursor, lastError, cappedSearches, rewrites, rewritesWithoutKorean, aheadOfClock };
 }
 
 /** A verdict resolved against its pair: which stored sentence (if any) it rewrites. */

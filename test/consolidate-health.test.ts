@@ -9,9 +9,12 @@ import {
   CONSOLIDATE_BACKOFF_AFTER,
   consolidateBackoffMs,
   consolidateBackoffUntil,
+  consolidateBackoffAheadOfClock,
   consolidateCursorPath,
   consolidateHealthPath,
+  consolidateStart,
   consolidateStartCursor,
+  loadConsolidateCursor,
   consolidateWorkerGate,
   hasPendingConsolidation,
   loadConsolidateHealth,
@@ -236,6 +239,122 @@ describe('consolidate health', () => {
       seedFacts();
       fs.writeFileSync(consolidateCursorPath(), 'not a cursor');
       expect(consolidateStartCursor({})).toBeNull();
+    });
+  });
+
+  /**
+   * A time written while the clock was ahead used to be believed as it stood:
+   * a next-attempt time 400 days out kept every start from running (and a
+   * skipped start logs nothing), and a cursor 400 days out made every fact
+   * created since read as "already examined".
+   */
+  describe('a recorded time ahead of the clock is not trusted', () => {
+    const HOUR = 60 * MIN;
+    const DAY = 24 * HOUR;
+    const at = (i: number) => new Date(Date.parse('2026-06-01T00:00:00.000Z') + i * 1000).toISOString();
+    const readOnly = () => new Database(process.env.TEST_DB_PATH!, { readonly: true, fileMustExist: true });
+    function seedFact(createdAt: string): string {
+      const db = initDatabase();
+      try {
+        const id = insertFact(db, { fact: `Clock fixture fact created ${createdAt}`, category: 'decision', scope_type: 'global', scope_project: null, source_exchange_ids: [], embedding: null });
+        db.prepare('UPDATE facts SET created_at = ? WHERE id = ?').run(createdAt, id);
+        return id;
+      } finally {
+        db.close();
+      }
+    }
+
+    it('a next-attempt time further out than the longest wait this code records is not waited for, and can be reported', () => {
+      const h = { ...streak(12, 0), nextAttemptAt: later(400 * DAY).toISOString() };
+      expect(consolidateBackoffUntil(h, NOW, '1.8.0')).toBeNull();
+      expect(consolidateBackoffAheadOfClock(h, NOW, '1.8.0')).toBe(h.nextAttemptAt);
+
+      // 6 h is the longest wait: exactly that far out is a real wait, one millisecond more is not.
+      const sixHours = { ...h, nextAttemptAt: later(6 * HOUR).toISOString() };
+      expect(consolidateBackoffUntil(sixHours, NOW, '1.8.0')).toBe(sixHours.nextAttemptAt);
+      expect(consolidateBackoffAheadOfClock(sixHours, NOW, '1.8.0')).toBeNull();
+      const justOver = { ...h, nextAttemptAt: later(6 * HOUR + 1).toISOString() };
+      expect(consolidateBackoffUntil(justOver, NOW, '1.8.0')).toBeNull();
+      expect(consolidateBackoffAheadOfClock(justOver, NOW, '1.8.0')).toBe(justOver.nextAttemptAt);
+
+      // Nothing to report for a wait that is over, a short streak, or another version's record.
+      expect(consolidateBackoffAheadOfClock({ ...h, nextAttemptAt: later(-MIN).toISOString() }, NOW, '1.8.0')).toBeNull();
+      expect(consolidateBackoffAheadOfClock(streak(3), NOW, '1.8.0')).toBeNull();
+      expect(consolidateBackoffAheadOfClock(h, NOW, '1.8.1')).toBeNull();
+      expect(consolidateBackoffAheadOfClock(null, NOW, '1.8.0')).toBeNull();
+    });
+
+    it('the streak goes on from such a record, its times counted from the real clock', () => {
+      const skewed = { ...streak(7, 0), firstFailureAt: later(399 * DAY).toISOString(), lastFailureAt: later(399 * DAY).toISOString(), nextAttemptAt: later(400 * DAY).toISOString() };
+      const next = nextConsolidateHealth(skewed, { progressed: false, failure: INTERNAL }, NOW, '1.8.0')!;
+      expect(next.consecutiveFailures).toBe(8);
+      expect(next.firstFailureAt, 'not a time that has not happened yet').toBe(NOW.toISOString());
+      expect(next.lastFailureAt).toBe(NOW.toISOString());
+      expect(Date.parse(next.nextAttemptAt!) - NOW.getTime()).toBe(consolidateBackoffMs(8));
+    });
+
+    it('a cursor ahead of the clock is pulled back to now, and the stored time is reported', () => {
+      fs.writeFileSync(consolidateCursorPath(), JSON.stringify({ createdAt: later(400 * DAY).toISOString(), id: 'ffffffff-ffff-ffff-ffff-ffffffffffff' }));
+      expect(consolidateStart(NOW, {})).toEqual({
+        cursor: { createdAt: NOW.toISOString(), id: '' }, problem: null, clampedFrom: later(400 * DAY).toISOString(),
+      });
+      // Once the clock has passed it, it is an ordinary cursor.
+      expect(consolidateStart(later(401 * DAY), {})).toEqual({
+        cursor: { createdAt: later(400 * DAY).toISOString(), id: 'ffffffff-ffff-ffff-ffff-ffffffffffff' }, problem: null, clampedFrom: null,
+      });
+      // LAST_CONSOLIDATED_AT is a stored time too.
+      fs.rmSync(consolidateCursorPath());
+      expect(consolidateStart(NOW, { LAST_CONSOLIDATED_AT: later(DAY).toISOString() })).toEqual({
+        cursor: { createdAt: NOW.toISOString(), id: '' }, problem: null, clampedFrom: later(DAY).toISOString(),
+      });
+    });
+
+    it('a cursor file that cannot be used is a reported problem; no file is not', () => {
+      expect(loadConsolidateCursor()).toEqual({ cursor: null, problem: null });
+      expect(consolidateStart(NOW, {})).toEqual({ cursor: null, problem: null, clampedFrom: null });
+
+      fs.writeFileSync(consolidateCursorPath(), '{"createdAt": 12');
+      expect(loadConsolidateCursor()).toEqual({ cursor: null, problem: 'not JSON' });
+      for (const broken of [{ createdAt: 12, id: 'x' }, { createdAt: 'soon', id: 'x' }, { createdAt: at(0) }, null, []]) {
+        fs.writeFileSync(consolidateCursorPath(), JSON.stringify(broken));
+        expect(loadConsolidateCursor(), JSON.stringify(broken)).toEqual({ cursor: null, problem: 'unexpected shape' });
+      }
+      expect(consolidateStart(NOW, {})).toEqual({ cursor: null, problem: 'unexpected shape', clampedFrom: null });
+      expect(consolidateStartCursor({}), 'still "from the beginning"').toBeNull();
+    });
+
+    it('gate: a cursor ahead of the clock starts the worker — it is the worker that rewrites the cursor', () => {
+      seedFact(at(0));
+      const stored = later(400 * DAY).toISOString();
+      fs.writeFileSync(consolidateCursorPath(), JSON.stringify({ createdAt: stored, id: 'ffffffff-ffff-ffff-ffff-ffffffffffff' }));
+      const db = readOnly();
+      try {
+        expect(consolidateWorkerGate(db, NOW, '1.8.0', {})).toEqual({ start: true, reason: `cursor ${stored} is ahead of the clock` });
+      } finally { db.close(); }
+    });
+
+    it('gate: a next-attempt time 400 days out does not keep the worker from starting', () => {
+      seedFact(at(0));
+      saveConsolidateHealth({ ...streak(12, 0), nextAttemptAt: later(400 * DAY).toISOString() });
+      const db = readOnly();
+      try {
+        expect(consolidateWorkerGate(db, NOW, '1.8.0', {})).toEqual({ start: true, reason: 'pending facts' });
+      } finally { db.close(); }
+    });
+
+    it('a fact dated ahead of the clock is not pending until its time comes', () => {
+      const normal = seedFact(at(0));
+      seedFact(later(400 * DAY).toISOString());
+      const db = readOnly();
+      try {
+        const cursor = { createdAt: at(0), id: normal };
+        expect(hasPendingConsolidation(db, cursor, NOW), 'only the future-dated fact lies after the cursor').toBe(false);
+        expect(hasPendingConsolidation(db, cursor, later(401 * DAY))).toBe(true);
+        expect(hasPendingConsolidation(db, null, new Date('2026-05-01T00:00:00.000Z')), 'no cursor: the same bound').toBe(false);
+        expect(hasPendingConsolidation(db, null, NOW)).toBe(true);
+        fs.writeFileSync(consolidateCursorPath(), JSON.stringify(cursor));
+        expect(consolidateWorkerGate(db, NOW, '1.8.0', {})).toEqual({ start: false, reason: 'no pending facts' });
+      } finally { db.close(); }
     });
   });
 });

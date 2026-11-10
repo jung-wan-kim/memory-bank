@@ -672,6 +672,12 @@ export function getNewFactsSince(db: Database.Database, project: string, since: 
  *
  * cursor null → from the beginning (all active facts).
  *
+ * `notAfter` (an ISO time, the drain passes "now") leaves out facts dated
+ * later than it. A fact stamped while the clock was ahead sorts after every
+ * fact created since: driving it moved the cursor ahead of the clock, and from
+ * then on nothing created at the real time was pending. Such a fact waits
+ * until its time comes; it stays a similarity candidate meanwhile.
+ *
  * KNOWN LIMITATION (best-effort dedup): a fact IMPORTED mid-drain with an old
  * `created_at` that sorts before the current cursor is not re-driven by this
  * pass (it's still a similarity CANDIDATE for future facts, so a duplicate is
@@ -683,6 +689,7 @@ export function getAllNewFactsSince(
   db: Database.Database,
   cursor: { createdAt: string; id: string } | null,
   limit: number = 2000,
+  notAfter?: string,
 ): Fact[] {
   // Bounded page (keyset) — NEVER materialize the whole table: seeding from the
   // beginning could otherwise pull tens of thousands of rows into memory in one
@@ -690,17 +697,25 @@ export function getAllNewFactsSince(
   // so the backlog drains page-by-page. The idx_facts_active_created_id index
   // (is_active, created_at, id) serves both the filter and the ORDER BY without
   // a temp sort.
+  const bound = notAfter === undefined ? '' : 'AND created_at <= ?';
+  const boundParams = notAfter === undefined ? [] : [notAfter];
   if (!cursor) {
     return (db.prepare(`
-      SELECT * FROM facts WHERE is_active = 1 ORDER BY created_at ASC, id ASC LIMIT ?
-    `).all(limit) as Record<string, unknown>[]).map(rowToFact);
+      SELECT * FROM facts WHERE is_active = 1 ${bound} ORDER BY created_at ASC, id ASC LIMIT ?
+    `).all(...boundParams, limit) as Record<string, unknown>[]).map(rowToFact);
   }
   return (db.prepare(`
     SELECT * FROM facts
     WHERE is_active = 1
       AND (created_at > ? OR (created_at = ? AND id > ?))
+      ${bound}
     ORDER BY created_at ASC, id ASC LIMIT ?
-  `).all(cursor.createdAt, cursor.createdAt, cursor.id, limit) as Record<string, unknown>[]).map(rowToFact);
+  `).all(cursor.createdAt, cursor.createdAt, cursor.id, ...boundParams, limit) as Record<string, unknown>[]).map(rowToFact);
+}
+
+/** Active facts dated later than `after` (an ISO time) — the ones a drain bounded at that time leaves alone. */
+export function countFactsDatedAfter(db: Database.Database, after: string): number {
+  return (db.prepare('SELECT COUNT(*) AS n FROM facts WHERE is_active = 1 AND created_at > ?').get(after) as { n: number }).n;
 }
 
 /**

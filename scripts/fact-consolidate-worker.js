@@ -22,6 +22,11 @@
  * that fails for an internal reason; after more than 5 such runs in a row the
  * next attempts are spaced out (5 min doubling, at most 6 h) instead of one per
  * session start. A run that ends any other way removes the record.
+ *
+ * A stored time ahead of the clock is not believed, and each case is logged
+ * (consolidate-health.ts): a next-attempt time further out than the longest
+ * wait is not waited for, a cursor ahead of the clock is pulled back to now
+ * (and written back), a cursor file that cannot be used starts the walk over.
  */
 
 import fs from 'node:fs';
@@ -33,12 +38,13 @@ import { pluginVersion } from '../dist/inject-log.js';
 import { restoreKoreanOncePerVersion } from '../dist/fact-kr-restore.js';
 import {
   consolidateCursorPath,
-  consolidateStartCursor,
+  consolidateStart,
   consolidateHealthPath,
   loadConsolidateHealth,
   nextConsolidateHealth,
   saveConsolidateHealth,
   consolidateBackoffUntil,
+  consolidateBackoffAheadOfClock,
 } from '../dist/consolidate-health.js';
 
 // GLOBAL single-instance lock (NOT per-project): consolidation touches shared
@@ -168,7 +174,13 @@ async function main() {
   const version = pluginVersion() ?? null;
   const { health, problem } = loadConsolidateHealth();
   if (problem) log(`worker: health record unreadable (${problem}) — the failure count starts over`);
-  const waitUntil = consolidateBackoffUntil(health, new Date(), version);
+  const now = new Date();
+  const aheadOfClock = consolidateBackoffAheadOfClock(health, now, version);
+  if (aheadOfClock) {
+    // Logged once: this run rewrites the record (or removes it) from the real clock.
+    log(`worker: recorded next attempt ${aheadOfClock} is further ahead of the clock than the longest wait (6 h) — not waited for, running now`);
+  }
+  const waitUntil = consolidateBackoffUntil(health, now, version);
   if (waitUntil) {
     // Console only: a line per skipped start would fill the log the way the
     // failing runs did. The record itself says when the next attempt is.
@@ -182,7 +194,11 @@ async function main() {
   // no similar candidate don't consume budget, so the whole backlog drains
   // across a few runs regardless of age. An explicit LAST_CONSOLIDATED_AT env
   // (manual/scoped runs) still seeds a starting timestamp.
-  const since = consolidateStartCursor();
+  const start = consolidateStart(now);
+  if (start.problem) log(`worker: cursor file unusable (${oneLine(start.problem)}) — starting from the beginning`);
+  // Written back at the end of this run (writeCursor), so it is said once.
+  if (start.clampedFrom) log(`worker: cursor time ${start.clampedFrom} is ahead of the clock — pulled back to ${start.cursor.createdAt}`);
+  const since = start.cursor;
 
   let db;
   let progressed = false;
@@ -191,11 +207,16 @@ async function main() {
     db = initDatabase();
     // One pass over the backlog after the cursor: every new fact once, single
     // Haiku budget, then advance the cursor so the next run reaches newer rows.
-    const result = await consolidateAllPending(db, since);
+    const result = await consolidateAllPending(db, since, { now });
     writeCursor(result.cursor);
     progressed = result.processed > 0;
     if (result.haikuCalls > 0) {
       log(`worker: processed=${result.processed} haiku=${result.haikuCalls} merged=${result.merged} contradictions=${result.contradictions} evolutions=${result.evolutions} rewritten=${result.rewrites} kr_missing=${result.rewritesWithoutKorean} cursor=${JSON.stringify(result.cursor)}`);
+    }
+    // Only with the cursor message above: these facts wait on every run until
+    // their time comes, and a line per run would bury the log.
+    if (start.clampedFrom && result.aheadOfClock > 0) {
+      log(`worker: WARN facts_ahead_of_clock=${result.aheadOfClock} — active facts dated later than now are not compared until their time comes`);
     }
     if (result.cappedSearches > 0) {
       log(`worker: WARN knn_cap_reached=${result.cappedSearches} — that many candidate searches stopped at the KNN limit with matches possibly unread`);
