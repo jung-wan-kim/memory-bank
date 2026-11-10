@@ -746,7 +746,7 @@ function esc(s){if(s===null||s===undefined||s==='')return'';return String(s).rep
 const projectPathMap={};
 function registerPath(project,realPath){if(realPath)projectPathMap[project]=realPath}
 function getPath(p){return projectPathMap[p]||p}
-function shortPath(p){return getPath(p).replace(/^\\/Users\\/jung-wankim\\//,'~/')}
+function shortPath(p){return getPath(p).replace(/^\\/(?:Users|home)\\/[^\\/]+\\//,'~/')}
 function projectName(p){
   const full=getPath(p);
   const parts=full.split('/').filter(Boolean);
