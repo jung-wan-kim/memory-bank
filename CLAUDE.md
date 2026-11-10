@@ -35,6 +35,9 @@ The build is two-step: `tsc` compiles `src/` → `dist/`, then `esbuild` bundles
 | `mcp-server.ts` | MCP server entry point — registers `search`, `read`, `search_facts` tools |
 | `db.ts` | SQLite schema init, migrations, CRUD for exchanges |
 | `fact-db.ts` | CRUD and vector search for facts table |
+| `consolidator.ts` | One pass over the facts after the cursor: nearest same-scope fact → LLM verdict → applied in one transaction (older fact = "existing"); returns the run's last failure (`lastError`) for the worker to log |
+| `consolidate-health.ts` | Consolidation cursor reader, "anything pending?" probe, and `state/fact-consolidate-health.json` (consecutive held runs → backoff) — shared by the SessionStart hook's gate and the worker |
+| `vec-limits.ts` | `VEC0_KNN_K_MAX` (4096): the largest k a vec0 KNN accepts |
 | `inject-select.ts` | Which facts a prompt's block carries (KNN → baseline gate → 1-hop) — shared by the live hook and the replay bench; `PRODUCTION_SELECT_OPTIONS` is the bench's decision |
 | `project-family.ts` | Repository family of a cwd (git top-level + linked worktree's main repo, fs only) and the scope predicate both searches use |
 | `inject-log.ts` | `inject-context.jsonl` lines: status, timings, margins, gated/injected ids, session_key, plugin_version, SessionStart lines |
@@ -142,6 +145,7 @@ Automatic classification of facts into domain/category hierarchy:
 - Use `db.pragma('busy_timeout = 5000')` for concurrent access
 - Schema migrations are idempotent — check column existence before ALTER
 - Vector tables (sqlite-vec) require DELETE before INSERT (no REPLACE support)
+- A vec0 KNN's `LIMIT` must not exceed `VEC0_KNN_K_MAX` (`vec-limits.ts`) — a larger k throws. Page up to it and stop once the last row is past the threshold (rows come back nearest first)
 - Escape LIKE metacharacters (`%`, `_`) with `ESCAPE '\\'`
 - Use parameterized queries — never interpolate user input into SQL
 

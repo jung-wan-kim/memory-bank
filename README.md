@@ -190,10 +190,14 @@ Extraction quality/cost controls (v1.2.0):
 
 | Relation | Action |
 |----------|--------|
-| DUPLICATE | Merge (count++) |
-| CONTRADICTION | Replace old + revision history |
-| EVOLUTION | Update + revision history |
+| DUPLICATE | Keep the older fact; it takes the other's confirmation count and sources |
+| CONTRADICTION | The later fact replaces the older one + revision history |
+| EVOLUTION | The older fact takes the updated sentence (re-embedded) + revision history |
 | INDEPENDENT | Keep both |
+
+Each new fact is compared with its nearest fact in the same scope (similarity ≥ 0.95), at most 10 comparisons per session start. "Older" and "later" follow creation time, whichever of the two triggered the comparison.
+
+When a run fails, the reason is appended to `fact-consolidate.log` in `~/.config/superpowers/conversation-index/` (`worker: ERROR fact=… kind=… msg=…`) and `state/fact-consolidate-health.json` there counts the failed runs in a row; after five, the next attempts are spaced out (5 minutes, doubling, up to 6 hours) until a run gets through.
 
 ### Scope Isolation
 
@@ -370,6 +374,8 @@ Maintenance scripts (run by hand, never automatically):
 node scripts/compact-vec-tables.mjs [--db PATH] [--min-ratio 0.8] [--dry-run]   # drop deleted slots from the fact vector tables
 node scripts/migrate-vec-facts-int8.mjs --dry-run                              # fact vectors float32 → int8 (scale 600); see the script header
 node scripts/migrate-vec-facts-int8.mjs --restore BACKUP.jsonl.gz              # back to float32 from its verified backup
+node scripts/reembed-rewritten-facts.mjs [--db PATH]                           # dry run: facts whose vector still describes a sentence consolidation rewrote (≤1.7.9); see the script header for --apply
+node scripts/dedupe-exact-facts.mjs [--db PATH] [--list]                       # dry run: same-scope facts with the same sentence; see the script header for --apply
 ```
 
 ## 3D Knowledge Graph

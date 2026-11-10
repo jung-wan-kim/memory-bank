@@ -19,7 +19,12 @@
  *  - its imports stay light — no embedding model (embedding-version.ts split);
  *  - it reads and prints FIRST, then starts every slow step as a detached child
  *    it never waits for:
- *     - fact-consolidate-worker.js — LLM-based consolidation
+ *     - fact-consolidate-worker.js — LLM-based consolidation. Started only
+ *       when it has something to do: the read-only handle that reads the key
+ *       facts also asks whether an active fact lies after the consolidation
+ *       cursor and whether a failure backoff is running
+ *       (consolidate-health.ts). While consolidation was stuck the worker was
+ *       started up to 839 times a day to fail on the same fact.
  *     - session-start-maintenance.js — pending-work probes (~3.9s) that decide
  *       whether to resume the re-embed / ontology / extraction backfill workers
  * Measured 2026-10-03: ~0.17s wall per run (fresh node process, warm cache).
@@ -49,6 +54,7 @@ import { loadLedger, appendLedger } from '../dist/inject-ledger.js';
 import { appendInjectLog, pluginVersion, sessionKey, shortId } from '../dist/inject-log.js';
 import { readHookInput } from '../dist/hook-stdin.js';
 import { ensureNativeAbi } from '../dist/node-abi.js';
+import { consolidateWorkerGate } from '../dist/consolidate-health.js';
 
 /** Upper bound for the whole block (10 facts × 160 chars cap ≈ 1,700 worst case). */
 const BLOCK_CHAR_BUDGET = 1500;
@@ -65,6 +71,20 @@ function writeOut(text) {
     process.stdout.on('error', () => { /* host gone — the write callback sees it */ });
     process.stdout.write(text, (err) => resolve(!err));
   });
+}
+
+/**
+ * Whether the consolidate worker has anything to do, asked on the hook's
+ * read-only handle. A check that fails starts the worker as before — it does
+ * its own checks, and its failures reach its log; not starting it on a failed
+ * check would stop consolidation without a trace.
+ */
+function consolidateGate(db) {
+  try {
+    return consolidateWorkerGate(db, new Date(), pluginVersion() ?? null);
+  } catch (error) {
+    return { start: true, reason: `check failed: ${error instanceof Error ? error.message : error}` };
+  }
 }
 
 async function main() {
@@ -92,9 +112,14 @@ async function main() {
     const shown = [];
     let delivered = false;
     let block = '';
+    // Decided on the same read-only handle (below); stays "start" when the
+    // handle cannot be opened or the key-facts read throws before the check.
+    let gate = { start: true, reason: 'not checked' };
     try {
       const db = openReadOnlyDatabase();
+      if (!db) gate = { start: false, reason: 'no database' };
       if (db) try {
+        gate = consolidateGate(db);
         const lines = [];
         let chars = 0;
         for (const fact of getTopFacts(db, project, 10)) {
@@ -137,8 +162,10 @@ async function main() {
     //    its output and must not start LLM workers against a fixture DB).
     const here = path.dirname(fileURLToPath(import.meta.url));
     const spawnWorkers = process.env.MEMORY_BANK_SESSION_START_SPAWN !== '0';
+    // Tests run with spawning off: say what would have happened (stderr is not session context).
+    if (!spawnWorkers) console.error(`fact-consolidate: would ${gate.start ? 'start' : 'skip'} fact-consolidate-worker.js (${gate.reason})`);
     for (const [script, env] of !spawnWorkers ? [] : [
-      ['fact-consolidate-worker.js', { ...process.env, CWD: project }],
+      ...(gate.start ? [['fact-consolidate-worker.js', { ...process.env, CWD: project }]] : []),
       ['session-start-maintenance.js', { ...process.env }],
     ]) {
       try {
