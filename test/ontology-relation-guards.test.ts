@@ -22,9 +22,9 @@ vi.mock('../src/embeddings.js', async (io) => ({
 
 import { callHaiku } from '../src/llm.js';
 import { initDatabase } from '../src/db.js';
-import { insertFact } from '../src/fact-db.js';
+import { insertFact, deactivateFact } from '../src/fact-db.js';
 import { detectRelations, DETECT_RELATION_SYSTEM_PROMPT } from '../src/ontology-classifier.js';
-import { createRelation } from '../src/ontology-db.js';
+import { createRelation, getRelatedFacts } from '../src/ontology-db.js';
 import type { Fact } from '../src/types.js';
 
 /**
@@ -182,6 +182,26 @@ describe('relation write guards', () => {
     it('a fact cannot supersede itself', () => {
       const a = add('fact a', 0, ['ex-1'], OLD);
       expect(() => createRelation(db, a.id, 'SUPERSEDES', a.id)).toThrow(/createRelation refused \(self-relation\)/);
+    });
+  });
+
+  describe('relations of inactive facts', () => {
+    // 4,346 live relation rows touch an inactive fact (2026-11-10). They stay
+    // in the table (history; the cloud plane keeps them too) and are not shown.
+    it('getRelatedFacts shows a relation only while its other end is active — the rows themselves stay', () => {
+      const a = add('fact a', 0, ['ex-1'], NEW);
+      const b = add('fact b', 0.1, ['ex-2'], OLD);
+      const c = add('fact c', 0.2, ['ex-3'], OLD);
+      createRelation(db, a.id, 'SUPPORTS', b.id); // outgoing from a
+      createRelation(db, c.id, 'CONTRADICTS', a.id); // incoming to a
+      const neighbours = () => getRelatedFacts(db, a.id, 1).map((r) => r.fact.id).sort();
+
+      expect(neighbours()).toEqual([b.id, c.id].sort());
+      deactivateFact(db, b.id);
+      expect(neighbours()).toEqual([c.id]);
+      deactivateFact(db, c.id);
+      expect(neighbours()).toEqual([]);
+      expect(relations()).toHaveLength(2);
     });
   });
 

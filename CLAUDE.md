@@ -112,7 +112,9 @@ Automatic classification of facts into domain/category hierarchy:
 - `ontology_domains` — Top-level groupings (e.g., "Infrastructure", "Frontend")
 - `ontology_categories` — Sub-groupings within domains
 - `ontology_relations` — Typed relations between facts: `INFLUENCES`, `SUPERSEDES`, `SUPPORTS`, `CONTRADICTS`
-- Classification runs asynchronously after fact insertion via `classifyAndLinkFact()`
+- Classification runs after the facts of a save are committed, via `classifyAndLinkFacts()` — one LLM call for the whole save (20 facts per call), then one relation call per fact. A fact the reply left out takes an attempt and waits for the backfill worker; a failed call burns no attempt
+- A category is identified by its name key (`ontologyNameKey()`: case, spacing and punctuation folded; stored in `ontology_categories.name_key`). The column and its index are added by `ensureCategoryNameKeys()` in `src/ontology-db.ts` the first time taxonomy code runs on a connection — not by `initDatabase()` — and rows without a key (written by older code or the sync import) are filled on every lookup. A name the model returns is matched to an existing category (named domain → candidates shown → any domain) before anything is created; `createCategory()` is idempotent on (domain, key). There is no UNIQUE index: same-name rows that predate the key are not merged
+- `createRelation()` refuses a `SUPERSEDES` whose mirror exists and a relation of a fact to itself (`RelationRefusedError`). `detectRelations()` writes no `SUPERSEDES` between siblings — facts of one extraction (same source exchanges) or lines of one memory document — because no order in time exists between them
 
 ### Avatar Responder
 

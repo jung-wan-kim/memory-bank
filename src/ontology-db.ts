@@ -122,7 +122,13 @@ export function ensureCategoryNameKeys(db: Database.Database): number {
         if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error;
       }
     }
-    db.exec(`CREATE INDEX IF NOT EXISTS idx_ontology_categories_name_key ON ontology_categories(name_key)`);
+    // Looked up first so a connection that finds the index issues no DDL at all.
+    const hasIndex = db
+      .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_ontology_categories_name_key'`)
+      .get() !== undefined;
+    if (!hasIndex) {
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_ontology_categories_name_key ON ontology_categories(name_key)`);
+    }
     nameKeyColumnReady.add(db);
   }
   const missing = db.prepare(`SELECT id, name FROM ontology_categories WHERE name_key IS NULL`).all() as Array<{ id: string; name: string }>;

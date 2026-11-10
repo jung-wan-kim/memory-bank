@@ -6,6 +6,16 @@
  * Extracts a concise fact from the decision text and saves it to memory-bank
  * with ontology classification.
  *
+ * NOT WIRED (checked 2026-11-10): the only caller is hooks/capture-decision.sh,
+ * and hooks/hooks.json registers no PostToolUse hook (SessionStart, SessionEnd
+ * and UserPromptSubmit only; neither file was ever listed there or in
+ * .claude-plugin/plugin.json). Nothing runs this script.
+ * Known defect to fix BEFORE wiring it: the classification below is started
+ * and the database is closed in the same tick, so every write the classifier
+ * makes after the LLM answers fails on a closed connection, and `.catch(() =>
+ * {})` hides it — one LLM call per fact for nothing (the backfill classifies
+ * the fact later). Await classifyAndLinkFact() and close in `finally`.
+ *
  * Environment:
  *   SESSION_ID    - current session ID
  *   CWD           - current working directory
