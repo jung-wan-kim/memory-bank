@@ -3,6 +3,7 @@ import { l2DistanceToSimilarity } from './db.js';
 import { factVectorDistance, searchSimilarFacts } from './fact-db.js';
 import { getRelatedFacts } from './ontology-db.js';
 import { truncateFact } from './fact-text.js';
+import { categoryLabel } from './fact-validity.js';
 import type { Fact, OntologyRelation } from './types.js';
 
 /**
@@ -206,7 +207,8 @@ export function formatInjectBlock(items: ReadonlyArray<{ fact: Fact; note: strin
   let shown = 0;
   for (const { fact, note } of items) {
     const dateStr = fact.created_at.slice(0, 10);
-    const line = `- ${note ? note + ' ' : ''}[${fact.category}] ${truncateFact(fact.fact)} (${dateStr})`;
+    // categoryLabel, not the stored value: a row stored before the writers folded categories can hold anything.
+    const line = `- ${note ? note + ' ' : ''}[${categoryLabel(fact.category)}] ${truncateFact(fact.fact)} (${dateStr})`;
     if (blockChars + line.length > BLOCK_CHAR_BUDGET && shown > 0) break;
     lines.push(line);
     blockChars += line.length + 1;

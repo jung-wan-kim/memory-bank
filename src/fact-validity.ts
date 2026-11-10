@@ -188,3 +188,18 @@ export function normalizeCategory(category: string): { category: FactCategory; k
   if (alias) return { category: alias, known: true };
   return { category: 'knowledge', known: false };
 }
+
+/**
+ * The category name to PRINT for a stored fact: always one of the five, never
+ * the stored value as it is. The blocks a model reads put it in front of the
+ * fact (`- [decision] …` — inject-select.ts formatInjectBlock,
+ * scripts/fact-consolidate-hook.js). The writers fold a category before they
+ * store it, but rows stored before they did are still there: a sync import by
+ * an older version kept the file's value, whatever it was — a value with a
+ * newline adds a line to the block, a long one takes the block's budget. The
+ * column is nullable, so anything that is not a string is 'knowledge' too.
+ * Same folding as the writers (normalizeCategory) — no second rule.
+ */
+export function categoryLabel(category: unknown): FactCategory {
+  return typeof category === 'string' ? normalizeCategory(category).category : 'knowledge';
+}

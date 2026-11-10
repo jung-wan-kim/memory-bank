@@ -50,6 +50,7 @@ import path from 'node:path';
 import { openReadOnlyDatabase } from '../dist/db.js';
 import { getTopFacts, topFactsGlobalMax } from '../dist/fact-db.js';
 import { factTextKey, truncateFact } from '../dist/fact-text.js';
+import { categoryLabel } from '../dist/fact-validity.js';
 import { loadLedger, appendLedger } from '../dist/inject-ledger.js';
 import { appendInjectLog, pluginVersion, sessionKey, shortId } from '../dist/inject-log.js';
 import { readHookInput } from '../dist/hook-stdin.js';
@@ -125,7 +126,9 @@ async function main() {
         // Project facts first, then at most MEMORY_BANK_KEY_FACTS_GLOBAL_MAX (default 3) global ones.
         const globalMax = topFactsGlobalMax(process.env.MEMORY_BANK_KEY_FACTS_GLOBAL_MAX);
         for (const fact of getTopFacts(db, project, 10, { globalMax })) {
-          const line = `- [${fact.category}] ${truncateFact(fact.fact)} (${fact.consolidated_count}x confirmed)`;
+          // categoryLabel, not the stored value: a row stored before the writers folded
+          // categories (an older version's sync import) can hold a newline or any length.
+          const line = `- [${categoryLabel(fact.category)}] ${truncateFact(fact.fact)} (${fact.consolidated_count}x confirmed)`;
           if (chars + line.length > BLOCK_CHAR_BUDGET) break;
           lines.push(line);
           shown.push(fact);
