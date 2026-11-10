@@ -335,6 +335,12 @@ describe('version-drift-check — 원격 조회를 끊으면 git 의 도우미 �
     while (Date.now() < end) { if (pred(gitProcs().length)) return true; await sleep(100); }
     return pred(gitProcs().length);
   };
+  /**
+   * '전제: git 과 도우미가 떠 있다'를 기다리는 시간. 훅이 뜨는 데(node 시작) 부하 때 2.5초를 넘길 수 있어 넉넉히 둔다 —
+   * 보이는 즉시 돌아오므로 평소에는 느려지지 않는다. '남은 프로세스 0' 쪽 1.5초는 넓히지 않는다: git 의 저속 제한이 5초라
+   * (3초 제한 + 그 이상을 기다리면) 끝내 주는 코드가 없어도 도우미가 스스로 끝나 단언이 판별력을 잃는다.
+   */
+  const PREMISE_WAIT_MS = 10_000;
   /** 훅을 띄워 두고 프로세스를 돌려준다(끝나기를 기다리지 않는다). */
   const startCheck = (from: string): ChildProcess => {
     const child = spawn(process.execPath, [scriptOf(from)], { env: checkEnv({ MEMORY_BANK_DRIFT_REMOTE: remote }), stdio: ['pipe', 'ignore', 'ignore'] });
@@ -367,7 +373,7 @@ describe('version-drift-check — 원격 조회를 끊으면 git 의 도우미 �
   it.skipIf(!realGit)('조회 중에 훅이 SIGTERM 을 받으면: git 과 도우미를 끝내고 그 신호로 끝난다', async () => {
     const child = startCheck('1.7.9');
     const exited = new Promise<NodeJS.Signals | null>((r) => child.on('exit', (_code, signal) => r(signal)));
-    expect(await waitProcs((n) => n >= 2, 2500), '전제: git 과 도우미가 떠 있다').toBe(true);
+    expect(await waitProcs((n) => n >= 2, PREMISE_WAIT_MS), '전제: git 과 도우미가 떠 있다').toBe(true);
     child.kill('SIGTERM');
     expect(await exited, '기본 동작 그대로 — 신호로 끝난다').toBe('SIGTERM');
     expect(await waitProcs((n) => n === 0, 1500), `남은 프로세스: ${gitProcs().join(' | ')}`).toBe(true);
@@ -376,7 +382,7 @@ describe('version-drift-check — 원격 조회를 끊으면 git 의 도우미 �
   it.skipIf(!realGit)('조회 중에 훅이 SIGKILL 로 죽어도: git 이 저속 제한으로 스스로 그만둔다 (몇 초 안)', async () => {
     const child = startCheck('1.7.9');
     const exited = new Promise<void>((r) => child.on('exit', () => r()));
-    expect(await waitProcs((n) => n >= 2, 2500), '전제: git 과 도우미가 떠 있다').toBe(true);
+    expect(await waitProcs((n) => n >= 2, PREMISE_WAIT_MS), '전제: git 과 도우미가 떠 있다').toBe(true);
     child.kill('SIGKILL');
     await exited;
     expect(gitProcs().length, '훅이 죽은 직후에는 아직 떠 있다(끝내 줄 프로세스가 없다)').toBeGreaterThan(0);
