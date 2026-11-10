@@ -11,12 +11,14 @@ Memory Bank is a Claude Code plugin that provides semantic search and fact extra
 ```bash
 npm install              # Install dependencies (runs postinstall: rebuild better-sqlite3)
 npm run build            # TypeScript compile + esbuild bundle
-npm test                 # Run all tests (vitest)
+npm test                 # Run all tests (vitest); pretest fails if dist/ is stale — run `npm run build` first
 npx vitest run test/parser.test.ts  # Run single test file
 npx vitest --watch       # Watch mode
 ```
 
 The build is two-step: `tsc` compiles `src/` → `dist/`, then `esbuild` bundles `src/mcp-server.ts` → `dist/mcp-server.js` with native modules externalized.
+
+`npm test` does not build: `pretest` runs `scripts/check-dist-fresh.mjs`, which compiles into a temp dir the way the build does, compares the result with the tracked `dist/` and fails when they differ (tests import `dist/`; the old `pretest` rewrote it on every run).
 
 ## Architecture
 
@@ -115,6 +117,10 @@ Consolidation relations: `DUPLICATE` (merge), `CONTRADICTION` (replace), `EVOLUT
 | `MEMORY_BANK_CONFIG_DIR` | Override config directory (useful for testing) |
 | `MEMORY_BANK_DB_PATH` / `TEST_DB_PATH` | Override database path |
 | `TEST_ARCHIVE_DIR` | Override archive directory for tests |
+| `MEMORY_BANK_TEST_GUARD` | `1` (set by `test/setup.ts`) = `initDatabase()` throws on a database under the real `~/.config/superpowers` (`src/test-guard.ts`) |
+| `MEMORY_BANK_TEST_LLM_BASE_URL` | Test runs only: the `ANTHROPIC_BASE_URL` tests get instead of the closed local port |
+| `MEMORY_BANK_UI_HOST` / `MEMORY_BANK_UI_TOKEN` | Web UI (`ui/server.cjs`) listen address (default `127.0.0.1`) and access token; a non-loopback address without a 16+ character token refuses to start (`ui/server-guards.cjs`) |
+| `HUE_OS_PUBLIC_PORT` / `REPLACEMENT_OS_ACCESS_PASSWORD` | Second loopback listener with the Hue OS chat routes only (the one port a tunnel may point at), and the Hue OS login password — no default; unset = login off |
 | `MEMORY_BANK_MAINTENANCE_INTERVAL_MIN` | Session-start maintenance interval in minutes (default 360, 0 = every start; a partial run retries after 60) |
 | `MEMORY_BANK_NODE` | Node binary for hooks when the default node's ABI does not match better-sqlite3 |
 | `MEMORY_BANK_INJECT_HOOK_BUDGET_MS` | Injection hook time budget that bounds its cold fallback and native-ABI re-run (default 30000 = the hook's `timeout` in hooks.json) |
@@ -189,6 +195,7 @@ Automatic classification of facts into domain/category hierarchy:
 ### Testing Patterns
 - Test utilities in `test/test-utils.ts`: `createTestDb()`, `suppressConsole()`, `getFixturePath()`
 - Environment overrides via `TEST_DB_PATH`, `TEST_ARCHIVE_DIR` for isolation
+- `test/setup.ts` (vitest `setupFiles`) gives every test file temp defaults for `MEMORY_BANK_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`, `TEST_PROJECTS_DIR` (kept when already set, put back before each test), points `ANTHROPIC_BASE_URL` at a closed local port (a value inherited from the shell is replaced) and turns the live-database guard on — a test never opens the real database or calls a real model
 - Fixtures in `test/fixtures/*.jsonl`
 - Each test creates/destroys its own temp directory
 - 30s timeout per test (embedding model loading)

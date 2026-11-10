@@ -47,7 +47,7 @@ const DB_ROW_TABLES = ['facts', 'ontology_domains', 'ontology_categories', 'onto
 export function getSyncDir(): string {
   const dir = path.join(getSuperpowersDir(), 'conversation-index', SYNC_DIR_NAME);
   if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); // owner-only: the exported facts are private (file-perms.ts)
   }
   return dir;
 }

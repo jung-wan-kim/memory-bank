@@ -6,6 +6,8 @@ import * as sqliteVec from 'sqlite-vec';
 import { getDbPath } from './paths.js';
 import { autoHealScopeProjects } from './project-canon.js';
 import { EMBEDDING_VERSION } from './embedding-version.js';
+import { assertNotLiveDbUnderTest } from './test-guard.js';
+import { preparePrivateDbFile } from './file-perms.js';
 
 // === vec0 dtype + int8 scale (float32 legacy / int8 quantized) ===
 // int8 quantization: q = clamp(round(x*scale), -127, 127). int8 L2 distances
@@ -244,6 +246,8 @@ export function openReadOnlyDatabase(): Database.Database | null {
 
 export function initDatabase(): Database.Database {
   const dbPath = getDbPath();
+  assertNotLiveDbUnderTest(dbPath); // a test run never opens the live database (no-op outside tests)
+  preparePrivateDbFile(dbPath); // a new database is created 0600; an older install is made owner-only once
 
   // Ensure directory exists
   const dbDir = path.dirname(dbPath);

@@ -2,11 +2,32 @@
 /**
  * Memory Bank Web UI v2
  * Cinematic dark-theme conversation explorer
+ *
+ * A local tool: it listens on 127.0.0.1, answers same-origin requests from a
+ * browser on this machine, and sends no CORS headers — the pages and APIs
+ * below hand out whole conversations with no login. The access rules (listen
+ * address, token for anything wider, the separate Hue OS public listener) are
+ * in ./server-guards.cjs.
  */
 const http = require('http');
 const path = require('path');
 const PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(__dirname, '..');
 const Database = require(path.join(PLUGIN_ROOT, 'node_modules/better-sqlite3'));
+const {
+  UI_TOKEN_COOKIE,
+  MAX_BODY_BYTES,
+  HUE_OS_PAGES,
+  HttpError,
+  resolveListenConfig,
+  resolveDbPath,
+  isHueOsApi,
+  isHueOsRoute,
+  checkLocalAccess,
+  parsePaging,
+  parseTranslateTexts,
+  safeJsonForScript,
+  clientAddress,
+} = require('./server-guards.cjs');
 const {
   ACCESS_COOKIE_NAME,
   createReplacementOsAccessState,
@@ -20,8 +41,15 @@ const {
   chatWithReplacementOs,
 } = require('./replacement-os.cjs');
 
-const DB_PATH = path.join(process.env.HOME, '.config/superpowers/conversation-index/db.sqlite');
-const PORT = process.env.PORT || 3847;
+let CONFIG;
+try {
+  CONFIG = resolveListenConfig(process.env);
+} catch (e) {
+  // Refuse to start rather than start wider open than configured for.
+  console.error(`Memory Bank UI not started: ${e.message}`);
+  process.exit(1);
+}
+const DB_PATH = resolveDbPath(process.env);
 const replacementOsAccess = createReplacementOsAccessState();
 
 let db;
@@ -43,16 +71,14 @@ function parseCookies(req) {
   for (const part of header.split(';')) {
     const [rawKey, ...rawValue] = part.trim().split('=');
     if (!rawKey) continue;
-    cookies[rawKey] = decodeURIComponent(rawValue.join('=') || '');
+    try { cookies[rawKey] = decodeURIComponent(rawValue.join('=') || ''); }
+    catch (_) { cookies[rawKey] = rawValue.join('='); }
   }
   return cookies;
 }
 
-function clientIp(req) {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.trim()) return forwarded.split(',')[0].trim();
-  return req.socket.remoteAddress || 'unknown';
-}
+// Sent with every response: nothing here is meant to be embedded or type-sniffed by another site.
+const BASE_HEADERS = { 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer' };
 
 function replacementOsToken(req) {
   return parseCookies(req)[ACCESS_COOKIE_NAME];
@@ -63,8 +89,13 @@ function isReplacementOsRequestAuthenticated(req) {
 }
 
 function writeJson(res, status, payload, headers = {}) {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', ...headers });
+  res.writeHead(status, { ...BASE_HEADERS, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
   res.end(JSON.stringify(payload));
+}
+
+function writeHtml(res, status, html, headers = {}) {
+  res.writeHead(status, { ...BASE_HEADERS, 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ...headers });
+  res.end(html);
 }
 
 // Translation cache (in-memory, persists during server lifetime)
@@ -171,8 +202,7 @@ const apiHandlers = {
 
   '/api/search': (params) => {
     const q = params.get('q') || '', project = params.get('project') || '';
-    const limit = Math.min(parseInt(params.get('limit') || '50'), 200);
-    const offset = parseInt(params.get('offset') || '0');
+    const { limit, offset } = parsePaging(params);
     let where = [], args = [];
     if (q) { where.push('(e.user_message LIKE ? OR e.assistant_message LIKE ?)'); args.push(`%${q}%`, `%${q}%`); }
     if (project) { where.push('e.project = ?'); args.push(project); }
@@ -192,8 +222,7 @@ const apiHandlers = {
 
   '/api/user-prompts': (params) => {
     const q = params.get('q') || '', project = params.get('project') || '';
-    const limit = Math.min(parseInt(params.get('limit') || '50'), 200);
-    const offset = parseInt(params.get('offset') || '0');
+    const { limit, offset } = parsePaging(params);
     let where = ["e.user_message NOT LIKE '%<observed_from_primary_session>%'", "e.user_message NOT LIKE '%<what_happened>%'", "length(e.user_message) > 1", "length(e.user_message) < 5000"];
     let args = [];
     if (q) { where.push('e.user_message LIKE ?'); args.push(`%${q}%`); }
@@ -258,7 +287,7 @@ apiHandlers['/api/project-detail'] = (params) => {
   return { project, info, toolUsage, activity, recentPrompts, facts, sessions };
 };
 
-const handleHueOsLogin = async (params, body) => authenticateReplacementOsAccess(replacementOsAccess, String(body && body.password || ''));
+const handleHueOsLogin = async (params, body, context) => authenticateReplacementOsAccess(replacementOsAccess, String(body && body.password || ''), { ip: context.ip });
 const handleHueOsProfile = async (params, body, context) => ({
   ...readReplacementOsPublication(),
   quota: getReplacementOsQuota(replacementOsAccess, context.ip),
@@ -279,9 +308,9 @@ const handleHueOsChat = async (params, body, context) => {
 // Translation API (async handler - special case)
 const asyncHandlers = {
   '/api/translate': async (params, body) => {
-    const texts = body && body.texts ? body.texts : [];
+    const texts = parseTranslateTexts(body); // at most 50 strings of 2,000 characters; more is a 400, not a silent cut
     if (!texts.length) return { translated: [] };
-    const translated = await translateTexts(texts.slice(0, 50)); // max 50 at a time
+    const translated = await translateTexts(texts);
     return { translated };
   },
   '/api/hue-os/login': handleHueOsLogin,
@@ -330,82 +359,172 @@ function serveGraph3D(res) {
     let html = fs.readFileSync(graphPath, 'utf-8');
     // Replace hardcoded var R={...} data with live DB data
     const liveData = apiHandlers['/api/graph-data']();
-    html = html.replace(
-      /var R=\{[\s\S]*?\n(?=var DOM=)/,
-      `var R=${JSON.stringify(liveData)};\n`
-    );
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(html);
+    const anchor = /var R=\{[\s\S]*?\n(?=var DOM=)/;
+    if (!anchor.test(html)) {
+      // Without the anchor the page would silently show the sample data shipped in the file.
+      writeJson(res, 500, { error: 'graph_template_mismatch', message: 'docs/graph-3d.html has no `var R={…}` block to fill with live data' });
+      return;
+    }
+    // The data goes inside a <script>: escaped so a stored string cannot end the element, and
+    // inserted through a function so `$&` / `$'` in the data are not read as replacement patterns.
+    const inline = `var R=${safeJsonForScript(liveData)};\n`;
+    html = html.replace(anchor, () => inline);
+    writeHtml(res, 200, html);
   } else {
-    res.writeHead(404); res.end('graph-3d.html not found');
+    res.writeHead(404, BASE_HEADERS); res.end('graph-3d.html not found');
   }
 }
 
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url, 'http://localhost');
-  if (url.pathname === '/' || url.pathname === '/graph') {
-    serveGraph3D(res);
-    return;
-  }
-  if (url.pathname === '/dashboard') {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(getHTML());
-    return;
-  }
-  if (url.pathname === '/hue-os' || url.pathname === '/replacement-os' || url.pathname === '/os' || url.pathname === '/replacement') {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(isReplacementOsRequestAuthenticated(req) ? renderReplacementOsPage() : renderReplacementOsLoginPage());
-    return;
-  }
-  // Async API handlers (translation etc.)
-  if (asyncHandlers[url.pathname]) {
-    const abortController = new AbortController();
-    req.on('aborted', () => abortController.abort());
-    res.on('close', () => {
-      if (!res.writableEnded) abortController.abort();
+// Bodies are small JSON; anything larger is refused, and far larger is cut off unread.
+const BODY_ABORT_BYTES = 32 * MAX_BODY_BYTES;
+
+/** The request body as text. More than MAX_BODY_BYTES is a 413 — never buffered. */
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > BODY_ABORT_BYTES) { req.destroy(); return; }
+      if (size <= MAX_BODY_BYTES) chunks.push(chunk);
+      else chunks.length = 0;
     });
-    let body = '';
-    req.on('data', chunk => body += chunk);
-    req.on('end', async () => {
-      const isReplacementApi = url.pathname.startsWith('/api/replacement-os/');
-      const isHueOsApi = url.pathname.startsWith('/api/hue-os/');
-      const isHueOsLogin = url.pathname === '/api/hue-os/login' || url.pathname === '/api/replacement-os/login';
-      if ((isReplacementApi || isHueOsApi) && !isHueOsLogin && !isReplacementOsRequestAuthenticated(req)) {
-        writeJson(res, 401, { error: 'authentication_required' });
+    req.on('end', () => {
+      if (size > MAX_BODY_BYTES) reject(new HttpError(413, 'body_too_large', `request body is larger than ${MAX_BODY_BYTES} bytes`));
+      else resolve(Buffer.concat(chunks).toString('utf8'));
+    });
+    req.on('error', reject);
+  });
+}
+
+function parseJsonBody(text) {
+  if (!text) return {};
+  try { return JSON.parse(text); }
+  catch (_) { throw new HttpError(400, 'invalid_json', 'request body is not JSON'); }
+}
+
+/**
+ * Request handler of one listener.
+ *  - 'local'  — the dashboard listener: every page and API, for this machine (or, with a token, for its holder).
+ *  - 'public' — the Hue OS listener a tunnel points at: the chat routes only. No dashboard page and no
+ *               conversation API exists on it, whatever the request says about itself.
+ */
+function createRequestHandler(surface) {
+  const isPublic = surface === 'public';
+  return (req, res) => {
+    let url;
+    try { url = new URL(req.url, 'http://localhost'); }
+    catch (_) { writeJson(res, 400, { error: 'bad_request' }); return; }
+    const pathname = url.pathname;
+
+    if (isPublic) {
+      if (!isHueOsRoute(pathname)) { writeJson(res, 404, { error: 'not_found' }); return; }
+    } else {
+      const access = checkLocalAccess({ method: req.method, headers: req.headers, pathname, searchParams: url.searchParams }, CONFIG);
+      if (access && access.setTokenCookie) {
+        // The token came in the URL once: move it into an HttpOnly cookie and drop it from the address bar.
+        url.searchParams.delete('token');
+        const query = url.searchParams.toString();
+        res.writeHead(302, {
+          ...BASE_HEADERS,
+          Location: pathname + (query ? `?${query}` : ''),
+          'Cache-Control': 'no-store',
+          'Set-Cookie': `${UI_TOKEN_COOKIE}=${encodeURIComponent(CONFIG.token)}; HttpOnly; SameSite=Strict; Path=/`,
+        });
+        res.end();
         return;
       }
-      try {
-        const parsed = body ? JSON.parse(body) : {};
-        const result = await asyncHandlers[url.pathname](url.searchParams, parsed, { ip: clientIp(req), signal: abortController.signal });
-        const headers = { 'Access-Control-Allow-Origin': '*' };
+      if (access) { writeJson(res, access.status, { error: access.error, message: access.message }); return; }
+    }
+
+    if (pathname === '/' || pathname === '/graph') {
+      serveGraph3D(res);
+      return;
+    }
+    if (pathname === '/dashboard') {
+      writeHtml(res, 200, getHTML());
+      return;
+    }
+    if (HUE_OS_PAGES.has(pathname)) {
+      writeHtml(res, 200, isReplacementOsRequestAuthenticated(req) ? renderReplacementOsPage() : renderReplacementOsLoginPage());
+      return;
+    }
+    // Async API handlers (translation etc.)
+    if (asyncHandlers[pathname]) {
+      const abortController = new AbortController();
+      req.on('aborted', () => abortController.abort());
+      res.on('close', () => {
+        if (!res.writableEnded) abortController.abort();
+      });
+      const isHueOsLogin = pathname === '/api/hue-os/login' || pathname === '/api/replacement-os/login';
+      // X-Forwarded-For is trusted only where our own proxy wrote it (see clientAddress).
+      const ip = clientAddress(req, isPublic || process.env.MEMORY_BANK_UI_TRUST_PROXY === '1');
+      readBody(req).then(async (body) => {
+        if (isHueOsApi(pathname) && !isHueOsLogin && !isReplacementOsRequestAuthenticated(req)) {
+          writeJson(res, 401, { error: 'authentication_required' });
+          return;
+        }
+        const parsed = parseJsonBody(body);
+        const result = await asyncHandlers[pathname](url.searchParams, parsed, { ip, signal: abortController.signal });
+        if (isHueOsLogin && !result.ok) {
+          // No password configured = the login is off (503); too many failures = wait (429). A wrong password stays a 200 with ok:false.
+          if (result.error === 'access_password_not_configured') { writeJson(res, 503, result); return; }
+          if (result.error === 'too_many_attempts') { writeJson(res, 429, result, { 'Retry-After': String(result.retryAfterSec) }); return; }
+        }
+        const headers = {};
         if (isHueOsLogin && result.ok && result.token) {
           headers['Set-Cookie'] = `${ACCESS_COOKIE_NAME}=${encodeURIComponent(result.token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400`;
         }
         writeJson(res, 200, isHueOsLogin && result.ok ? { ok: true } : result, headers);
+      }).catch((e) => {
+        writeJson(res, e.statusCode || 500, e.payload || { error: e.message });
+      });
+      return;
+    }
+    if (apiHandlers[pathname]) {
+      try {
+        writeJson(res, 200, apiHandlers[pathname](url.searchParams));
       } catch (e) {
         writeJson(res, e.statusCode || 500, e.payload || { error: e.message });
       }
-    });
-    return;
-  }
-  if (apiHandlers[url.pathname]) {
-    try {
-      const result = apiHandlers[url.pathname](url.searchParams);
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify(result));
-    } catch (e) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: e.message }));
+      return;
     }
-    return;
-  }
-  res.writeHead(404); res.end('Not found');
+    res.writeHead(404, BASE_HEADERS); res.end('Not found');
+  };
+}
+
+function hostPort(address, port) {
+  return `${address.includes(':') ? `[${address}]` : address}:${port}`;
+}
+
+function refuseToStart(what) {
+  return (e) => {
+    console.error(`${what} not started: ${e.message}`);
+    process.exit(1);
+  };
+}
+
+const server = http.createServer(createRequestHandler('local'));
+server.on('error', refuseToStart('Memory Bank UI'));
+server.listen(CONFIG.port, CONFIG.host, () => {
+  const { address, port } = server.address();
+  // The address the socket is actually bound to (tests read this line).
+  console.log(`Listening on ${hostPort(address, port)} (${CONFIG.localOnly ? 'this machine only' : 'token required'})`);
+  const shown = CONFIG.localOnly ? `localhost:${port}` : hostPort(address, port);
+  console.log(`Memory Bank UI: http://${shown}${CONFIG.token ? '  — open /?token=<MEMORY_BANK_UI_TOKEN> once to sign this browser in' : ''}`);
+  console.log(`Hue OS: http://${shown}/hue-os`);
 });
 
-server.listen(PORT, () => {
-  console.log(`Memory Bank UI: http://localhost:${PORT}`);
-  console.log(`Hue OS: http://localhost:${PORT}/hue-os`);
-});
+// The Hue OS public listener: the only port a tunnel or reverse proxy may point at.
+let publicServer = null;
+if (CONFIG.publicPort !== null) {
+  publicServer = http.createServer(createRequestHandler('public'));
+  publicServer.on('error', refuseToStart('Hue OS public listener'));
+  publicServer.listen(CONFIG.publicPort, '127.0.0.1', () => {
+    const { address, port } = publicServer.address();
+    console.log(`Hue OS public listener on ${hostPort(address, port)} (chat routes only — point the tunnel here, never at the dashboard port)`);
+  });
+}
 process.on('SIGINT', () => { if (db) db.close(); process.exit(); });
 process.on('SIGTERM', () => { if (db) db.close(); process.exit(); });
 
@@ -622,12 +741,12 @@ select:focus{border-color:var(--accent);outline:none}
 <script>
 let currentTab='projects',currentProject='',searchOffset=0,projectSortBy='last_seen';
 
-function esc(s){if(!s)return'';const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+function esc(s){if(s===null||s===undefined||s==='')return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 // real_path가 있으면 사용, 없으면 project key에서 추정
 const projectPathMap={};
 function registerPath(project,realPath){if(realPath)projectPathMap[project]=realPath}
 function getPath(p){return projectPathMap[p]||p}
-function shortPath(p){return getPath(p).replace(/^\\/Users\\/jung-wankim\\//,'~/')}
+function shortPath(p){return getPath(p).replace(/^\\/(?:Users|home)\\/[^\\/]+\\//,'~/')}
 function projectName(p){
   const full=getPath(p);
   const parts=full.split('/').filter(Boolean);
@@ -841,7 +960,7 @@ function renderResults(data,q,project){
 }
 
 async function showExchange(id){
-  const data=await api('/api/exchange?id='+id);if(!data.exchange)return;
+  const data=await api('/api/exchange?id='+encodeURIComponent(id));if(!data.exchange)return;
   const e=data.exchange;
   const el=getEl('results')||getEl('content');
   el.innerHTML=

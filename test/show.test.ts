@@ -190,3 +190,64 @@ describe('show command - HTML formatting', () => {
     expect(html).toContain('streaming');
   });
 });
+
+describe('show command - HTML export does not pass conversation HTML through (SEC-09)', () => {
+  // An assistant message that counts as markdown (heading, bold, list, link) and carries active content.
+  const hostile = [
+    '# Summary',
+    '',
+    '**Done.** Details:',
+    '',
+    '- item one',
+    '- <img src=x onerror="window.__mb1=1"> inline image tag',
+    '',
+    '<script>window.__mb2=1</script>',
+    '',
+    '<details><summary>raw block</summary>hidden</details>',
+    '',
+    '[run me](javascript:window.__mb3=1) and [docs](https://example.com/a?b=1&c=2) and [mail](mailto:a@example.com)',
+    '',
+    '![pixel](https://tracker.example/p.png "t")',
+    '',
+    '`<b>code stays code</b>`',
+  ].join('\n');
+  const jsonl = [
+    JSON.stringify({ type: 'user', uuid: 'u1', sessionId: 's1', timestamp: '2026-11-10T00:00:00Z', message: { role: 'user', content: 'show me' } }),
+    JSON.stringify({ type: 'assistant', uuid: 'a1', parentUuid: 'u1', sessionId: 's1', timestamp: '2026-11-10T00:00:01Z', message: { role: 'assistant', content: [{ type: 'text', text: hostile }] } }),
+  ].join('\n');
+
+  it('renders the markdown but writes raw HTML as text', () => {
+    const html = formatConversationAsHTML(jsonl);
+    // It went through the markdown renderer (not the plain-text branch).
+    expect(html).toContain('<div class="markdown-content">');
+    expect(html).toMatch(/<h1[^>]*>Summary<\/h1>/);
+    expect(html).toContain('<strong>Done.</strong>');
+    // No element or handler from the message survives as markup.
+    expect(html).not.toContain('<script>window.__mb2=1</script>');
+    expect(html).not.toMatch(/<img\b/i);
+    expect(html).not.toMatch(/<details\b/i);
+    expect(html).not.toMatch(/<[a-z][^>]*\sonerror\s*=/i);
+    expect(html).toContain('&lt;script&gt;window.__mb2=1&lt;/script&gt;');
+    expect(html).toContain('&lt;img src=x onerror=');
+    // Inline code was already escaped by the renderer and still is.
+    expect(html).toContain('<code>&lt;b&gt;code stays code&lt;/b&gt;</code>');
+  });
+
+  it('keeps http(s) and mailto links, drops any other scheme, and loads no image', () => {
+    const html = formatConversationAsHTML(jsonl);
+    expect(html).toContain('<a href="https://example.com/a?b=1&amp;c=2" rel="noopener noreferrer">docs</a>');
+    expect(html).toContain('<a href="mailto:a@example.com" rel="noopener noreferrer">mail</a>');
+    expect(html).not.toMatch(/href\s*=\s*["']?\s*javascript:/i);
+    expect(html).toContain('run me'); // the label stays, as text
+    expect(html).not.toContain('src="https://tracker.example/p.png"');
+    expect(html).toContain('![pixel](https://tracker.example/p.png)');
+  });
+
+  it('declares a policy that runs no script and loads nothing remote', () => {
+    const html = formatConversationAsHTML(jsonl);
+    expect(html).toContain(`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">`);
+    // The page itself needs neither: no script element, no external resource.
+    expect(html).not.toMatch(/<script\b/i);
+    expect(html).not.toMatch(/<link\b/i);
+  });
+});

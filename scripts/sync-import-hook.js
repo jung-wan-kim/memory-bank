@@ -43,6 +43,12 @@ async function main() {
       console.error(`sync-import: skipped ${result.rejectedSecrets} fact(s) carrying a credential-shaped string`);
       logFailure({ action: 'rejected_secrets', rejected_secrets: result.rejectedSecrets, kinds: result.rejectedSecretReasons });
     }
+    if (result.rejectedInstructionLike > 0) {
+      // Text shaped like an instruction to the model (import-guard) is not imported as a "past decision".
+      // Like the rows above it stays in the sync files, so this repeats until the line is removed there.
+      console.error(`sync-import: refused ${result.rejectedInstructionLike} instruction-like fact(s) from the sync files: ${result.rejectedInstructionLikeSamples.join(', ')}`);
+      logFailure({ action: 'refused-instruction-like', count: result.rejectedInstructionLike, samples: result.rejectedInstructionLikeSamples });
+    }
     if (result.detachedCategoryRefs > 0) {
       console.error(`sync-import: ${result.detachedCategoryRefs} imported fact(s) referenced a category missing here — left unclassified for the ontology backfill`);
     }

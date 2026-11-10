@@ -6,6 +6,7 @@ import { getSyncDir, ownExportStillInDb } from './sync-export.js';
 import { canonicalizeProject } from './project-canon.js';
 import { factRejectReason, ontologyNameRejectReason } from './fact-validity.js';
 import { secretRejectReason } from './secret-scan.js';
+import { importGuardReason, recordImportedFact } from './import-guard.js';
 
 interface SyncFact {
   id: string;
@@ -30,6 +31,7 @@ export async function importFromSync(): Promise<{
   newFacts: number; newDomains: number; newCategories: number; newRelations: number;
   rejectedJunk: number; detachedCategoryRefs: number; failedFacts: number; failedFactErrors: string[];
   rejectedSecrets: number; rejectedSecretReasons: Record<string, number>;
+  rejectedInstructionLike: number; rejectedInstructionLikeSamples: string[];
 }> {
   const syncDir = getSyncDir();
   // rejectedJunk: rows in the sync files that fact-validity.ts refuses (template residue,
@@ -44,10 +46,13 @@ export async function importFromSync(): Promise<{
   // rejectedSecrets: facts whose text carries a credential-shaped string (secret-scan.ts) —
   //   never imported; like rejectedJunk the rows stay in the sync files until the exporting
   //   device stops exporting them. rejectedSecretReasons counts them by kind (no text).
+  // rejectedInstructionLike: facts whose text is an instruction aimed at the model (import-guard.ts) — like
+  //   rejectedJunk they stay in the files, so the count repeats per run. Samples: the first few "id: reason".
   const result = {
     newFacts: 0, newDomains: 0, newCategories: 0, newRelations: 0, rejectedJunk: 0, detachedCategoryRefs: 0,
     failedFacts: 0, failedFactErrors: [] as string[],
     rejectedSecrets: 0, rejectedSecretReasons: {} as Record<string, number>,
+    rejectedInstructionLike: 0, rejectedInstructionLikeSamples: [] as string[],
   };
   const rejectedDomainIds = new Set<string>();
 
@@ -119,6 +124,8 @@ export async function importFromSync(): Promise<{
           result.rejectedSecretReasons[secretReason] = (result.rejectedSecretReasons[secretReason] ?? 0) + 1;
           continue;
         }
+        const guardReason = importGuardReason(f);
+        if (guardReason) { result.rejectedInstructionLike++; if (result.rejectedInstructionLikeSamples.length < 5) result.rejectedInstructionLikeSamples.push(`${f.id}: ${guardReason}`); continue; }
 
         // Canonicalize scope before dedup/insert — other devices may still
         // export slug-format project names.
@@ -168,6 +175,7 @@ export async function importFromSync(): Promise<{
           f.created_at, f.updated_at, f.consolidated_count, f.ontology_category_id,
           f.fact_kr ?? null, EMBEDDING_VERSION
         );
+        recordImportedFact(db, f.id); // origin mark: this fact came from a sync file, not from this device's extraction
 
         // Vector index (dtype/scale-aware: int8 tables need vec_int8()-wrapped
         // blobs quantized at the table's scale — a raw float32 blob throws)

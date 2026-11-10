@@ -30,7 +30,7 @@ Run the following steps:
 
 4. **Report to the user:**
    - Tell them the dashboard is now open at http://localhost:3847
-   - Mention they can stop the server with: `kill $(lsof -ti:3847)` or simply close the terminal
+   - Mention they can stop the server with: `pkill -f "ui/server.cjs"` or simply close the terminal
    - The dashboard shows: projects, conversation search, user prompts, and fact search
 
 ## Features Available in the Dashboard
