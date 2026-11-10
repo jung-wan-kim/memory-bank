@@ -20,6 +20,21 @@ describe('shipped slash commands', () => {
     expect(text).not.toMatch(/kill \$\(lsof -ti:\d+\)/);
     expect(text).toContain('pkill -f "ui/server.cjs"');
   });
+
+  it('no command — whichever file of commands/ — stops a process by the port it holds', () => {
+    // `kill $(lsof -ti:3847)` and its relatives stop whatever happens to hold the port.
+    const byPort = /\bkill\b[^\n]*\blsof\b|\blsof\b[^\n]*\|\s*xargs\b[^\n]*\bkill\b|\bfuser\b[^\n]*\s-k\b|\bkill-port\b/;
+    expect('kill $(lsof -ti:3847) 2>/dev/null').toMatch(byPort);
+    expect('lsof -ti:3847 | xargs kill -9').toMatch(byPort);
+    expect('lsof -ti:3847 2>/dev/null').not.toMatch(byPort);
+    expect('pkill -f "ui/server.cjs"').not.toMatch(byPort);
+
+    const files = fs.readdirSync(path.join(REPO, 'commands')).filter((file) => file.endsWith('.md')).sort();
+    expect(files).toEqual(['search-conversations.md', 'show-dashboard.md', 'show-memory-bank.md']);
+    for (const file of files) {
+      expect(fs.readFileSync(path.join(REPO, 'commands', file), 'utf8'), file).not.toMatch(byPort);
+    }
+  });
 });
 
 describe('web UI dashboard', () => {
