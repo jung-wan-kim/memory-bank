@@ -46,7 +46,10 @@ async function main() {
     if (result.rejectedInstructionLike > 0) {
       // Text shaped like an instruction to the model (import-guard) is not imported as a "past decision".
       // Like the rows above it stays in the sync files, so this repeats until the line is removed there.
-      console.error(`sync-import: refused ${result.rejectedInstructionLike} instruction-like fact(s) from the sync files: ${result.rejectedInstructionLikeSamples.join(', ')}`);
+      // "row(s)", not "fact(s)": the count covers every text the import judges — a fact's text or category,
+      // an ontology domain or category name, a relation's reasoning. The samples say which ("<fact id>: reason",
+      // "domain|category|relation <id>: reason").
+      console.error(`sync-import: refused ${result.rejectedInstructionLike} instruction-like row(s) from the sync files (facts, ontology names, relation reasons): ${result.rejectedInstructionLikeSamples.join(', ')}`);
       logFailure({ action: 'refused-instruction-like', count: result.rejectedInstructionLike, samples: result.rejectedInstructionLikeSamples });
     }
     if (result.detachedCategoryRefs > 0) {
