@@ -1042,12 +1042,15 @@ export async function formatResults(results: SearchHit[], meta?: SearchMeta): Pr
 
 /**
  * Keyword side of the multi-concept search: exchanges that contain every word of every concept, one per
- * conversation — up to 5×limit of them, the nearest to the concepts first. Each carries its real similarity
- * to every concept, computed from its stored vector (NaN when the exchange has no vector row — unknown, not
- * zero; those go last).
- * The order is the similarity, not the keyword pass's: an exchange can hold every word by accident (a long
- * pasted document, a tool log), and the keyword pass ranks by word statistics or, over its ranking budget,
- * by recency.
+ * conversation — up to 5×limit of them, in the keyword pass's own order (BM25; by recency over its ranking
+ * budget). Each carries its real similarity to every concept, computed from its stored vector (NaN when the
+ * exchange has no vector row — unknown, not zero): the similarity is shown with the result, it does not
+ * rank it.
+ * They used to be re-sorted by that similarity. A short concept and a long turn score in a narrow band
+ * whatever the turn is about, so the sort moved the turn the keyword pass ranked first out of the answer
+ * (live index, 70 two-word queries made from known facts, limit 10: the fact's source conversation was in
+ * the answer for 10 with the sort and for 14 with the keyword order; 16 before the two lists were fused —
+ * the remaining 2 are the places the fused ranking gives to semantic matches).
  */
 async function keywordConceptMatches(
   concepts: string[],
@@ -1083,7 +1086,8 @@ async function keywordConceptMatches(
   const distance = db.prepare(`SELECT vec_distance_l2(embedding, ${vecParamSql(quant)}) AS d FROM vec_exchanges WHERE id = ?`);
   const blobs = embeddings.map((embedding) => embeddingToVecBlob(embedding, quant));
 
-  const matches = hits.map((hit) => {
+  // `hits` is in the keyword pass's order, and that order is kept.
+  return hits.map((hit) => {
     const conceptSimilarities = blobs.map((blob) => {
       const row = distance.get(blob, hit.exchange.id) as { d: number } | undefined;
       return row ? l2DistanceToSimilarity(normalizeVecDistance(row.d, quant)) : Number.NaN;
@@ -1096,9 +1100,6 @@ async function keywordConceptMatches(
       matchedBy: 'keyword' as const,
     };
   });
-  // Nearest first; unknown similarity last. The sort is stable: equal values keep the keyword pass's order.
-  const sortKey = (m: MultiConceptResult) => (Number.isFinite(m.averageSimilarity) ? m.averageSimilarity : -Infinity);
-  return matches.sort((a, b) => sortKey(b) - sortKey(a));
 }
 
 /**
@@ -1130,7 +1131,7 @@ function fuseConceptMatches(
 
 /**
  * Conversations that match ALL concepts, at most `limit`, in one ranking (fuseConceptMatches) of
- *  - exchanges that contain every word of every concept (keyword index), nearest to the concepts first, and
+ *  - exchanges that contain every word of every concept (keyword index), in the keyword pass's order, and
  *  - conversations in which every concept has a semantically near exchange, by average similarity.
  * The second alone — intersecting each concept's nearest 5×limit exchanges — returned nothing on a large
  * index even when dozens of exchanges contained all the words (the lists rarely share a conversation).

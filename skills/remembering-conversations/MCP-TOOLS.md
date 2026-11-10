@@ -77,8 +77,9 @@ text of an exchange is read with `read`.
 **Multi-concept search** — `query: ["authentication", "React Router", "error handling"]` returns at most
 `limit` conversations in ONE ranking made from two lists:
 
-- the exchanges that contain every word of every concept, one per conversation, the ones nearest to the
-  concepts first — shown as `every word in one exchange (N% avg semantic)`;
+- the exchanges that contain every word of every concept, one per conversation, in the keyword search's own
+  order (word statistics, BM25) — shown as `every word in one exchange (N% avg semantic)`. The percentage is
+  that exchange's similarity to the concepts: it is shown, it does not order this list;
 - the conversations in which every concept has a semantically near exchange, by average similarity — shown
   as `N% avg match`.
 
