@@ -161,6 +161,51 @@ describe('secretRejectReason', () => {
     }
   });
 
+  // 2차 검수 R2-SEC-2: 문장 속 값 규칙이 키워드 바로 뒤의 UUID·해시를 자격증명으로 봤다
+  // ("… pagination token <UUID> …" 99.7% 거부). 키워드가 식별자의 이름으로 쓰인 자리다.
+  describe('키워드 바로 뒤의 UUID·해시 (문장 속 값 규칙)', () => {
+    const UUID = '4b1d6f0e-7a3c-4e52-9d18-6c0f2a9b5e71';
+    const SHA1 = j(HEX32, '7a8b9c0d'); // 16진 40자
+    const SHA256 = HEX32.repeat(2); // 16진 64자
+
+    it('이음말·조사 없이 키워드 바로 뒤에 온 UUID·16진 40자·64자는 통과한다', () => {
+      for (const text of [
+        `The pagination token ${UUID} is returned by the list call.`,
+        `The pagination token ${UUID.toUpperCase()} is returned by the list call.`,
+        `The session token (${UUID}) is logged with every request.`,
+        `캐시 토큰 ${SHA256} 는 내용 해시다.`,
+        `The build token ${SHA1} is the commit it was built from.`,
+        `The idempotency token \`${UUID}\` was reused by the retry.`,
+      ]) {
+        expect(secretRejectReason(text), text).toBeNull();
+      }
+    });
+
+    it('값이라고 밝힌 문장(is·값·조사)과 대입 꼴은 UUID·해시여도 그대로 거부한다', () => {
+      for (const text of [
+        `The service token is ${UUID} for the deploy.`,
+        `The API key was ${SHA1} until the rotation.`,
+        `배포 토큰은 ${SHA256} 이다.`,
+        `API 키 값은 ${UUID} 이다.`,
+      ]) {
+        expect(secretRejectReason(text), text).toBe('secret-credential-in-prose');
+      }
+      expect(secretRejectReason(`token: ${UUID}`)).toBe('secret-credential-assignment');
+      expect(secretRejectReason(`password = ${SHA1}`)).toBe('secret-credential-assignment');
+    });
+
+    it('UUID·해시 꼴에서 한 글자라도 벗어나면 키워드 바로 뒤여도 거부한다', () => {
+      for (const text of [
+        `The deploy token ${HEX32} is used by the pipeline.`, // 16진 32자 — 해시 길이가 아니다
+        `The deploy token ${SHA1}0 is used by the pipeline.`, // 41자
+        `The deploy token ${UUID}_v2 is used by the pipeline.`, // UUID 뒤에 덧붙은 값
+        `The deploy token ${j('Xk29fLq8Zr71', 'TbV4mNq7Zp2L')} is used by the pipeline.`,
+      ]) {
+        expect(secretRejectReason(text), text).toBe('secret-credential-in-prose');
+      }
+    });
+  });
+
   it('문자열이 아니면 판정하지 않는다 (없는 fact_kr 등)', () => {
     expect(secretRejectReason(undefined)).toBeNull();
     expect(secretRejectReason(null)).toBeNull();
@@ -187,6 +232,9 @@ describe('secretRejectReason', () => {
       j('s', 'k.', 'eyJ', 'a'.repeat(60_000)),
       j('1'.repeat(60_000), ':', 'a'.repeat(60_000)),
       'Authorization: Basic '.repeat(10_000),
+      // 키워드 바로 뒤의 UUID·해시가 끝없이 이어지는 줄 (건너뛴 일치마다 다음 일치를 본다)
+      'token 4b1d6f0e-7a3c-4e52-9d18-6c0f2a9b5e71 '.repeat(2_000),
+      j('토큰 ', HEX32.repeat(2), ' ').repeat(1_000),
     ]) {
       const started = Date.now();
       expect(secretRejectReason(long)).toBeNull();

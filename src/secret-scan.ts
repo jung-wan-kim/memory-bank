@@ -19,14 +19,24 @@
  * rules, and the value behind it must read as generated — a placeholder
  * ("sk_live_xxxxxxxx", "postgres://user:password@host", "Bearer <token>")
  * passes. The keyword rules ("api_key = …", "the token is …") also need a long
- * value with a random-looking run, so commit hashes, UUIDs in prose, env-var
- * names and hyphenated wording pass.
+ * value with a random-looking run, so env-var names and hyphenated wording
+ * pass, and so does a commit hash or a UUID with no credential keyword in
+ * front of it.
+ *
+ * With a keyword in front, a UUID or a 40-/64-digit hex digest passes only
+ * where the keyword names it — the value follows the keyword directly, nothing
+ * but spaces between them ("the pagination token <uuid> is returned", "캐시
+ * 토큰 <sha256> 는 내용 해시다"). Where the sentence states it as the value
+ * ("the token is <uuid>", "토큰은 <hash>", "token = <uuid>") it is refused like
+ * any other value: API keys are issued in both shapes.
  *
  * What is not caught (rule-based limits): a password shorter than 16
  * characters after a keyword, or one made of letters only; a URL password
  * shorter than 8 characters or made of plain words; a value containing
  * punctuation outside "_-+=" (it is cut there); a provider whose token has no
- * fixed prefix and that is written with no credential keyword next to it.
+ * fixed prefix and that is written with no credential keyword next to it; a
+ * credential that is itself a UUID or a 40-/64-digit hex string, written
+ * right after the keyword with no "is" / ":" / "=" ("deploy token <hex>").
  */
 
 /** Characters a credential value is made of (what the keyword rules capture). */
@@ -43,11 +53,34 @@ const ASSIGNED_VALUE = new RegExp(`(?<![A-Za-z])${KEYWORD}["'\`]?\\s*[:=]\\s*["'
  * "the API key is <value>", "토큰이야 <value>", "API 키는 <value>", "the deploy
  * token <value> is used". Between the two: a Korean particle attached to the
  * keyword (up to 4 syllables), then at most one linking word.
+ * Groups: 1 the particle ('' when none), 2 the linking word (absent when none), 3 the value.
  */
 const STATED_VALUE = new RegExp(
-  `(?<![A-Za-z])${KEYWORD}[가-힣]{0,4}(?:\\s{1,8}(?:is|was|are|값|값은|값이))?\\s{1,8}["'\`(]?([${VALUE_CHARS}]{16,})`,
+  `(?<![A-Za-z])${KEYWORD}([가-힣]{0,4})(?:\\s{1,8}(is|was|are|값|값은|값이))?\\s{1,8}["'\`(]?([${VALUE_CHARS}]{16,})`,
   'gi',
 );
+
+/** The whole value is a UUID, or a SHA-1 / SHA-256 digest in hex (what git and checksum tools print). */
+const UUID_OR_DIGEST = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{40}|[0-9a-f]{64})$/i;
+
+/**
+ * Whether the text has a credential keyword followed by a value in running
+ * text. A UUID or a hex digest right after the keyword — no particle, no
+ * linking word — is an identifier the keyword names ("the pagination token
+ * <uuid>"), not a stated secret, and is passed over; with a particle or a
+ * linking word the sentence says what the value is, and the shape excuses
+ * nothing.
+ */
+function hasStatedCredential(text: string): boolean {
+  for (const m of text.matchAll(STATED_VALUE)) {
+    const value = m[3];
+    if (PUBLIC_VALUE.test(value) || !hasRandomRun(value, 12)) continue;
+    const named = m[1] === '' && m[2] === undefined;
+    if (named && UUID_OR_DIGEST.test(value)) continue;
+    return true;
+  }
+  return false;
+}
 
 /** Keys that are public by design: a keyword next to one of these is not a secret. */
 const PUBLIC_VALUE = /^(?:sb_publishable_|pk_(?:live|test)_)/;
@@ -169,10 +202,7 @@ const RULES: ReadonlyArray<{ reason: string; test: (text: string) => boolean }> 
     test: (t) => anyValue(t, ASSIGNED_VALUE, (v) => !PUBLIC_VALUE.test(v) && hasRandomRun(v, 12)),
   },
   // "<keyword> is <value>" / "<keyword>는 <value>" / "<keyword> <value>"
-  {
-    reason: 'secret-credential-in-prose',
-    test: (t) => anyValue(t, STATED_VALUE, (v) => !PUBLIC_VALUE.test(v) && hasRandomRun(v, 12)),
-  },
+  { reason: 'secret-credential-in-prose', test: hasStatedCredential },
 ];
 
 /**
