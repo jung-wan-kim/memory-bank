@@ -37,6 +37,8 @@ let testDir: string;
 let archiveDir: string;
 let dbPath: string;
 let restoreConsole: () => void;
+// The runner's own MEMORY_BANK_CONFIG_DIR (it keeps tests off the real config dir) is put back, not deleted.
+const outerConfigDir = process.env.MEMORY_BANK_CONFIG_DIR;
 
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-rebuild-'));
@@ -57,7 +59,8 @@ afterEach(() => {
   delete process.env.TEST_PROJECTS_DIR;
   delete process.env.TEST_ARCHIVE_DIR;
   delete process.env.TEST_DB_PATH;
-  delete process.env.MEMORY_BANK_CONFIG_DIR;
+  if (outerConfigDir === undefined) delete process.env.MEMORY_BANK_CONFIG_DIR;
+  else process.env.MEMORY_BANK_CONFIG_DIR = outerConfigDir;
   fs.rmSync(testDir, { recursive: true, force: true });
 });
 
@@ -189,6 +192,33 @@ describe('clearConversationIndex', () => {
       other.close();
     }
     expect(fs.statSync(dbPath).ino).toBe(inodeBefore);
+  });
+
+  it('text search is switched to its scan path for the duration of the clear, and back when the index is rebuilt', async () => {
+    await seed(5);
+    const { initDatabase } = await import('../src/db.js');
+    const { clearConversationIndex } = await import('../src/rebuild.js');
+    const other = initDatabase();
+    const db = initDatabase();
+    const flag = () => (other.prepare(`SELECT value FROM fts_meta WHERE key = 'exchanges_fts_built'`).get() as { value: string }).value;
+    const during: Array<{ table: string; flag: string }> = [];
+    try {
+      expect(flag()).toBe('1');
+      // Exchange rows are deleted without the FTS trigger, so until the final
+      // rebuild the index still lists them; a run that dies in between must not
+      // leave search trusting that index (a new row can take the rowid of a
+      // deleted one).
+      clearConversationIndex(db, { batchSize: 2, onBatch: ({ table }) => during.push({ table, flag: flag() }) });
+      const whileExchangesGo = during.filter((d) => d.table === 'exchanges').map((d) => d.flag);
+      expect(whileExchangesGo).toEqual(['0', '0', '0']); // 5 rows in batches of 2
+      // while only tool calls are going the index still matches the table — it stays in use
+      const whileToolCallsGo = during.filter((d) => d.table === 'tool_calls').map((d) => d.flag);
+      expect(whileToolCallsGo).toEqual(['1', '1', '1']);
+      expect(flag()).toBe('1');
+    } finally {
+      db.close();
+      other.close();
+    }
   });
 
   it('works on a DB whose text index was never backfilled (deleting through the trigger fails there)', async () => {

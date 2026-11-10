@@ -69,7 +69,9 @@ The database file is never deleted, and the fact layer is not written.
    deleted (`--reset-summaries` deletes them all; sync and `--repair` write
    them back, one LLM call each).
 
-An interrupted rebuild is finished with `--repair` (or by running it again).
+An interrupted rebuild is finished by running it again. Until then text search
+uses its slower scan path (the text index is marked "not built" for the
+duration of the clear), and what was not re-indexed yet shows up in `--verify`.
 
 ### What a re-index reads
 

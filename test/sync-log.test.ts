@@ -13,13 +13,16 @@ const REPO = path.resolve(__dirname, '..');
 
 describe('sync log', () => {
   let cfg: string;
+  // The runner's own MEMORY_BANK_CONFIG_DIR (it keeps tests off the real config dir) is put back, not deleted.
+  const outerConfigDir = process.env.MEMORY_BANK_CONFIG_DIR;
 
   beforeEach(() => {
     cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-synclog-'));
     process.env.MEMORY_BANK_CONFIG_DIR = cfg;
   });
   afterEach(() => {
-    delete process.env.MEMORY_BANK_CONFIG_DIR;
+    if (outerConfigDir === undefined) delete process.env.MEMORY_BANK_CONFIG_DIR;
+    else process.env.MEMORY_BANK_CONFIG_DIR = outerConfigDir;
     fs.rmSync(cfg, { recursive: true, force: true });
   });
 

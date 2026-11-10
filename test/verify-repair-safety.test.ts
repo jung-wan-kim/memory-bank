@@ -37,6 +37,8 @@ const conversation = (question: string, answer = 'An answer.') => [line('user', 
 let testDir: string;
 let archiveDir: string;
 let restoreConsole: () => void;
+// The runner's own MEMORY_BANK_CONFIG_DIR (it keeps tests off the real config dir) is put back, not deleted.
+const outerConfigDir = process.env.MEMORY_BANK_CONFIG_DIR;
 
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-verify-safety-'));
@@ -55,7 +57,8 @@ afterEach(() => {
   delete process.env.TEST_PROJECTS_DIR;
   delete process.env.TEST_ARCHIVE_DIR;
   delete process.env.TEST_DB_PATH;
-  delete process.env.MEMORY_BANK_CONFIG_DIR;
+  if (outerConfigDir === undefined) delete process.env.MEMORY_BANK_CONFIG_DIR;
+  else process.env.MEMORY_BANK_CONFIG_DIR = outerConfigDir;
   fs.rmSync(testDir, { recursive: true, force: true });
 });
 

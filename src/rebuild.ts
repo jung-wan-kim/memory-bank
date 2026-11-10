@@ -195,9 +195,9 @@ export interface ClearOptions {
  *    is nothing, or the few rows another process indexed meanwhile — whose
  *    vectors are carried over the same way.
  *
- * An interrupted clear leaves a smaller, consistent table set (FTS may list
- * rows that are gone until the last step; search joins them away). Running the
- * rebuild again finishes it.
+ * An interrupted clear leaves a smaller, consistent table set, with the text
+ * index marked "not built" (search scans instead of trusting an index that
+ * still lists deleted rows). Running the rebuild again finishes it.
  */
 export function clearConversationIndex(db: Database.Database, opts: ClearOptions = {}): { exchanges: number; toolCalls: number } {
   const batchSize = opts.batchSize ?? 2000;
@@ -212,6 +212,13 @@ export function clearConversationIndex(db: Database.Database, opts: ClearOptions
     cleared.toolCalls += changes;
     opts.onBatch?.({ table: 'tool_calls', deleted: cleared.toolCalls });
   }
+
+  // Before the first trigger-free delete: mark the text index as not built, so
+  // search uses its scan path (search.ts reads this flag) instead of an index
+  // that still lists rows that are gone. Step 3 sets it back. A run that dies
+  // in between leaves search slow but right — once the table is empty a new
+  // row can take a deleted row's rowid, and the stale index would answer for it.
+  db.prepare(`INSERT OR REPLACE INTO fts_meta(key, value) VALUES('exchanges_fts_built', '0')`).run();
 
   // 2. exchanges, trigger-free per batch. A tool call another process added
   //    for a row of this batch since step 1 goes with it (the FK has no CASCADE).
