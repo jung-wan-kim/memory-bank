@@ -7,8 +7,11 @@ import { initDatabase, getVecQuant, embeddingToVecBlob } from '../src/db.js';
 import { insertFact, deactivateFact, insertRevision, searchSimilarFacts } from '../src/fact-db.js';
 import {
   restoreKoreanFromMergedFacts,
+  restoreKoreanToEnd,
   restoreKoreanOncePerVersion,
   koreanRestoreStatePath,
+  KoreanRestoreError,
+  KOREAN_RESTORE_MAX_FAILED_PASSES,
 } from '../src/fact-kr-restore.js';
 
 /**
@@ -176,6 +179,24 @@ describe('restoring the Korean sentence of facts rewritten without one', () => {
     expect(survivors.map((id) => row(id).fact_kr)).toEqual(survivors.map((_, i) => `서비스 ${i} 는 8080 포트를 쓴다`));
   });
 
+  it('restoreKoreanToEnd repeats the pass until nothing restorable is left and reports the total', async () => {
+    const survivors: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const older = seed({ fact: `Worker ${i} polls every 10 seconds`, at: day(1 + i * 2), factKr: `워커 ${i} 는 10초마다 폴링한다` });
+      const later = seed({ fact: `Worker ${i} polls every 30 seconds`, at: day(2 + i * 2), factKr: `워커 ${i} 는 30초마다 폴링한다` });
+      mergeWithoutKorean(older, later);
+      survivors.push(older);
+    }
+    // one more rewritten fact with nobody to take the sentence from: a candidate that stays
+    const lonely = seed({ fact: 'Cache entries expire after an hour', at: day(20) });
+    insertRevision(db, { fact_id: lonely, previous_fact: 'Cache entries expire after a day', new_fact: 'Cache entries expire after an hour', reason: 'evolved', source_exchange_id: null });
+
+    expect(await restoreKoreanToEnd(db, embed, { limit: 2 })).toEqual({ candidates: 6, restored: 5 });
+    expect(survivors.map((id) => row(id).fact_kr)).toEqual(survivors.map((_, i) => `워커 ${i} 는 30초마다 폴링한다`));
+    expect(row(lonely).fact_kr).toBeNull();
+    expect(await restoreKoreanToEnd(db, embed, { limit: 2 }), 'again: nothing left to restore').toEqual({ candidates: 1, restored: 0 });
+  });
+
   describe('once per plugin version', () => {
     function clearedPair(n: number): string {
       const older = seed({ fact: `Queue ${n} retries 3 times`, at: day(1 + n * 2), factKr: `큐 ${n} 은 3번 재시도한다` });
@@ -206,12 +227,78 @@ describe('restoring the Korean sentence of facts rewritten without one', () => {
       expect(await restoreKoreanOncePerVersion(db, '1.8.0', embed, { limit: 1 })).toBeNull();
     });
 
-    it('a pass that fails is recorded and not repeated for that version — the error reaches the caller once', async () => {
-      clearedPair(0);
+    const state = () => JSON.parse(fs.readFileSync(koreanRestoreStatePath(), 'utf8'));
+    /** The error a call rejects with (fails the test when it resolves). */
+    async function failureOf(call: Promise<unknown>): Promise<KoreanRestoreError> {
+      try {
+        await call;
+      } catch (e) {
+        expect(e).toBeInstanceOf(KoreanRestoreError);
+        return e as KoreanRestoreError;
+      }
+      throw new Error('the pass did not throw');
+    }
+
+    // 2차 검수 CE-01b: a pass that threw was recorded like one that ran to the end, so one bad moment
+    // (a write lock held for 30s while it ran) left the facts without their Korean sentence for the version.
+    it('a pass that threw has not run to the end: the next call runs it again', async () => {
+      const first = clearedPair(0);
       const failing = async () => { throw new Error('embedding model unavailable'); };
-      await expect(restoreKoreanOncePerVersion(db, '1.8.0', failing)).rejects.toThrow('embedding model unavailable');
-      expect(JSON.parse(fs.readFileSync(koreanRestoreStatePath(), 'utf8'))).toMatchObject({ pluginVersion: '1.8.0', error: 'embedding model unavailable' });
-      expect(await restoreKoreanOncePerVersion(db, '1.8.0', embed)).toBeNull();
+      const e = await failureOf(restoreKoreanOncePerVersion(db, '1.8.0', failing));
+      expect(e.message).toBe('embedding model unavailable');
+      expect(e.retry, 'the caller is told it will be tried again').toBe(true);
+      expect(state()).toMatchObject({ pluginVersion: '1.8.0', error: 'embedding model unavailable', failedPasses: 1 });
+      expect(row(first).fact_kr).toBeNull();
+
+      expect(await restoreKoreanOncePerVersion(db, '1.8.0', embed)).toEqual({ candidates: 1, restored: 1, remaining: 0 });
+      expect(row(first).fact_kr).toBe('큐 0 은 5번 재시도한다');
+      expect(state()).toMatchObject({ pluginVersion: '1.8.0', restored: 1, remaining: 0 });
+      expect(state().error, 'a pass that ran to the end leaves no error behind').toBeUndefined();
+      expect(await restoreKoreanOncePerVersion(db, '1.8.0', embed), 'ran to the end: not run again').toBeNull();
+    });
+
+    it('a pass that keeps throwing is tried a fixed number of times for a version, then left — and says which call was the last', async () => {
+      const first = clearedPair(0);
+      const failing = async () => { throw new Error('embedding model unavailable'); };
+      const retries: boolean[] = [];
+      for (let i = 0; i < KOREAN_RESTORE_MAX_FAILED_PASSES; i++) {
+        retries.push((await failureOf(restoreKoreanOncePerVersion(db, '1.8.0', failing))).retry);
+      }
+      expect(retries).toEqual([...Array(KOREAN_RESTORE_MAX_FAILED_PASSES - 1).fill(true), false]);
+      expect(state()).toMatchObject({ pluginVersion: '1.8.0', failedPasses: KOREAN_RESTORE_MAX_FAILED_PASSES });
+      expect(await restoreKoreanOncePerVersion(db, '1.8.0', embed), 'given up for this version: not run, nothing thrown').toBeNull();
+      expect(row(first).fact_kr).toBeNull();
+      // another version starts over
+      expect(await restoreKoreanOncePerVersion(db, '1.8.1', embed)).toEqual({ candidates: 1, restored: 1, remaining: 0 });
+    });
+
+    it('a held write lock is not a failed pass: it is tried again however often, and restores once the lock is gone', async () => {
+      const first = clearedPair(0);
+      db.pragma('busy_timeout = 20');
+      const other = new Database(process.env.TEST_DB_PATH!);
+      try {
+        other.exec('BEGIN IMMEDIATE'); // another process is writing for longer than this handle waits
+        for (let i = 0; i < KOREAN_RESTORE_MAX_FAILED_PASSES + 2; i++) {
+          const e = await failureOf(restoreKoreanOncePerVersion(db, '1.8.0', embed));
+          expect(e.message).toMatch(/database is locked/);
+          expect(e.retry).toBe(true);
+        }
+        expect(state()).toMatchObject({ pluginVersion: '1.8.0', failedPasses: 0 });
+        expect(state().error).toMatch(/database is locked/);
+        other.exec('COMMIT');
+      } finally {
+        other.close();
+      }
+      expect(await restoreKoreanOncePerVersion(db, '1.8.0', embed)).toEqual({ candidates: 1, restored: 1, remaining: 0 });
+      expect(row(first).fact_kr).toBe('큐 0 은 5번 재시도한다');
+    });
+
+    it('a state file that only says a pass failed (written before failures were counted) is one failed pass, not the end', async () => {
+      const first = clearedPair(0);
+      fs.mkdirSync(path.dirname(koreanRestoreStatePath()), { recursive: true });
+      fs.writeFileSync(koreanRestoreStatePath(), JSON.stringify({ pluginVersion: '1.8.0', at: day(3), error: 'database is locked' }));
+      expect(await restoreKoreanOncePerVersion(db, '1.8.0', embed)).toEqual({ candidates: 1, restored: 1, remaining: 0 });
+      expect(row(first).fact_kr).toBe('큐 0 은 5번 재시도한다');
     });
 
     it('an unreadable state file counts as "not run yet"', async () => {

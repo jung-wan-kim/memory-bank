@@ -18,13 +18,15 @@
  *                     fact (they describe the old sentence). Only when
  *                     scripts/translate-facts.mjs (LLM calls, run by hand) is
  *                     run next — what comes back by itself is a part: the
- *                     consolidation worker restores a Korean sentence only
- *                     where a merged, deactivated fact still holds one for the
- *                     same sentence (src/fact-kr-restore.ts, no LLM). Measured
- *                     on a copy of a live DB after `clear`: of 624 rewritten
- *                     active facts left without a Korean sentence it restored
- *                     71; the 436 whose sentence is English only have no
- *                     Korean vector until they are translated.
+ *                     run ends by restoring a Korean sentence only where a
+ *                     merged, deactivated fact still holds one for the same
+ *                     sentence (src/fact-kr-restore.ts, no LLM — the pass the
+ *                     consolidation worker runs once per plugin version, done
+ *                     here because the worker's is usually over by now).
+ *                     Measured on a copy of a live DB after `clear`: of 624
+ *                     rewritten active facts left without a Korean sentence it
+ *                     restored 71; the 436 whose sentence is English only have
+ *                     no Korean vector until they are translated.
  * Before the first changed row, the old bytes of every changed row go into a
  * backup table in the same transaction (reembed_rewritten_backup_<UTC time>);
  * `--restore TABLE` puts them back. updated_at is never touched.
@@ -43,6 +45,7 @@ import { getIndexDir } from '../dist/paths.js';
 import { ensureNativeAbi } from '../dist/node-abi.js';
 import { parseCliArgs, assertOnlyArgs } from '../dist/cli-args.js';
 import { checkRewrittenFacts, applyRewrittenFacts, restoreRewrittenFacts } from '../dist/reembed-rewritten.js';
+import { restoreKoreanToEnd } from '../dist/fact-kr-restore.js';
 
 ensureNativeAbi('reembed-rewritten-facts');
 
@@ -96,11 +99,28 @@ try {
     if (!apply) {
       console.log('dry run — nothing written. Re-run with --apply --fact-kr keep to repair (keep: the Korean sentences stay as they are).');
       console.log('--fact-kr clear removes them instead; use it only when scripts/translate-facts.mjs (LLM calls, run by hand) is run next — '
-        + 'without it only part of them comes back (the consolidation worker restores those a merged fact still holds), see the header.');
+        + 'without it only part of them comes back (the run ends by restoring those a merged fact still holds), see the header.');
     } else {
       const r = applyRewrittenFacts(db, check.stale, { factKr });
       console.log(`re-embedded ${r.reembedded} facts; fact_kr removed on ${r.factKrCleared}; ${r.changedSinceCheck} changed during the run and were left for the next one`);
       console.log(r.backupTable ? `backup table: ${r.backupTable} (undo: --restore ${r.backupTable})` : 'nothing changed — no backup table');
+      if (factKr === 'clear') {
+        // The Korean sentences that exist for the new sentences come back here (fact-kr-restore.ts, no LLM).
+        // The consolidation worker runs the same pass once per plugin version, and that pass is usually over
+        // before this script is run — left to it, none of the facts cleared above got theirs back. It runs
+        // on every `--apply --fact-kr clear`, also when nothing was stale: running the command again is how
+        // a restore that failed is repeated.
+        try {
+          const k = await restoreKoreanToEnd(db, embed);
+          console.log(`fact_kr restored on ${k.restored} of ${k.candidates} rewritten facts without a Korean sentence `
+            + '(from the merged fact that holds the same sentence, no LLM); '
+            + `the other ${k.candidates - k.restored} have none until scripts/translate-facts.mjs translates them`);
+        } catch (e) {
+          console.error(`fact_kr restore failed (${e instanceof Error ? e.message : e}) — what is reported above is written; `
+            + 'run the same command again to repeat the restore');
+          process.exitCode = 1;
+        }
+      }
     }
   }
 } catch (e) {

@@ -144,7 +144,9 @@ function recordHealth(previous, progressed, failure, version) {
  * Facts that an earlier rewrite left without a Korean sentence get it back from
  * the fact that was merged into them (fact-kr-restore.ts) — no LLM call, once
  * per plugin version. A failure is logged here and is not a failed run: the
- * drain's own outcome is what the health record counts.
+ * drain's own outcome is what the health record counts. A pass that failed is
+ * run again by the next run (a write lock held by another process, a model
+ * that did not load); the line says when it was the last try for this version.
  */
 async function restoreKoreanSentences(db, version) {
   try {
@@ -156,7 +158,8 @@ async function restoreKoreanSentences(db, version) {
       log(`worker: fact_kr restored=${r.restored} of ${r.candidates} rewritten facts without a Korean sentence${r.remaining > 0 ? ` (${r.remaining} more on the next run)` : ''}`);
     }
   } catch (error) {
-    log(`worker: fact_kr restore failed (${oneLine(error instanceof Error ? error.message : error)}) — not repeated for this version`);
+    // error.retry comes from restoreKoreanOncePerVersion (KoreanRestoreError); anything else is not known to be retried.
+    log(`worker: fact_kr restore failed (${oneLine(error instanceof Error ? error.message : error)}) — ${error?.retry === true ? 'tried again on the next run' : 'not repeated for this version'}`);
   }
 }
 
