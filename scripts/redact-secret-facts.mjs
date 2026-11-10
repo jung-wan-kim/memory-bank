@@ -11,12 +11,16 @@
  *       Dry run (default): list id, kind, active/inactive. Opens the database
  *       read-only and changes nothing.
  *   node scripts/redact-secret-facts.mjs [--db PATH] --apply [--undo-file PATH]
- *       Deactivate the active ones (is_active = 0). Before any row changes, the
+ *       Deactivate the active ones (is_active = 0) and remove their rows from
+ *       the two vector tables — what deactivateFact does: a deactivated fact
+ *       must not keep a slot in the vector index. Before any row changes, the
  *       previous is_active / updated_at of every row about to change is written
- *       to the undo file (default: next to the database).
+ *       to the undo file (default: next to the database); the removed vector
+ *       bytes are kept in a backup table of the same transaction
+ *       (redact_secret_backup_<UTC time>), which the undo file names.
  *   node scripts/redact-secret-facts.mjs [--db PATH] --undo FILE
  *       Put back the rows an --apply run changed, where they are still as that
- *       run left them.
+ *       run left them — their vectors too, from the backup table.
  *
  * Deactivation hides a fact from injection, search and the next sync export
  * (the export lists active facts only). It does not remove the text from the
@@ -24,9 +28,11 @@
  */
 
 import Database from 'better-sqlite3';
+import * as sqliteVec from 'sqlite-vec';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getDbPath } from '../dist/paths.js';
+import { getVecQuant, vecParamSql } from '../dist/db.js';
 import { secretRejectReason } from '../dist/secret-scan.js';
 import { ensureNativeAbi } from '../dist/node-abi.js';
 import { parseCliArgs, assertOnlyArgs } from '../dist/cli-args.js';
@@ -34,6 +40,20 @@ import { parseCliArgs, assertOnlyArgs } from '../dist/cli-args.js';
 ensureNativeAbi('redact-secret-facts');
 
 const UNDO_KIND = 'redact-secret-facts-undo';
+// Version 2 names the vector backup table. A version-1 file (written before vectors were removed) is still undone.
+const UNDO_VERSION = 2;
+const VEC_TABLES = ['vec_facts', 'vec_facts_kr'];
+const BACKUP_RE = /^redact_secret_backup_\d{14}$/;
+
+const tableExists = (db, name) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE name = ?").get(name);
+
+/** A handle that can write the vector tables (they are sqlite-vec virtual tables). */
+function openForWrite() {
+  const db = new Database(dbPath, { fileMustExist: true });
+  sqliteVec.load(db);
+  db.pragma('busy_timeout = 15000');
+  return db;
+}
 
 function fail(message) {
   console.error(`redact-secret-facts: ${message}`);
@@ -93,9 +113,10 @@ function apply() {
     || path.join(path.dirname(dbPath), `redact-secret-facts-undo-${appliedAt.replace(/[-:.]/g, '')}.jsonl`);
   if (fs.existsSync(undoPath)) fail(`undo file already exists: ${undoPath}`);
 
-  const db = new Database(dbPath, { fileMustExist: true });
-  db.pragma('busy_timeout = 15000');
+  const db = openForWrite();
   let undoWritten = false;
+  let vectorsRemoved = 0;
+  let backupTable = null;
   try {
     // One write transaction from the scan to the last UPDATE: the undo file then
     // describes exactly the rows this run changed (nothing can deactivate or
@@ -106,9 +127,26 @@ function apply() {
       const targets = hits.filter((h) => h.active);
       if (targets.length === 0) return 0;
 
+      // The vector rows of the facts about to be deactivated: copied into a backup table of this
+      // transaction, with the dtype/scale they were stored at (--undo refuses a table that changed since).
+      const vecTables = VEC_TABLES.filter((t) => tableExists(db, t));
+      if (vecTables.length > 0) {
+        backupTable = `redact_secret_backup_${appliedAt.replace(/[-:T]/g, '').slice(0, 14)}`;
+        db.exec(`CREATE TABLE ${backupTable} (fact_id TEXT NOT NULL, vec_table TEXT NOT NULL, embedding BLOB NOT NULL, quant TEXT NOT NULL, PRIMARY KEY (fact_id, vec_table))`);
+        const keep = db.prepare(`INSERT INTO ${backupTable} (fact_id, vec_table, embedding, quant) VALUES (?, ?, ?, ?)`);
+        for (const table of vecTables) {
+          const quant = JSON.stringify(getVecQuant(db, table));
+          const read = db.prepare(`SELECT embedding FROM ${table} WHERE id = ?`);
+          for (const h of targets) {
+            const row = read.get(h.id);
+            if (row) keep.run(h.id, table, Buffer.from(row.embedding), quant);
+          }
+        }
+      }
+
       // The undo file first — if it cannot be written, no row changes.
       const lines = [
-        JSON.stringify({ kind: UNDO_KIND, version: 1, db: dbPath, applied_at: appliedAt, count: targets.length }),
+        JSON.stringify({ kind: UNDO_KIND, version: UNDO_VERSION, db: dbPath, applied_at: appliedAt, count: targets.length, vec_backup_table: backupTable }),
         ...targets.map((h) => JSON.stringify({ id: h.id, is_active: 1, updated_at: h.updatedAt, reason: h.reason })),
       ];
       const fd = fs.openSync(undoPath, 'wx', 0o600);
@@ -124,6 +162,11 @@ function apply() {
       let n = 0;
       for (const h of targets) n += update.run(appliedAt, h.id).changes;
       if (n !== targets.length) throw new Error(`expected to deactivate ${targets.length} fact(s), changed ${n}`);
+      // A deactivated fact keeps no slot in the vector index (same as deactivateFact).
+      for (const table of vecTables) {
+        const drop = db.prepare(`DELETE FROM ${table} WHERE id = ?`);
+        for (const h of targets) vectorsRemoved += drop.run(h.id).changes;
+      }
       return n;
     }).immediate();
 
@@ -131,6 +174,7 @@ function apply() {
       console.log('nothing to deactivate — no row changed, no undo file written.');
     } else {
       console.log(`deactivated ${changed} fact(s). undo file: ${undoPath}`);
+      if (backupTable) console.log(`removed ${vectorsRemoved} vector row(s) of those facts from the vector index (kept in table ${backupTable} for --undo).`);
       console.log('The sync export still lists them until the next export rewrites it. Rotate the credential — deactivation does not un-leak it.');
     }
   } catch (e) {
@@ -152,26 +196,54 @@ function undo() {
   } catch (e) {
     fail(`cannot read undo file ${undoPath}: ${e instanceof Error ? e.message : e}`);
   }
-  if (!header || header.kind !== UNDO_KIND || header.version !== 1 || typeof header.applied_at !== 'string') {
+  if (!header || header.kind !== UNDO_KIND || (header.version !== 1 && header.version !== UNDO_VERSION) || typeof header.applied_at !== 'string') {
     fail(`${undoPath} is not an undo file of this script`);
+  }
+  const backupTable = header.vec_backup_table ?? null;
+  if (backupTable !== null && (typeof backupTable !== 'string' || !BACKUP_RE.test(backupTable))) {
+    fail(`${undoPath} names a vector backup table this script does not write`);
   }
   if (rows.length !== header.count || rows.some((r) => typeof r.id !== 'string' || r.is_active !== 1 || typeof r.updated_at !== 'string')) {
     fail(`${undoPath} is incomplete or malformed (${rows.length} row(s), header says ${header.count})`);
   }
 
-  const db = new Database(dbPath, { fileMustExist: true });
-  db.pragma('busy_timeout = 15000');
+  const db = openForWrite();
   try {
     // Only rows still exactly as the apply run left them: a fact changed since
     // (reactivated, edited, consolidated) is not overwritten.
     const restore = db.prepare('UPDATE facts SET is_active = 1, updated_at = ? WHERE id = ? AND is_active = 0 AND updated_at = ?');
+    let vectorsRestored = 0;
     const restored = db.transaction(() => {
+      // The vectors go back with the row. A vector table whose dtype/scale changed since the apply run
+      // cannot take the kept bytes: nothing is restored then (the fact would come back unsearchable).
+      const kept = backupTable === null ? [] : (() => {
+        if (!tableExists(db, backupTable)) throw new Error(`vector backup table ${backupTable} is gone — the facts would come back without their vectors`);
+        return db.prepare(`SELECT fact_id, vec_table, embedding, quant FROM ${backupTable}`).all();
+      })();
+      const quants = {};
+      for (const k of kept) {
+        if (!VEC_TABLES.includes(k.vec_table)) throw new Error(`${backupTable} names an unknown vector table`);
+        quants[k.vec_table] ??= getVecQuant(db, k.vec_table);
+        if (JSON.stringify(quants[k.vec_table]) !== k.quant) {
+          throw new Error(`${k.vec_table} is ${JSON.stringify(quants[k.vec_table])} now but the backup holds ${k.quant} bytes`);
+        }
+      }
       let n = 0;
-      for (const r of rows) n += restore.run(r.updated_at, r.id, header.applied_at).changes;
+      for (const r of rows) {
+        if (restore.run(r.updated_at, r.id, header.applied_at).changes === 0) continue;
+        n++;
+        for (const k of kept) {
+          if (k.fact_id !== r.id) continue;
+          db.prepare(`DELETE FROM ${k.vec_table} WHERE id = ?`).run(r.id);
+          db.prepare(`INSERT INTO ${k.vec_table} (id, embedding) VALUES (?, ${vecParamSql(quants[k.vec_table])})`).run(r.id, k.embedding);
+          vectorsRestored++;
+        }
+      }
       return n;
     }).immediate();
     console.log(`db: ${dbPath}`);
     console.log(`restored ${restored} of ${rows.length} fact(s)${restored < rows.length ? ` — ${rows.length - restored} changed since the apply run and were left as they are` : ''}`);
+    if (backupTable !== null) console.log(`put back ${vectorsRestored} vector row(s) from ${backupTable}.`);
   } catch (e) {
     fail(`undo failed, no row changed: ${e instanceof Error ? e.message : e}`);
   } finally {
