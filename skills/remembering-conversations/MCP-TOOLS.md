@@ -33,7 +33,7 @@ Search past conversations by meaning, by keyword, or both.
 | `mode` | `"vector"` \| `"text"` \| `"both"` | No | Default `"both"`. Single-string searches only |
 | `limit` | `number` | No | Results returned, 1-50 (default 10). `both` returns at most `limit` rows in total |
 | `after` | `string` | No | Only conversations on or after this date (YYYY-MM-DD, UTC timestamps) |
-| `before` | `string` | No | Only conversations before this date (YYYY-MM-DD, UTC timestamps) |
+| `before` | `string` | No | Only conversations before this date (YYYY-MM-DD, UTC timestamps). With `after`, it must be a later date: an `after` that is the same day as `before` or later is an error (for one day, pass the following day as `before`) |
 | `coding_agent` | `string` | No | Only conversations of this agent (`claude-code`, `codex`, …) |
 | `include_noise` | `boolean` | No | Also return machine-generated turns (default `false`) |
 | `response_format` | `"markdown"` \| `"json"` | No | Default `"markdown"` |

@@ -385,6 +385,18 @@ describe('MCP server over stdio', () => {
       const { isError } = await call('search', { query: 'quokka', mode: 'text', include_everything: true });
       expect(isError).toBe(true);
     });
+
+    // R2-SEARCH-4 — it used to search the vector index up to its ceiling and answer "cut short … relax the date filter".
+    it('a date range that ends before it starts is an error at once, in every mode', async () => {
+      for (const mode of ['both', 'vector', 'text']) {
+        const { text, isError } = await call('search', { query: 'quokka', mode, after: '2026-10-01', before: '2026-01-01' });
+        expect(isError).toBe(true);
+        expect(text).toMatch(/--after 2026-10-01 is later than --before 2026-01-01/);
+      }
+      const multi = await call('search', { query: ['quokka', 'migration'], after: '2026-10-01', before: '2026-01-01' });
+      expect(multi.isError).toBe(true);
+      expect(multi.text).toMatch(/--after 2026-10-01 is later than --before 2026-01-01/);
+    });
   });
 
   it('the server wrote nothing unexpected to stderr', () => {

@@ -245,10 +245,33 @@ function validateISODate(dateStr: string, paramName: string): void {
   if (!isoDateRegex.test(dateStr)) {
     throw new Error(`Invalid ${paramName} date: "${dateStr}". Expected YYYY-MM-DD format (e.g., 2025-10-01)`);
   }
-  // Verify it's actually a valid date
+  // Verify it's actually a valid date. A day the month does not have parses too (2026-02-30 becomes
+  // March 2nd), so the parsed date has to read back as the string that was given.
   const date = new Date(dateStr);
-  if (isNaN(date.getTime())) {
+  if (isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== dateStr) {
     throw new Error(`Invalid ${paramName} date: "${dateStr}". Not a valid calendar date.`);
+  }
+}
+
+/**
+ * The date filters of a search, checked before anything is searched. Both are compared as text with the
+ * row's timestamp ("2026-10-01T09:30:00.000Z"): `after` keeps that day and later, `before` keeps the days
+ * before it. So `after` later than `before` — or the same day — is a range no row can be in: the vector pass
+ * used to widen its KNN to the sqlite-vec ceiling looking for one, and the answer then said the search had
+ * been cut short.
+ */
+function validateDateRange(after: string | undefined, before: string | undefined): void {
+  if (after) validateISODate(after, '--after');
+  if (before) validateISODate(before, '--before');
+  if (!after || !before) return;
+  if (after > before) {
+    throw new Error(`Invalid date range: --after ${after} is later than --before ${before} — no conversation can be in it`);
+  }
+  if (after === before) {
+    throw new Error(
+      `Invalid date range: --after and --before are both ${after} — --before keeps the days before it, `
+      + 'so no conversation can be in it (for one day, give the following day as --before)'
+    );
   }
 }
 
@@ -267,8 +290,7 @@ export async function searchConversationsDetailed(
   const { limit = 10, mode = 'both', after, before, coding_agent, include_noise = false, require_all_tokens = false, vector_first_k } = options;
 
   // Validate date parameters
-  if (after) validateISODate(after, '--after');
-  if (before) validateISODate(before, '--before');
+  validateDateRange(after, before);
 
   const db = getSearchDb();
   const meta: SearchMeta = { folded: 0 };
