@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import { deleteExchanges } from './db.js';
+import { DELETE_BATCH_MAX_MS, deleteExchanges, pauseForOtherWriters } from './db.js';
 import { writeRowBackup } from './row-backup.js';
 
 /**
@@ -85,22 +85,128 @@ export interface SnapshotDedupeResult {
   remainingExtraRows: number;
 }
 
+/** Facts whose source list is re-pointed in one write transaction (see repointFactsAtKeptSnapshots). */
+export const REPOINT_BATCH_ROWS = 500;
+
+export interface RepointFactsOptions {
+  /** Facts per write transaction (default REPOINT_BATCH_ROWS). */
+  batchSize?: number;
+  /** Commit a batch once it has held the write lock this long (default DELETE_BATCH_MAX_MS). 0 = one fact per batch. */
+  maxBatchMs?: number;
+  /** Wait this long between two batches (default DELETE_BATCH_PAUSE_MS). 0 = none. */
+  pauseMs?: number;
+  /** Called after each committed batch with the facts gone through so far; no transaction is open here. */
+  onBatch?: (done: number) => void;
+}
+
+const staleIds = `SELECT id FROM temp.${STALE}`;
+/** Facts whose source list names a snapshot to remove, with the list as stored. */
+const affectedFacts = `
+    SELECT DISTINCT f.id AS id, f.source_exchange_ids AS source_exchange_ids
+    FROM main.facts f, json_each(f.source_exchange_ids) j
+    WHERE json_valid(f.source_exchange_ids) AND j.value IN (${staleIds})`;
+
+/**
+ * Point the facts that name a snapshot in temp.snapshot_stale at the row that
+ * stays (planSnapshotDedupe must have filled the table on this connection).
+ * Returns how many facts were changed. The fact itself is not touched —
+ * updated_at stays.
+ *
+ * It was one write transaction that searched every fact's source list
+ * (json_each over 61MB on the measured DB) and then wrote 13,573 rows: the
+ * write lock was held for 3.3 to 5.4s, and every other process waits 5s for
+ * it and then fails. Now, the shape repointQueuedExchangeSources (db.ts) has:
+ *  1. the search and the new lists are done WITHOUT the write lock;
+ *  2. the writes go REPOINT_BATCH_ROWS facts per transaction (or until the
+ *     batch has taken DELETE_BATCH_MAX_MS), with a pause between two batches
+ *     in which a waiting process takes the lock;
+ *  3. inside its batch each fact is read again: unchanged since step 1, it
+ *     gets the list computed there; changed meanwhile, the list is computed
+ *     from what is stored now (and left alone if that names no such snapshot).
+ * A run that stops between two batches has re-pointed some facts and not the
+ * others; no row was deleted yet, and running it again finishes.
+ */
+export function repointFactsAtKeptSnapshots(db: Database.Database, opts: RepointFactsOptions = {}): number {
+  const batchSize = opts.batchSize ?? REPOINT_BATCH_ROWS;
+  if (!Number.isInteger(batchSize) || batchSize < 1) throw new Error(`invalid batch size: ${batchSize}`);
+  const maxBatchMs = opts.maxBatchMs ?? DELETE_BATCH_MAX_MS;
+  const keepOf = new Map<string, string>(
+    (db.prepare(`SELECT id, keep_id FROM temp.${STALE}`).all() as Array<{ id: string; keep_id: string }>).map((r) => [r.id, r.keep_id]));
+  if (keepOf.size === 0) return 0;
+
+  /** The re-pointed list for a stored one; null when it is not a JSON array or names no snapshot to remove. */
+  const repointed = (stored: string | null): string | null => {
+    if (!stored) return null;
+    let list: unknown;
+    try { list = JSON.parse(stored); } catch { return null; }
+    if (!Array.isArray(list) || !list.some((v) => typeof v === 'string' && keepOf.has(v))) return null;
+    const after: unknown[] = [];
+    for (const v of list) {
+      const mapped = typeof v === 'string' ? (keepOf.get(v) ?? v) : v;
+      if (!after.includes(mapped)) after.push(mapped); // two snapshots of one turn become one entry
+    }
+    return JSON.stringify(after);
+  };
+
+  // 1. No write lock: which facts, and what their list becomes.
+  const work: Array<{ id: string; stored: string; after: string }> = [];
+  for (const fact of db.prepare(affectedFacts).all() as Array<{ id: string; source_exchange_ids: string }>) {
+    const after = repointed(fact.source_exchange_ids);
+    if (after !== null) work.push({ id: fact.id, stored: fact.source_exchange_ids, after });
+  }
+
+  // 2. + 3. Short write transactions; `next` moves only after the commit.
+  const read = db.prepare('SELECT source_exchange_ids AS stored FROM facts WHERE id = ?');
+  const write = db.prepare('UPDATE facts SET source_exchange_ids = ? WHERE id = ?');
+  let next = 0;
+  let rewritten = 0;
+  const writeBatch = db.transaction((): { taken: number; changed: number } => {
+    const started = Date.now();
+    let taken = 0;
+    let changed = 0;
+    while (next + taken < work.length && taken < batchSize) {
+      const item = work[next + taken];
+      taken++;
+      const now = read.get(item.id) as { stored: string | null } | undefined;
+      const after = now === undefined ? null : now.stored === item.stored ? item.after : repointed(now.stored);
+      if (after !== null) {
+        write.run(after, item.id);
+        changed++;
+      }
+      if (Date.now() - started >= maxBatchMs) break;
+    }
+    return { taken, changed };
+  });
+  while (next < work.length) {
+    const { taken, changed } = writeBatch.immediate();
+    next += taken;
+    rewritten += changed;
+    opts.onBatch?.(next);
+    if (next < work.length) pauseForOtherWriters(opts.pauseMs);
+  }
+  return rewritten;
+}
+
+export interface SnapshotDedupeOptions {
+  /** How the fact sources are re-pointed (batch size, pauses, progress). */
+  repoint?: RepointFactsOptions;
+}
+
 /**
  * Back up, re-point the facts, delete the extra rows. Order matters for an
  * interrupted run: facts are re-pointed BEFORE the rows go, so no fact ever
  * names a deleted row; a re-run finds the rows that are left and finishes.
  */
-export function applySnapshotDedupe(db: Database.Database, backupPath: string): SnapshotDedupeResult {
+export function applySnapshotDedupe(
+  db: Database.Database,
+  backupPath: string,
+  opts: SnapshotDedupeOptions = {},
+): SnapshotDedupeResult {
   const plan = planSnapshotDedupe(db);
   if (plan.extraRows === 0) {
     return { plan, backupPath: null, deletedRows: 0, rewrittenFacts: 0, remainingExtraRows: 0 };
   }
 
-  const staleIds = `SELECT id FROM temp.${STALE}`;
-  const affectedFacts = `
-    SELECT DISTINCT f.id AS id, f.source_exchange_ids AS source_exchange_ids
-    FROM main.facts f, json_each(f.source_exchange_ids) j
-    WHERE json_valid(f.source_exchange_ids) AND j.value IN (${staleIds})`;
   const backedUp = writeRowBackup(db, backupPath, [
     { table: 'exchanges', select: `SELECT * FROM main.exchanges WHERE id IN (${staleIds})` },
     { table: 'tool_calls', select: `SELECT * FROM main.tool_calls WHERE exchange_id IN (${staleIds})` },
@@ -111,26 +217,11 @@ export function applySnapshotDedupe(db: Database.Database, backupPath: string): 
     throw new Error(`backup holds ${backedUp.exchanges} exchange rows, expected ${plan.extraRows} — nothing was changed (${backupPath})`);
   }
 
-  // Re-point facts, one transaction.
-  const keepOf = new Map<string, string>(
-    (db.prepare(`SELECT id, keep_id FROM temp.${STALE}`).all() as Array<{ id: string; keep_id: string }>).map((r) => [r.id, r.keep_id]));
-  const update = db.prepare('UPDATE facts SET source_exchange_ids = ? WHERE id = ?');
-  const rewrittenFacts = db.transaction(() => {
-    let n = 0;
-    for (const fact of db.prepare(affectedFacts).all() as Array<{ id: string; source_exchange_ids: string }>) {
-      const before = JSON.parse(fact.source_exchange_ids) as unknown[];
-      const after: unknown[] = [];
-      for (const v of before) {
-        const mapped = typeof v === 'string' ? (keepOf.get(v) ?? v) : v;
-        if (!after.includes(mapped)) after.push(mapped);
-      }
-      update.run(JSON.stringify(after), fact.id);
-      n++;
-    }
-    return n;
-  }).immediate();
+  // The rows to delete — the list the backup holds, in the order it was always deleted in.
+  const toDelete = (db.prepare(`SELECT id, keep_id FROM temp.${STALE}`).all() as Array<{ id: string }>).map((r) => r.id);
+  const rewrittenFacts = repointFactsAtKeptSnapshots(db, opts.repoint);
 
-  const deletedRows = deleteExchanges(db, [...keepOf.keys()]);
+  const deletedRows = deleteExchanges(db, toDelete);
   const remaining = planSnapshotDedupe(db).extraRows;
   return { plan, backupPath, deletedRows, rewrittenFacts, remainingExtraRows: remaining };
 }

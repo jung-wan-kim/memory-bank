@@ -218,7 +218,11 @@ each item below:
 - `dedupe-exchange-snapshots.mjs --apply` keeps, per `(archive_path,
   line_start)`, the row with the largest `line_end`, points facts that named a
   removed row at it, and backs up rows, id map and the facts' original sources
-  to `backups/dedupe-snapshots-<timestamp>.sqlite`. A session that indexes
+  to `backups/dedupe-snapshots-<timestamp>.sqlite`. The facts are found
+  without the write lock and written 500 per transaction (or until a batch has
+  taken 400ms), each read again inside its batch, with a pause between
+  batches — as one transaction that step held the write lock for 2 to 5
+  seconds on a database of 46,000 facts. A session that indexes
   while it runs can leave duplicate rows the run did not see: it then ends
   with `WARNING: duplicate rows remain … run again` and exit 1. `--create-index`
   also builds the `(archive_path, line_start)` index that new databases are
