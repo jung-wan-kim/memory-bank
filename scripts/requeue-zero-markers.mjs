@@ -32,7 +32,10 @@
  *    judged by running that predicate against a copy of the marker table with
  *    the candidates taken out;
  *  - the extractor would not exclude it straight away (a folder under an excluded
- *    project gets a 0/0 marker on purpose).
+ *    project gets a 0/0 marker on purpose);
+ *  - no stored fact names one of the session's exchanges as its source (an
+ *    earlier extraction of that session did save facts — extracting it again
+ *    would store them twice).
  *
  * Cost: each requeued session is extracted by the backfill worker — up to
  * MEMORY_BANK_MAX_EXTRACT_CALLS LLM calls per session plus one classification
@@ -90,6 +93,21 @@ function sessionProject(db, sid) {
   if (byCwd?.cwd) return byCwd.cwd;
   const bySlug = db.prepare('SELECT project FROM exchanges WHERE session_id = ? LIMIT 1').get(sid);
   return bySlug ? canonicalizeProject(db, bySlug.project) : null;
+}
+
+/** Every exchange id some stored fact names as a source (active or not — a deactivated fact was still extracted). */
+function factSourceExchangeIds(db) {
+  if (columnsOf(db, 'facts').length === 0) return new Set();
+  const ids = new Set();
+  const rows = db.prepare(
+    "SELECT source_exchange_ids FROM facts WHERE source_exchange_ids IS NOT NULL AND source_exchange_ids != '[]'",
+  ).iterate();
+  for (const row of rows) {
+    let parsed;
+    try { parsed = JSON.parse(row.source_exchange_ids); } catch { continue; }   // a malformed list names no exchange
+    if (Array.isArray(parsed)) for (const id of parsed) ids.add(id);
+  }
+  return ids;
 }
 
 /**
@@ -152,8 +170,15 @@ function findTargets(db) {
     counts.pendingWithoutMarker = pending.length;
 
     // Step 3 — not the ones the extractor excludes at once (it would write the same marker again).
-    const targets = pending.filter((s) => !isExcludedProjectPath(sessionProject(db, s.sid)));
-    counts.excludedByExtractor = pending.length - targets.length;
+    const notExcluded = pending.filter((s) => !isExcludedProjectPath(sessionProject(db, s.sid)));
+    counts.excludedByExtractor = pending.length - notExcluded.length;
+
+    // Step 4 — not the ones that already yielded facts (the backfill worker's
+    // seedFromExistingFacts reads the same column the same way).
+    const sourced = factSourceExchangeIds(db);
+    const exchangeIds = db.prepare('SELECT id FROM exchanges WHERE session_id = ?');
+    const targets = notExcluded.filter((s) => !exchangeIds.all(s.sid).some((e) => sourced.has(e.id)));
+    counts.alreadyYieldedFacts = notExcluded.length - targets.length;
     counts.targets = targets.length;
     counts.targetExchanges = targets.reduce((sum, s) => sum + s.n, 0);
     return { counts, targets };
@@ -169,6 +194,7 @@ function printCounts(counts) {
   console.log(`  every exchange indexed after the marker was written: ${counts.indexedAfterMarker}`);
   console.log(`  pending by the backfill's predicate once the marker is gone: ${counts.pendingWithoutMarker}`);
   console.log(`  excluded by the extractor (folder under an excluded project): ${counts.excludedByExtractor}`);
+  console.log(`  already yielded facts in an earlier extraction: ${counts.alreadyYieldedFacts}`);
   console.log(`sessions to requeue: ${counts.targets} (${counts.targetExchanges} exchange(s))`);
 }
 

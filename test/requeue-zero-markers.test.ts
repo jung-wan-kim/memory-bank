@@ -18,6 +18,7 @@ import path from 'node:path';
  *    있는 표식(먼저 색인됨·같은 초·색인 시각 모름·읽은 교환 수 기록·폐기 배치)은 그대로
  *  - 걷어 낸 세션은 backfill 의 pending 술어에 실제로 잡힌다
  *  - 추출기가 곧바로 제외할 세션(제외 저장소의 하위 폴더)은 걷어 내지 않는다
+ *  - 앞선 추출이 사실을 저장한 적이 있는 세션은 걷어 내지 않는다(다시 추출하면 두 벌)
  *  - --apply 는 되돌리기 파일을 먼저 쓰고, --undo 는 그 뒤 아무도 손대지 않은 세션만 되돌린다
  */
 
@@ -55,6 +56,8 @@ const SEEDS: Seed[] = [
   { sid: 'sidechain-only', marker: { extracted: 0, saved: 0 }, exchanges: [{ indexed: AFTER, sidechain: true }, { indexed: AFTER, sidechain: true }] },
   { sid: 'excluded-exact', marker: { extracted: 0, saved: 0 }, exchanges: [{ indexed: AFTER }, { indexed: AFTER }], cwd: EXCLUDED },
   { sid: 'excluded-subfolder', marker: { extracted: 0, saved: 0 }, exchanges: [{ indexed: AFTER }, { indexed: AFTER }], cwd: `${EXCLUDED}/tools` },
+  // 0건 표식이지만 앞선 추출이 이 세션에서 사실을 저장한 적이 있다(비활성 사실이어도 같다).
+  { sid: 'yielded-before', marker: { extracted: 0, saved: 0 }, exchanges: [{ indexed: AFTER }, { indexed: AFTER }] },
   { sid: 'has-facts', marker: { extracted: 3, saved: 3 }, exchanges: [{ indexed: AFTER }, { indexed: AFTER }] },
   // 살아 있는 선점(리스가 만료되지 않은 것) — 만료된 선점은 원래 pending 이다.
   { sid: 'claimed', marker: { extracted: -3, saved: 0, at: FRESH }, exchanges: [{ indexed: AFTER }, { indexed: AFTER }] },
@@ -80,6 +83,14 @@ async function seed(): Promise<void> {
         `${s.sid}-${i}`, `${s.day ?? '2026-08-10'}T0${i}:00:00.000Z`, `/archive/${s.sid}.jsonl`,
         s.sid, e.sidechain ? 1 : 0, s.cwd ?? '/repos/app', e.indexed,
       ));
+      if (s.sid === 'yielded-before') {
+        db.prepare(`INSERT INTO facts (id, fact, category, scope_type, source_exchange_ids, created_at, updated_at, is_active)
+                    VALUES ('f-earlier', 'Deploys run from the main branch only.', 'constraint', 'global', ?, ?, ?, 0)`)
+          .run(JSON.stringify(['yielded-before-1', 'unrelated-exchange']), MARK, MARK);
+        db.prepare(`INSERT INTO facts (id, fact, category, scope_type, source_exchange_ids, created_at, updated_at)
+                    VALUES ('f-malformed-sources', 'Release tags are created by CI.', 'constraint', 'global', 'not json', ?, ?)`)
+          .run(MARK, MARK);
+      }
       if (s.marker) mk.run(s.sid, s.marker.at ?? MARK, s.marker.extracted, s.marker.saved, s.marker.dropped ?? 0, s.marker.seen ?? null);
     }
   } finally {
@@ -149,11 +160,12 @@ describe('requeue-zero-markers.mjs', () => {
     const { code, out } = run('--db', dbPath);
 
     expect(code, out).toBe(0);
-    expect(out).toMatch(/0-fact completion markers: 10$/m);
-    expect(out).toMatch(/with at least one indexed main-chain exchange today: 9$/m);
-    expect(out).toMatch(/every exchange indexed after the marker was written: 5$/m);
-    expect(out).toMatch(/pending by the backfill's predicate once the marker is gone: 3$/m);
+    expect(out).toMatch(/0-fact completion markers: 11$/m);
+    expect(out).toMatch(/with at least one indexed main-chain exchange today: 10$/m);
+    expect(out).toMatch(/every exchange indexed after the marker was written: 6$/m);
+    expect(out).toMatch(/pending by the backfill's predicate once the marker is gone: 4$/m);
     expect(out).toMatch(/excluded by the extractor \(folder under an excluded project\): 1$/m);
+    expect(out).toMatch(/already yielded facts in an earlier extraction: 1$/m);
     expect(out).toMatch(/sessions to requeue: 2 \(6 exchange\(s\)\)$/m);
     expect(out).toMatch(/dry run: nothing changed/);
     expect(dbHash()).toBe(before);
