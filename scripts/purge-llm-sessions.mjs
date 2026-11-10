@@ -46,9 +46,16 @@
  *     `-memory-bank-llm`). Prompt discriminators are exact multi-word template
  *     leads (≥49 chars) — a real human message starting with the verbatim
  *     template text is vanishingly rare, and the backup covers even that.
- *   - Deletes run in batches of 2,000, each one transaction; tool_calls are
- *     deleted explicitly (the schema this code creates has no ON DELETE
- *     CASCADE on them).
+ *   - Deletes run in batches, each one transaction: a batch ends at 2,000
+ *     rows or after 400ms, whichever comes first, and the next one starts
+ *     after a pause, so other processes get the write lock in between
+ *     (deleteExchanges, src/db.ts). tool_calls are deleted explicitly (the
+ *     schema this code creates has no ON DELETE CASCADE on them).
+ *   - CLOSE THE OTHER CLAUDE CODE SESSIONS before --apply. The backup step
+ *     still copies under the write lock, in one transaction: for a large
+ *     purge that is longer than the 5s every other process waits, and a
+ *     session's hook, worker or MCP server fails with "database is
+ *     locked" meanwhile. (The dry run only reads; it needs no such care.)
  *   - AFTER: the worklist ids are looked up again in exchanges, tool_calls and
  *     the vector index; anything left is reported and the exit code is 1.
  *
@@ -61,7 +68,7 @@
  */
 
 import path from 'node:path';
-import { initDatabase, openReadOnlyDatabase } from '../dist/db.js';
+import { initDatabase, openReadOnlyDatabase, deleteExchanges } from '../dist/db.js';
 import { getIndexDir } from '../dist/paths.js';
 import { buildPollutionWhere, countPurgeLeftovers, PURGE_WORKLIST_TABLE } from '../dist/pollution-predicate.js';
 import { parseCliArgs } from '../dist/cli-args.js';
@@ -72,6 +79,7 @@ try {
 } catch (e) {
   console.error(`purge-llm-sessions: ${e.message}`);
   console.error('usage: purge-llm-sessions.mjs [--legacy-prompts] [--warmup] [--observer] [--apply]');
+  console.error('       (no --apply = dry run; close the other Claude Code sessions before --apply)');
   process.exit(1);
 }
 const apply = args.flags.has('--apply');
@@ -117,6 +125,7 @@ function main() {
     }
     if (!apply) {
       console.log('\nDRY-RUN (no changes made). Re-run with --apply to backup + delete.');
+      console.log('Close the other Claude Code sessions before --apply: the backup copies under the write lock, and their writes fail with "database is locked" while it runs.');
       return;
     }
 
@@ -170,27 +179,31 @@ function main() {
     }
     console.log(`backed up ${ids.length} exchanges to ${backupPath}`);
 
-    // --- Delete in BATCHED transactions (2K ids each). One giant transaction
-    // deleting 50K+ vec0 rows trips SQLITE_CORRUPT_VTAB in the extension's
-    // chunk bookkeeping (observed live at ~54K); small batches are safe. A
-    // crash between batches leaves a partial purge — harmless: the run is
-    // idempotent (predicate-driven) and the NEXT run resumes where this one
-    // stopped, while the up-front backup already holds every row.
-    // Order inside a batch: vec rows (per-id — vec0 takes no subqueries),
-    // tool_calls, then exchanges (FTS triggers keep exchanges_fts in sync).
-    const BATCH = 2000;
-    const delVec = db.prepare('DELETE FROM vec_exchanges WHERE id = ?');
-    const delTc = db.prepare('DELETE FROM tool_calls WHERE exchange_id = ?');
-    const delEx = db.prepare('DELETE FROM exchanges WHERE id = ?');
-    const delBatch = db.transaction((chunk) => {
-      for (const id of chunk) { delVec.run(id); delTc.run(id); delEx.run(id); }
+    // --- Delete in BATCHED transactions: deleteExchanges (src/db.ts), the same
+    // loop the snapshot dedupe and --prune-missing use. A batch ends at 2,000
+    // ids or after DELETE_BATCH_MAX_MS, whichever comes first, and the next one
+    // starts after a pause, so a session-start hook, a worker or an MCP server
+    // waiting for the write lock gets it in between. This script's own loop
+    // was bounded by row count only: 2,000 rows, each an FTS delete and a vec0
+    // delete, held the lock past the 5s other processes wait, batch after
+    // batch (measured on a copy of a live DB: 25 failed lock waits in one purge).
+    // The row limit stays: one giant transaction deleting 50K+ vec0 rows trips
+    // SQLITE_CORRUPT_VTAB in the extension's chunk bookkeeping (observed live
+    // at ~54K). A crash between batches leaves a partial purge — harmless: the
+    // run is idempotent (predicate-driven) and the NEXT run resumes where this
+    // one stopped, while the up-front backup already holds every row.
+    // Order inside a batch, per id: tool_calls, vector, exchange (FTS triggers
+    // keep exchanges_fts in sync).
+    let reported = 0;
+    deleteExchanges(db, ids, 2000, {
+      onBatch: (deleted) => {
+        // One line per 10,000 rows, and one when the last batch is in.
+        if (deleted === ids.length || Math.floor(deleted / 10000) > Math.floor(reported / 10000)) {
+          console.log(`  deleted ${deleted}/${ids.length}`);
+        }
+        reported = deleted;
+      },
     });
-    let deleted = 0;
-    for (let i = 0; i < ids.length; i += BATCH) {
-      delBatch.immediate(ids.slice(i, i + BATCH));
-      deleted += Math.min(BATCH, ids.length - i);
-      if (deleted % 10000 < BATCH) console.log(`  deleted ${deleted}/${ids.length}`);
-    }
 
     // --- Post-verify against the worklist: everything gone ---
     const left = countPurgeLeftovers(db);
