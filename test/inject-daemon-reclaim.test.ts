@@ -20,6 +20,7 @@ vi.mock('../src/embeddings.js', async (orig) => ({
  * 지우는 주체가 없어 옛 버전 것이 쌓였다(실측 8개 중 7개가 죽은 파일).
  *  - 잡지 못한 서버는 주기적으로 다시 본다: 파일이 없으면 바로 잡고, 죽은 파일이면 치우고 잡는다
  *  - 소켓을 잡은 서버는 다른 버전의 죽은 소켓 파일을 치운다 — 살아 있는 것·방금 생긴 것은 그대로
+ *    (죽었다는 판정은 1초 간격의 두 번 — test/inject-daemon-retry.test.ts)
  *  - 자기 소켓 파일이 사라지면(이름으로 지워짐) 다시 잡는다
  *
  * 실제 유닉스 소켓을 쓴다. 「강제 종료된 소유자」는 자식 프로세스를 SIGKILL 해서 만든다(파일이 남는다).
@@ -202,7 +203,8 @@ describe('죽은 소켓 파일 정리', () => {
 
     const a = start();
     expect(await waitFor(() => a.owning())).toBe(true);
-    expect(await waitFor(() => !fs.existsSync(p('inject-daemon-1.6.0.sock')) && !fs.existsSync(p('inject-daemon.sock')), 3000)).toBe(true);
+    // 죽은 파일 하나마다 1초 간격으로 두 번 살펴본 뒤 지운다(하나씩 차례로) — 두 개면 2초 남짓
+    expect(await waitFor(() => !fs.existsSync(p('inject-daemon-1.6.0.sock')) && !fs.existsSync(p('inject-daemon.sock')), 8000)).toBe(true);
     await sleep(TICK_MS * 3);
     expect(fs.readdirSync(ci()).filter((f) => f.startsWith('inject-daemon')).sort()).toEqual([
       'inject-daemon-1.6.1.sock', 'inject-daemon-1.6.2.sock', 'inject-daemon-9.9.9.sock', `inject-daemon-${VERSION}.sock`, 'inject-daemon-notes.txt',

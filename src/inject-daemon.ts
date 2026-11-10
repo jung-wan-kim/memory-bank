@@ -33,12 +33,21 @@ import { injectSocketPathIn, ownPackageVersion, MAX_UNIX_SOCKET_PATH_BYTES } fro
  *    version is never touched; a dead one (no listener, not just created) is
  *    removed by whoever takes its own socket — nothing else ever cleaned up
  *    what a killed server left behind (7 dead files of 8, measured).
- *  - A socket file is removed only when nobody answers on it AND it is not
- *    fresh AND it is still the file that was probed. A server between bind()
- *    and listen() refuses connections exactly like a dead one, and another
- *    server may have replaced a dead file a moment ago: unlinking either
- *    leaves a server listening on a name nobody can reach, which then deletes
- *    the next owner's file when it closes (libuv unlinks by name).
+ *  - A socket file is removed only when nobody answers on it — twice, a second
+ *    apart — AND it is not fresh AND it is still the file that was probed. A
+ *    server between bind() and listen() refuses connections exactly like a dead
+ *    one, so does a LIVE one whose accept queue is full for a moment (macOS),
+ *    and another server may have replaced a dead file a moment ago: unlinking
+ *    any of them leaves a server listening on a name nobody can reach, which
+ *    then deletes the next owner's file when it closes (libuv unlinks by name)
+ *    — and a v1.7.x server never binds again.
+ *  - The 'listening' handler is registered once. `server.listen(path, cb)` adds
+ *    `cb` as a once-listener on every call and a failed bind never removes it:
+ *    a server waiting for the socket collected one per timer tick, and on
+ *    takeover all of them ran — as many simultaneous sweeps of the other
+ *    versions' sockets, enough connects at once to fill a busy daemon's accept
+ *    queue and have its live socket file removed (v1.8.0 review, measured).
+ *    The sweep itself runs one at a time per process.
  *  - The owner checks that its file is still there: when the name is gone it
  *    binds again (an unreachable owner would otherwise look fine forever).
  *  - No daemon when the socket path does not fit a unix socket (a deep config
@@ -95,6 +104,14 @@ const OWN_SOCKET_MIN_AGE_MS = 2_000;
 /** Another version's socket: left alone for a minute after it appears, dead or not. */
 const OTHER_SOCKET_MIN_AGE_MS = 60_000;
 const PROBE_TIMEOUT_MS = 500;
+/**
+ * How long after a first ECONNREFUSED a socket is probed again before it counts as dead. macOS answers
+ * ECONNREFUSED for a live listener too while its accept queue is full (measured: queue of 1, server in a
+ * synchronous stretch — 1 connect accepted, 11 of 12 simultaneous ones refused); by the second look the
+ * stretch (embedding inference, a sqlite search: tens of ms) is over. Nobody waits for this — a dead file
+ * costs a prompt nothing, a removed live one costs that session its fast path.
+ */
+const DEAD_CONFIRM_MS = 1_000;
 
 /** inode + times of a socket file — "is this still the file I probed". null when absent or not a socket. */
 function socketIdentity(p: string): { ino: number; ctimeMs: number; mtimeMs: number } | null {
@@ -127,28 +144,44 @@ function probeSocket(p: string): Promise<'alive' | 'dead' | 'absent' | 'unknown'
   });
 }
 
-/** The same file as `before`, old enough, and nobody answers: then (and only then) it may be unlinked. */
+/** The same file as `before`, old enough, and nobody answers on it twice: then (and only then) it may be unlinked. */
 async function removeIfDead(p: string, minAgeMs: number): Promise<boolean> {
   const before = socketIdentity(p);
   if (!before || Date.now() - before.mtimeMs < minAgeMs) return false;
+  if ((await probeSocket(p)) !== 'dead') return false;
+  // unref: this wait must not keep the MCP server's process alive.
+  await new Promise<void>((resolve) => { setTimeout(resolve, DEAD_CONFIRM_MS).unref(); });
   if ((await probeSocket(p)) !== 'dead') return false;
   const now = socketIdentity(p);
   if (!now || now.ino !== before.ino || now.ctimeMs !== before.ctimeMs) return false; // replaced meanwhile
   try { fs.unlinkSync(p); return true; } catch { return false; }
 }
 
-/** Dead socket files of OTHER versions in the index dir (a killed server cannot remove its own). */
+/** Index dirs a sweep is in flight for in this process — a second one would only double the connects sent to each socket. */
+const sweeping = new Set<string>();
+
+/**
+ * Dead socket files of OTHER versions in the index dir (a killed server cannot remove its own). One sweep at
+ * a time per process, one socket after the other: each probe is a connect, and connects arriving together
+ * are what fills a busy listener's accept queue.
+ */
 async function removeDeadSockets(indexDir: string, ownSock: string): Promise<void> {
-  let names: string[];
-  try { names = fs.readdirSync(indexDir); } catch { return; }
-  let removed = 0;
-  for (const name of names) {
-    if (!/^inject-daemon(?:-[0-9A-Za-z.+-]{1,32})?\.sock$/.test(name)) continue;
-    const p = path.join(indexDir, name);
-    if (p === ownSock) continue;
-    if (await removeIfDead(p, OTHER_SOCKET_MIN_AGE_MS)) removed++;
+  if (sweeping.has(indexDir)) return;
+  sweeping.add(indexDir);
+  try {
+    let names: string[];
+    try { names = fs.readdirSync(indexDir); } catch { return; }
+    let removed = 0;
+    for (const name of names) {
+      if (!/^inject-daemon(?:-[0-9A-Za-z.+-]{1,32})?\.sock$/.test(name)) continue;
+      const p = path.join(indexDir, name);
+      if (p === ownSock) continue;
+      if (await removeIfDead(p, OTHER_SOCKET_MIN_AGE_MS)) removed++;
+    }
+    if (removed > 0) console.error(`[memory-bank] removed ${removed} dead inject-daemon socket file(s)`);
+  } finally {
+    sweeping.delete(indexDir);
   }
-  if (removed > 0) console.error(`[memory-bank] removed ${removed} dead inject-daemon socket file(s)`);
 }
 
 /** What startInjectDaemon hands back — the MCP server ignores it; tests drive the lifecycle through it. */
@@ -256,11 +289,14 @@ export function startInjectDaemon(): InjectDaemonHandle {
     void removeDeadSockets(path.dirname(sockPath), sockPath);
   };
 
+  // Registered once — never through listen(path, cb), which would add it again on every attempt (see the header).
+  server.on('listening', onListen);
+
   const tryListen = () => {
     if (stopped || attempting || server.listening) return;
     attempting = true;
     try {
-      server.listen(sockPath, onListen);
+      server.listen(sockPath);
     } catch {
       attempting = false; // sidecar is best-effort
     }
