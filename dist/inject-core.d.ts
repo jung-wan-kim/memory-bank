@@ -1,8 +1,9 @@
+import { hostSkipReason } from './inject-host-skip.js';
 /** Who called the hook — recorded in the inject log, never used for ranking. */
 export interface InjectRequestMeta {
     client?: string;
     entrypoint?: string;
-    /** Cold fallback only: why the daemon did not answer ('no-daemon', 'daemon-timeout', 'daemon-closed', 'daemon-error'). */
+    /** Cold fallback only: why the daemon did not answer ('no-daemon', 'daemon-timeout', 'daemon-closed', 'daemon-error', 'socket-path-too-long'). */
     fallback_reason?: string;
     /**
      * One id per hook run, sent to the daemon and used again by the fallback. When
@@ -13,6 +14,7 @@ export interface InjectRequestMeta {
     /** Which thin client made the hook request: the native binary or the node script (inject log only). */
     client_impl?: 'native' | 'node';
 }
+export { hostSkipReason };
 /**
  * The block plus the ledger keys (fact id + text key per injected fact) that
  * mark it as shown in this session. Committing those keys is the job of

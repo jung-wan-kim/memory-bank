@@ -6,7 +6,8 @@ import fs from 'fs';
  */
 function ensureDir(dir) {
     if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
+        // Owner-only: these directories hold the text of every indexed conversation (see file-perms.ts).
+        fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     }
     return dir;
 }

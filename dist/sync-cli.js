@@ -1,6 +1,7 @@
 import { syncConversations } from './sync.js';
 import { getArchiveDir } from './paths.js';
 import { parseLockMeta, decideTakeover } from './version-guard.js';
+import { appendSyncLog } from './sync-log.js';
 import path from 'path';
 import os from 'os';
 import { spawn, execFileSync } from 'child_process';
@@ -155,21 +156,33 @@ function __writeLockMeta() {
     }
     catch { }
 }
+function __makeLockDir() {
+    try {
+        fs.mkdirSync(path.dirname(__lockDir), { recursive: true });
+    }
+    catch (e) {
+        return { state: 'error', error: e };
+    }
+    try {
+        fs.mkdirSync(__lockDir, { recursive: false });
+        return { state: 'taken' };
+    }
+    catch (e) {
+        return e.code === 'EEXIST' ? { state: 'held' } : { state: 'error', error: e };
+    }
+}
 function __reclaimLock() {
     try {
         fs.rmSync(__lockDir, { recursive: true, force: true });
-        fs.mkdirSync(__lockDir, { recursive: false });
-        return true;
     }
-    catch {
-        return false;
+    catch (e) {
+        return { state: 'error', error: e };
     }
+    return __makeLockDir(); // held here: another sync took it between the two calls
 }
 async function __acquireLock() {
-    try {
-        fs.mkdirSync(__lockDir, { recursive: false });
-    }
-    catch {
+    let outcome = __makeLockDir();
+    if (outcome.state === 'held') {
         let raw = '';
         try {
             raw = fs.readFileSync(__pidFile, 'utf8');
@@ -178,8 +191,7 @@ async function __acquireLock() {
         const holder = parseLockMeta(raw);
         if (!holder || !__pidAlive(holder.pid)) {
             // Garbage or dead holder — reclaim (pre-existing behavior).
-            if (!__reclaimLock())
-                return false;
+            outcome = __reclaimLock();
         }
         else {
             // Live holder: preempt if it runs older code or is wedged.
@@ -194,29 +206,38 @@ async function __acquireLock() {
             }
             const decision = decideTakeover(holder, __myVersion, runMs, WEDGE_MAX_MS);
             if (decision === 'defer')
-                return false;
+                return { state: 'held' };
             if (!__isSyncCliProcess(holder.pid)) {
                 // Pid was recycled by an unrelated process — the lock is garbage.
-                if (!__reclaimLock())
-                    return false;
+                outcome = __reclaimLock();
             }
             else {
                 console.log(`Preempting sync lock holder pid=${holder.pid} version=${holder.version ?? 'legacy'} (${decision})`);
                 if (!(await __killAndConfirm(holder.pid))) {
                     console.error(`Failed to terminate lock holder pid=${holder.pid} - skip`);
-                    return false;
+                    return { state: 'held' };
                 }
-                if (!__reclaimLock())
-                    return false;
+                outcome = __reclaimLock();
             }
         }
     }
-    __writeLockMeta();
-    return true;
+    if (outcome.state === 'taken')
+        __writeLockMeta();
+    return outcome;
 }
-if (!(await __acquireLock())) {
+const __lock = await __acquireLock();
+if (__lock.state === 'held') {
     console.log('Sync already running - skip (singleton lock)');
     process.exit(0);
+}
+if (__lock.state === 'error') {
+    // Not running is right — a sync without its lock is what piled up 76 at a
+    // time. Saying "already running" was not: this is a failure, and the log
+    // line is its only trace when the hook starts the sync detached.
+    const message = `cannot take the sync lock at ${__lockDir}: ${__lock.error.message}`;
+    console.error(`Sync not started - ${message}`);
+    appendSyncLog({ action: 'failed', version: __myVersion, duration_ms: 0, error: message });
+    process.exit(1);
 }
 process.on('exit', () => { try {
     fs.rmSync(__lockDir, { recursive: true, force: true });
@@ -224,16 +245,31 @@ process.on('exit', () => { try {
 catch { } });
 // Default signal death skips 'exit' handlers (observed: SIGTERM left a stale
 // lock behind). Route signals through process.exit so the lock is released.
+// Set once the sync itself starts: a run stopped by a signal (the version check
+// terminates an older worker) leaves a line in the sync log instead of nothing.
+let __syncStartedAt = null;
 for (const sig of ['SIGTERM', 'SIGINT']) {
-    process.on(sig, () => process.exit(143));
+    process.on(sig, () => {
+        if (__syncStartedAt !== null) {
+            appendSyncLog({ action: 'terminated', version: __myVersion, duration_ms: Date.now() - __syncStartedAt, signal: sig });
+        }
+        process.exit(143);
+    });
 }
 const sourceDir = path.join(os.homedir(), '.claude', 'projects');
 const destDir = getArchiveDir();
 console.log('Syncing conversations...');
 console.log(`Source: ${sourceDir}`);
 console.log(`Destination: ${destDir}\n`);
+__syncStartedAt = Date.now();
 syncConversations(sourceDir, destDir)
     .then(result => {
+    // The hook runs this detached with stdio ignored — the log line is the only trace.
+    appendSyncLog({
+        action: 'ran', version: __myVersion, duration_ms: Date.now() - (__syncStartedAt ?? Date.now()),
+        copied: result.copied, skipped: result.skipped, indexed: result.indexed, summarized: result.summarized,
+        errors: result.errors,
+    });
     console.log(`\n✅ Sync complete!`);
     console.log(`  Copied: ${result.copied}`);
     console.log(`  Skipped: ${result.skipped}`);
@@ -251,6 +287,10 @@ syncConversations(sourceDir, destDir)
     }
 })
     .catch(error => {
+    appendSyncLog({
+        action: 'failed', version: __myVersion, duration_ms: Date.now() - (__syncStartedAt ?? Date.now()),
+        error: error instanceof Error ? error.message : String(error),
+    });
     console.error('Error syncing:', error);
     process.exit(1);
 });

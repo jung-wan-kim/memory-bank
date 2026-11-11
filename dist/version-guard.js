@@ -125,10 +125,20 @@ export function ownPackageVersion() {
     }
     return ownVersionCache;
 }
-/** macOS sun_path is 104 bytes including the terminating NUL. */
-const MAX_UNIX_SOCKET_PATH_BYTES = 103;
 /**
- * The inject daemon's socket path for one plugin version.
+ * Longest unix socket path this plugin uses, in bytes: sun_path minus its terminating NUL — 107 on Linux
+ * (sun_path[108]), 103 on macOS and the BSDs (sun_path[104]). Node does not refuse a longer path — libuv binds,
+ * and connects to, its first bytes: another name, outside the index dir when the directory part alone is too
+ * long, shared by every config dir with the same prefix. Rust refuses anything longer than this. So the limit is
+ * applied here, before either client or the daemon gets the path (the native client carries the same numbers —
+ * native/inject-client/src/paths.rs). Linux keeps its own, larger number: there 104–107 bytes always worked.
+ */
+export function maxUnixSocketPathBytes(platform = process.platform) {
+    return platform === 'linux' ? 107 : 103;
+}
+export const MAX_UNIX_SOCKET_PATH_BYTES = maxUnixSocketPathBytes();
+/**
+ * The inject daemon's socket path for one plugin version, or null when no name fits a unix socket.
  *
  * Before v1.7.0 every version shared 'inject-daemon.sock', so a new session's
  * hook client talked to whichever MCP server bound first — after an update
@@ -138,16 +148,28 @@ const MAX_UNIX_SOCKET_PATH_BYTES = 103;
  * socket BY NAME when its server closes, including at process exit, so the old
  * owner would delete the new owner's file on its way out (measured). One
  * socket per version keeps client and daemon on the same code and never
- * touches another version's file.
+ * touches another version's live socket (a dead file a killed server left
+ * behind is removed — inject-daemon.ts removeDeadSockets).
  *
  * The legacy name is kept for an unusable version string, and for a path too
- * long for a unix socket — there a versioned name would fail to bind and leave
- * every prompt on the ~2.3s cold path.
+ * long for the versioned name — there a versioned name would fail to bind and
+ * leave every prompt on the ~2.3s cold path.
+ *
+ * null: even the legacy name is too long (a deep MEMORY_BANK_CONFIG_DIR /
+ * XDG_CONFIG_HOME, a temp dir). The daemon then stays off and the hook clients
+ * compute the block themselves. Until v1.8.0 the legacy name came back
+ * unchecked: the server bound the cut-off name, and when a file was already
+ * there (a second session, a killed server) it re-tried the bind without a
+ * pause — the MCP server never answered `initialize` and held a CPU core,
+ * while the hook client connected to whoever listened on the cut-off name.
  */
-export function injectSocketPathIn(indexDir, version) {
+export function injectSocketPathIn(indexDir, version, maxBytes = MAX_UNIX_SOCKET_PATH_BYTES) {
+    const fits = (p) => Buffer.byteLength(p) <= maxBytes;
+    if (version && /^[0-9A-Za-z.+-]{1,32}$/.test(version)) {
+        const versioned = path.join(indexDir, `inject-daemon-${version}.sock`);
+        if (fits(versioned))
+            return versioned;
+    }
     const legacy = path.join(indexDir, 'inject-daemon.sock');
-    if (!version || !/^[0-9A-Za-z.+-]{1,32}$/.test(version))
-        return legacy;
-    const versioned = path.join(indexDir, `inject-daemon-${version}.sock`);
-    return Buffer.byteLength(versioned) <= MAX_UNIX_SOCKET_PATH_BYTES ? versioned : legacy;
+    return fits(legacy) ? legacy : null;
 }

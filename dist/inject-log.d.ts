@@ -1,13 +1,18 @@
 export interface InjectLogEntry {
     ts: string;
-    /** 'deduped': 후보 전부가 이 세션에서 이미 주입됨 → 재주입 0 (토큰 절약 관측용). */
-    status: 'injected' | 'no-match' | 'skipped' | 'error' | 'deduped';
+    /**
+     * 'deduped': 후보 전부가 이 세션에서 이미 주입됨 → 재주입 0 (토큰 절약 관측용).
+     * 'ledger-reset': 압축(compaction) 뒤 그 세션의 원장을 비웠다 (scripts/ledger-reset-hook.js) — 주입 줄이 아니다.
+     */
+    status: 'injected' | 'no-match' | 'skipped' | 'error' | 'deduped' | 'ledger-reset';
     project?: string;
     prompt_len?: number;
     candidates?: number;
     injected?: number;
     /** 세션 원장 dedup 으로 걸러진 fact 수 — 절감량이 로그로 상시 측정된다. */
     deduped?: number;
+    /** status='ledger-reset' only — 비운 원장에 있던 키 수(fact id + 본문 키). */
+    ledger_cleared?: number;
     /** 실제 주입된 블록 크기(자) — 토큰 비용 관측용 (~chars/3 tok). */
     chars?: number;
     duration_ms?: number;
@@ -18,11 +23,19 @@ export interface InjectLogEntry {
      * the SessionStart key-facts block (scripts/fact-consolidate-hook.js).
      */
     via?: 'daemon' | 'fallback' | 'client' | 'session-start';
-    /** status='skipped' only — why (short prompt, task notification, slash command …). */
+    /**
+     * status='skipped' only — why (short prompt, task notification, slash command …). On a via='fallback' line:
+     * 'hook-budget' (too little of the hook's time left to start the cold computation) or 'daemon-timeout'
+     * (MEMORY_BANK_INJECT_COLD_ON_TIMEOUT=0 — the cold computation after a slow daemon was skipped).
+     */
     reason?: string;
     /** Length of the text actually searched, when it differs from the prompt (prompt-gate.ts). */
     query_len?: number;
-    /** via='fallback' only — why the warm daemon did not answer ('no-daemon', 'daemon-timeout', 'daemon-closed', 'daemon-error'). */
+    /**
+     * via='fallback' only — why the warm daemon did not answer ('no-daemon', 'daemon-timeout', 'daemon-closed',
+     * 'daemon-error'), or why it was never asked: 'socket-path-too-long' (no socket name fits a unix socket path
+     * under this index dir, so no daemon runs there — version-guard.ts injectSocketPathIn).
+     */
     fallback_reason?: string;
     /** One id per hook run: a daemon line and a fallback line with the same id are one prompt. */
     req_id?: string;

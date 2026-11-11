@@ -3261,8 +3261,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path13) {
-      let input2 = path13;
+    function removeDotSegments(path17) {
+      let input2 = path17;
       const output2 = [];
       let nextSlash = -1;
       let len = 0;
@@ -3671,8 +3671,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path13 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path13 && path13 !== "/" ? path13 : void 0;
+        const path17 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path17 && path17 !== "/" ? path17 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -7185,12 +7185,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs17, exportName) {
+    function addFormats(ajv, list, fs19, exportName) {
       var _a4;
       var _b;
       (_a4 = (_b = ajv.opts.code).formats) !== null && _a4 !== void 0 ? _a4 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs17[f]);
+        ajv.addFormat(f, fs19[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -8104,17 +8104,17 @@ var node_exports = {};
 __export(node_exports, {
   child_process: () => child_process,
   crypto: () => crypto,
-  fs: () => fs11,
-  os: () => os3,
-  path: () => path8,
+  fs: () => fs13,
+  os: () => os4,
+  path: () => path11,
   stream: () => stream,
   util: () => util
 });
 import * as child_process from "node:child_process";
 import * as crypto from "node:crypto";
-import * as fs11 from "node:fs";
-import * as os3 from "node:os";
-import * as path8 from "node:path";
+import * as fs13 from "node:fs";
+import * as os4 from "node:os";
+import * as path11 from "node:path";
 import * as stream from "node:stream";
 import * as util from "node:util";
 var init_node = __esm({
@@ -8180,15 +8180,15 @@ function redactSensitive(body) {
   }
   return null;
 }
-async function checkCredentialsFileSafety(path13, onWarn = (m2) => console.warn(`anthropic-sdk: ${m2}`)) {
+async function checkCredentialsFileSafety(path17, onWarn = (m2) => console.warn(`anthropic-sdk: ${m2}`)) {
   if (typeof process === "undefined" || process.platform === "win32")
     return;
-  const { fs: fs17 } = await Promise.resolve().then(() => (init_node(), node_exports));
-  let resolved = path13;
+  const { fs: fs19 } = await Promise.resolve().then(() => (init_node(), node_exports));
+  let resolved = path17;
   let st;
   try {
-    resolved = await fs17.promises.realpath(path13);
-    st = await fs17.promises.stat(resolved);
+    resolved = await fs19.promises.realpath(path17);
+    st = await fs19.promises.stat(resolved);
   } catch {
     return;
   }
@@ -8204,26 +8204,26 @@ async function checkCredentialsFileSafety(path13, onWarn = (m2) => console.warn(
   }
 }
 async function writeCredentialsFileAtomic(targetPath, data) {
-  const { fs: fs17, path: path13 } = await Promise.resolve().then(() => (init_node(), node_exports));
-  const dir = path13.dirname(targetPath);
-  await fs17.promises.mkdir(dir, { recursive: true, mode: 448 });
+  const { fs: fs19, path: path17 } = await Promise.resolve().then(() => (init_node(), node_exports));
+  const dir = path17.dirname(targetPath);
+  await fs19.promises.mkdir(dir, { recursive: true, mode: 448 });
   const tmpPath = `${targetPath}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
   try {
-    const fh = await fs17.promises.open(tmpPath, "w", 384);
+    const fh = await fs19.promises.open(tmpPath, "w", 384);
     try {
       await fh.writeFile(JSON.stringify(data, null, 2));
       await fh.sync();
     } finally {
       await fh.close();
     }
-    await fs17.promises.rename(tmpPath, targetPath);
+    await fs19.promises.rename(tmpPath, targetPath);
   } catch (err) {
-    await fs17.promises.unlink(tmpPath).catch(() => {
+    await fs19.promises.unlink(tmpPath).catch(() => {
     });
     throw err;
   }
   try {
-    const dirFh = await fs17.promises.open(dir, "r");
+    const dirFh = await fs19.promises.open(dir, "r");
     try {
       await dirFh.sync();
     } finally {
@@ -8625,11 +8625,11 @@ var init_credentials = __esm({
         return null;
       }
       validateProfileName(profileName);
-      const { fs: fs17, path: path13 } = await Promise.resolve().then(() => (init_node(), node_exports));
-      const configPath = path13.join(rootConfigPath, "configs", `${profileName}.json`);
+      const { fs: fs19, path: path17 } = await Promise.resolve().then(() => (init_node(), node_exports));
+      const configPath = path17.join(rootConfigPath, "configs", `${profileName}.json`);
       let configRaw;
       try {
-        configRaw = await fs17.promises.readFile(configPath, "utf-8");
+        configRaw = await fs19.promises.readFile(configPath, "utf-8");
       } catch (err) {
         if (err?.code !== "ENOENT") {
           throw new Error(`failed to read config file ${configPath}: ${err}`);
@@ -8710,37 +8710,37 @@ var init_credentials = __esm({
         return null;
       }
       validateProfileName(profileName);
-      const { path: path13 } = await Promise.resolve().then(() => (init_node(), node_exports));
-      return path13.join(rootConfigPath, "credentials", `${profileName}.json`);
+      const { path: path17 } = await Promise.resolve().then(() => (init_node(), node_exports));
+      return path17.join(rootConfigPath, "credentials", `${profileName}.json`);
     };
     getRootConfigPath = async () => {
       if (!supportsLocalConfigFiles()) {
         return null;
       }
-      const { path: path13 } = await Promise.resolve().then(() => (init_node(), node_exports));
+      const { path: path17 } = await Promise.resolve().then(() => (init_node(), node_exports));
       const configDir = readEnv("ANTHROPIC_CONFIG_DIR");
       if (configDir) {
         return configDir;
       }
-      const os6 = getPlatformHeaders()["X-Stainless-OS"];
-      if (os6 === "Windows") {
+      const os7 = getPlatformHeaders()["X-Stainless-OS"];
+      if (os7 === "Windows") {
         const appData = readEnv("APPDATA");
         if (appData) {
-          return path13.join(appData, "Anthropic");
+          return path17.join(appData, "Anthropic");
         }
         const userProfile = readEnv("USERPROFILE");
         if (userProfile) {
-          return path13.join(userProfile, "AppData", "Roaming", "Anthropic");
+          return path17.join(userProfile, "AppData", "Roaming", "Anthropic");
         }
         return null;
       }
       const xdgConfigHome = readEnv("XDG_CONFIG_HOME");
       if (xdgConfigHome) {
-        return path13.join(xdgConfigHome, "anthropic");
+        return path17.join(xdgConfigHome, "anthropic");
       }
       const home = readEnv("HOME");
       if (home) {
-        return path13.join(home, ".config", "anthropic");
+        return path17.join(home, ".config", "anthropic");
       }
       return null;
     };
@@ -8757,10 +8757,10 @@ var init_credentials = __esm({
       if (profileName) {
         return profileName;
       }
-      const { fs: fs17, path: path13 } = await Promise.resolve().then(() => (init_node(), node_exports));
-      const filePath = path13.join(rootConfigPath, "active_config");
+      const { fs: fs19, path: path17 } = await Promise.resolve().then(() => (init_node(), node_exports));
+      const filePath = path17.join(rootConfigPath, "active_config");
       try {
-        return (await fs17.promises.readFile(filePath, "utf-8")).trim() || "default";
+        return (await fs19.promises.readFile(filePath, "utf-8")).trim() || "default";
       } catch (err) {
         if (err?.code !== "ENOENT") {
           throw new Error(`failed to read ${filePath}: ${err}`);
@@ -8772,21 +8772,21 @@ var init_credentials = __esm({
 });
 
 // node_modules/@anthropic-ai/sdk/lib/credentials/identity-token.mjs
-function identityTokenFromFile(path13) {
-  if (!path13) {
+function identityTokenFromFile(path17) {
+  if (!path17) {
     throw new AnthropicError("Identity token file path is empty");
   }
   return async () => {
-    const { fs: fs17 } = await Promise.resolve().then(() => (init_node(), node_exports));
+    const { fs: fs19 } = await Promise.resolve().then(() => (init_node(), node_exports));
     let content;
     try {
-      content = await fs17.promises.readFile(path13, "utf-8");
+      content = await fs19.promises.readFile(path17, "utf-8");
     } catch (err) {
-      throw new AnthropicError(`Failed to read identity token file at ${path13}: ${err}`);
+      throw new AnthropicError(`Failed to read identity token file at ${path17}: ${err}`);
     }
     const token = content.trim();
     if (!token) {
-      throw new AnthropicError(`Identity token file at ${path13} is empty`);
+      throw new AnthropicError(`Identity token file at ${path17} is empty`);
     }
     return token;
   };
@@ -8871,11 +8871,11 @@ var init_oidc_federation = __esm({
 // node_modules/@anthropic-ai/sdk/lib/credentials/user-oauth.mjs
 function userOAuthProvider(config2) {
   return async (opts) => {
-    const { fs: fs17 } = await Promise.resolve().then(() => (init_node(), node_exports));
+    const { fs: fs19 } = await Promise.resolve().then(() => (init_node(), node_exports));
     await checkCredentialsFileSafety(config2.credentialsPath, config2.onSafetyWarning);
     let raw;
     try {
-      raw = await fs17.promises.readFile(config2.credentialsPath, "utf-8");
+      raw = await fs19.promises.readFile(config2.credentialsPath, "utf-8");
     } catch (err) {
       throw new WorkloadIdentityError(`Credentials file not found at ${config2.credentialsPath}: ${err}`);
     }
@@ -9047,11 +9047,11 @@ function resolveIdentityTokenProvider(auth) {
 }
 function cachedExchangeProvider(exchange, credentialsPath, onCacheWriteError, onSafetyWarning) {
   return async (opts) => {
-    const { fs: fs17 } = await Promise.resolve().then(() => (init_node(), node_exports));
+    const { fs: fs19 } = await Promise.resolve().then(() => (init_node(), node_exports));
     await checkCredentialsFileSafety(credentialsPath, onSafetyWarning);
     let existing;
     try {
-      const raw = await fs17.promises.readFile(credentialsPath, "utf-8");
+      const raw = await fs19.promises.readFile(credentialsPath, "utf-8");
       existing = JSON.parse(raw);
       const token = existing?.["access_token"];
       if (token && !opts?.forceRefresh) {
@@ -10108,17 +10108,17 @@ var init_headers = __esm({
 function encodeURIPath(str) {
   return str.replace(/[^A-Za-z0-9\-._~!$&'()*+,;=:@]+/g, encodeURIComponent);
 }
-var EMPTY, createPathTagFunction, path9;
+var EMPTY, createPathTagFunction, path12;
 var init_path = __esm({
   "node_modules/@anthropic-ai/sdk/internal/utils/path.mjs"() {
     init_error();
     EMPTY = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.create(null));
-    createPathTagFunction = (pathEncoder = encodeURIPath) => function path13(statics, ...params) {
+    createPathTagFunction = (pathEncoder = encodeURIPath) => function path17(statics, ...params) {
       if (statics.length === 1)
         return statics[0];
       let postPath = false;
       const invalidSegments = [];
-      const path14 = statics.reduce((previousValue, currentValue, index) => {
+      const path18 = statics.reduce((previousValue, currentValue, index) => {
         if (/[?#]/.test(currentValue)) {
           postPath = true;
         }
@@ -10135,7 +10135,7 @@ var init_path = __esm({
         }
         return previousValue + currentValue + (index === params.length ? "" : encoded);
       }, "");
-      const pathOnly = path14.split(/[?#]/, 1)[0];
+      const pathOnly = path18.split(/[?#]/, 1)[0];
       const invalidSegmentPattern = /(?<=^|\/)(?:\.|%2e){1,2}(?=\/|$)/gi;
       let match;
       while ((match = invalidSegmentPattern.exec(pathOnly)) !== null) {
@@ -10156,12 +10156,12 @@ var init_path = __esm({
         }, "");
         throw new AnthropicError(`Path parameters result in path with invalid segments:
 ${invalidSegments.map((e) => e.error).join("\n")}
-${path14}
+${path18}
 ${underline}`);
       }
-      return path14;
+      return path18;
     };
-    path9 = /* @__PURE__ */ createPathTagFunction(encodeURIPath);
+    path12 = /* @__PURE__ */ createPathTagFunction(encodeURIPath);
   }
 });
 
@@ -10187,7 +10187,7 @@ var init_deployment_runs = __esm({
        */
       retrieve(deploymentRunID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.get(path9`/v1/deployment_runs/${deploymentRunID}?beta=true`, {
+        return this._client.get(path12`/v1/deployment_runs/${deploymentRunID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10287,7 +10287,7 @@ var init_deployments = __esm({
        */
       retrieve(deploymentID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.get(path9`/v1/deployments/${deploymentID}?beta=true`, {
+        return this._client.get(path12`/v1/deployments/${deploymentID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10311,7 +10311,7 @@ var init_deployments = __esm({
        */
       update(deploymentID, params, options) {
         const { betas, workspace_id, ...body } = params;
-        return this._client.post(path9`/v1/deployments/${deploymentID}?beta=true`, {
+        return this._client.post(path12`/v1/deployments/${deploymentID}?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -10361,7 +10361,7 @@ var init_deployments = __esm({
        */
       archive(deploymentID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.post(path9`/v1/deployments/${deploymentID}/archive?beta=true`, {
+        return this._client.post(path12`/v1/deployments/${deploymentID}/archive?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10385,7 +10385,7 @@ var init_deployments = __esm({
        */
       pause(deploymentID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.post(path9`/v1/deployments/${deploymentID}/pause?beta=true`, {
+        return this._client.post(path12`/v1/deployments/${deploymentID}/pause?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10409,7 +10409,7 @@ var init_deployments = __esm({
        */
       run(deploymentID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.post(path9`/v1/deployments/${deploymentID}/run?beta=true`, {
+        return this._client.post(path12`/v1/deployments/${deploymentID}/run?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10433,7 +10433,7 @@ var init_deployments = __esm({
        */
       unpause(deploymentID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.post(path9`/v1/deployments/${deploymentID}/unpause?beta=true`, {
+        return this._client.post(path12`/v1/deployments/${deploymentID}/unpause?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10510,7 +10510,7 @@ var init_dreams = __esm({
        */
       retrieve(dreamID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.get(path9`/v1/dreams/${dreamID}?beta=true`, {
+        return this._client.get(path12`/v1/dreams/${dreamID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10573,7 +10573,7 @@ var init_dreams = __esm({
        */
       archive(dreamID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.post(path9`/v1/dreams/${dreamID}/archive?beta=true`, {
+        return this._client.post(path12`/v1/dreams/${dreamID}/archive?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10605,7 +10605,7 @@ var init_dreams = __esm({
        */
       cancel(dreamID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.post(path9`/v1/dreams/${dreamID}/cancel?beta=true`, {
+        return this._client.post(path12`/v1/dreams/${dreamID}/cancel?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10726,7 +10726,7 @@ var init_files = __esm({
        */
       delete(fileID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.delete(path9`/v1/files/${fileID}?beta=true`, {
+        return this._client.delete(path12`/v1/files/${fileID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10752,7 +10752,7 @@ var init_files = __esm({
        */
       download(fileID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.get(path9`/v1/files/${fileID}/content?beta=true`, {
+        return this._client.get(path12`/v1/files/${fileID}/content?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10776,7 +10776,7 @@ var init_files = __esm({
        */
       retrieveMetadata(fileID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.get(path9`/v1/files/${fileID}?beta=true`, {
+        return this._client.get(path12`/v1/files/${fileID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10840,7 +10840,7 @@ var init_models = __esm({
        */
       retrieve(modelID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.get(path9`/v1/models/${modelID}?beta=true`, {
+        return this._client.get(path12`/v1/models/${modelID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10928,7 +10928,7 @@ var init_user_profiles = __esm({
        */
       retrieve(userProfileID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.get(path9`/v1/user_profiles/${userProfileID}?beta=true`, {
+        return this._client.get(path12`/v1/user_profiles/${userProfileID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10952,7 +10952,7 @@ var init_user_profiles = __esm({
        */
       update(userProfileID, params, options) {
         const { betas, workspace_id, ...body } = params;
-        return this._client.post(path9`/v1/user_profiles/${userProfileID}?beta=true`, {
+        return this._client.post(path12`/v1/user_profiles/${userProfileID}?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -11002,7 +11002,7 @@ var init_user_profiles = __esm({
        */
       createEnrollmentURL(userProfileID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.post(path9`/v1/user_profiles/${userProfileID}/enrollment_url?beta=true`, {
+        return this._client.post(path12`/v1/user_profiles/${userProfileID}/enrollment_url?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -11863,7 +11863,7 @@ var init_versions = __esm({
        */
       list(agentID, params = {}, options) {
         const { betas, workspace_id, ...query2 } = params ?? {};
-        return this._client.getAPIList(path9`/v1/agents/${agentID}/versions?beta=true`, PageCursor, {
+        return this._client.getAPIList(path12`/v1/agents/${agentID}/versions?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -11934,7 +11934,7 @@ var init_agents = __esm({
          */
         retrieve(agentID, params = {}, options) {
           const { betas, workspace_id, ...query2 } = params ?? {};
-          return this._client.get(path9`/v1/agents/${agentID}?beta=true`, {
+          return this._client.get(path12`/v1/agents/${agentID}?beta=true`, {
             query: query2,
             ...options,
             headers: buildHeaders([
@@ -11960,7 +11960,7 @@ var init_agents = __esm({
          */
         update(agentID, params, options) {
           const { betas, workspace_id, ...body } = params;
-          return this._client.post(path9`/v1/agents/${agentID}?beta=true`, {
+          return this._client.post(path12`/v1/agents/${agentID}?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -12010,7 +12010,7 @@ var init_agents = __esm({
          */
         archive(agentID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.post(path9`/v1/agents/${agentID}/archive?beta=true`, {
+          return this._client.post(path12`/v1/agents/${agentID}/archive?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -12985,12 +12985,12 @@ var init_promise = __esm({
 
 // node_modules/@anthropic-ai/sdk/tools/agent-toolset/fs-util.mjs
 function isWithin(root, p) {
-  const rel = path8.relative(root, p);
-  return rel === "" || !rel.startsWith(".." + path8.sep) && rel !== ".." && !path8.isAbsolute(rel);
+  const rel = path11.relative(root, p);
+  return rel === "" || !rel.startsWith(".." + path11.sep) && rel !== ".." && !path11.isAbsolute(rel);
 }
 async function containingRoot(roots, target) {
   for (const root of roots) {
-    if (isWithin(await canonicalize(path8.resolve(root)), target))
+    if (isWithin(await canonicalize(path11.resolve(root)), target))
       return root;
   }
   return void 0;
@@ -13006,19 +13006,19 @@ async function canonicalize(abs) {
   for (; ; ) {
     let real;
     try {
-      real = await fs12.realpath(prefix);
+      real = await fs14.realpath(prefix);
     } catch (realpathErr) {
       let isLink;
       try {
-        isLink = (await fs12.lstat(prefix)).isSymbolicLink();
+        isLink = (await fs14.lstat(prefix)).isSymbolicLink();
       } catch (lstatErr) {
         const code = errnoCode(lstatErr);
         if (code !== "ENOENT" && code !== "ENOTDIR")
           throw lstatErr;
-        const parent = path8.dirname(prefix);
+        const parent = path11.dirname(prefix);
         if (parent === prefix)
           throw lstatErr;
-        tail.push(path8.basename(prefix));
+        tail.push(path11.basename(prefix));
         prefix = parent;
         continue;
       }
@@ -13027,18 +13027,18 @@ async function canonicalize(abs) {
       if (++hops > MAX_SYMLINK_HOPS) {
         throw Object.assign(new Error("too many levels of symbolic links"), { code: "ELOOP" });
       }
-      prefix = path8.resolve(path8.dirname(prefix), await fs12.readlink(prefix));
+      prefix = path11.resolve(path11.dirname(prefix), await fs14.readlink(prefix));
       continue;
     }
-    return tail.length ? path8.join(real, ...tail.reverse()) : real;
+    return tail.length ? path11.join(real, ...tail.reverse()) : real;
   }
 }
 async function confineToRoot(root, p, opts) {
   const allowedRoots = opts?.allowedRoots ?? [];
-  const realRoot = await canonicalize(path8.resolve(root));
+  const realRoot = await canonicalize(path11.resolve(root));
   let real;
   try {
-    real = await canonicalize(path8.resolve(realRoot, p));
+    real = await canonicalize(path11.resolve(realRoot, p));
   } catch (err) {
     throw new ToolError(fsErrorMessage(err, `path ${JSON.stringify(p)}`));
   }
@@ -13049,24 +13049,24 @@ async function confineToRoot(root, p, opts) {
   throw new ToolError(`path ${JSON.stringify(p)} is outside ${permitted}`);
 }
 async function atomicWriteFile(targetPath, content) {
-  const dir = path8.dirname(targetPath);
-  const tempPath = path8.join(dir, `.tmp-${process.pid}-${crypto.randomUUID()}`);
-  const existingMode = await fs12.stat(targetPath).then((st) => st.mode & 511, () => void 0);
+  const dir = path11.dirname(targetPath);
+  const tempPath = path11.join(dir, `.tmp-${process.pid}-${crypto.randomUUID()}`);
+  const existingMode = await fs14.stat(targetPath).then((st) => st.mode & 511, () => void 0);
   let handle;
   try {
-    handle = await fs12.open(tempPath, "wx", FILE_CREATE_MODE);
+    handle = await fs14.open(tempPath, "wx", FILE_CREATE_MODE);
     if (existingMode !== void 0)
       await handle.chmod(existingMode);
     await handle.writeFile(content, "utf-8");
     await handle.sync();
     await handle.close();
     handle = void 0;
-    await fs12.rename(tempPath, targetPath);
+    await fs14.rename(tempPath, targetPath);
   } catch (err) {
     if (handle)
       await handle.close().catch(() => {
       });
-    await fs12.unlink(tempPath).catch(() => {
+    await fs14.unlink(tempPath).catch(() => {
     });
     throw err;
   }
@@ -13096,12 +13096,12 @@ function fsErrorMessage(err, file2) {
       return `${file2}: ${code !== void 0 ? `i/o error (${code})` : "i/o error"}`;
   }
 }
-var fs12, DIR_CREATE_MODE, FILE_CREATE_MODE, MAX_SYMLINK_HOPS;
+var fs14, DIR_CREATE_MODE, FILE_CREATE_MODE, MAX_SYMLINK_HOPS;
 var init_fs_util = __esm({
   "node_modules/@anthropic-ai/sdk/tools/agent-toolset/fs-util.mjs"() {
     init_node();
     init_ToolError();
-    fs12 = fs11.promises;
+    fs14 = fs13.promises;
     DIR_CREATE_MODE = 448;
     FILE_CREATE_MODE = 384;
     MAX_SYMLINK_HOPS = 40;
@@ -13123,16 +13123,16 @@ async function setupSkills(ctx) {
     log.warn("AgentToolContext.sessionId is deprecated and costs an extra session fetch; fetch the session once and set `session` instead", { component: "agent-tool-context" });
     session = await client.beta.sessions.retrieve(sessionId);
   }
-  const skillsRoot = path8.resolve(ctx.workdir, "skills");
+  const skillsRoot = path11.resolve(ctx.workdir, "skills");
   const created = [];
   for (const skill of session.agent.skills) {
     try {
       const version2 = await client.beta.skills.versions.retrieve(skill.version, { skill_id: skill.skill_id });
-      let dirname2 = path8.basename(version2.name.trim());
+      let dirname2 = path11.basename(version2.name.trim());
       if (dirname2 === "" || dirname2 === "." || dirname2 === "..")
         dirname2 = skill.skill_id;
-      const dest = path8.resolve(skillsRoot, dirname2);
-      if (dest !== skillsRoot && !dest.startsWith(skillsRoot + path8.sep)) {
+      const dest = path11.resolve(skillsRoot, dirname2);
+      if (dest !== skillsRoot && !dest.startsWith(skillsRoot + path11.sep)) {
         log.warn("skill name escapes the skills dir; skipping", {
           component: "agent-tool-context",
           name: version2.name
@@ -13140,8 +13140,8 @@ async function setupSkills(ctx) {
         continue;
       }
       const resp = await client.beta.skills.versions.download(version2.id, { skill_id: skill.skill_id });
-      await fs13.rm(dest, { recursive: true, force: true });
-      await fs13.mkdir(dest, { recursive: true, mode: DIR_CREATE_MODE });
+      await fs15.rm(dest, { recursive: true, force: true });
+      await fs15.mkdir(dest, { recursive: true, mode: DIR_CREATE_MODE });
       created.push(dest);
       await extractSkillArchive(resp, dest);
       log.info("downloaded skill", {
@@ -13160,7 +13160,7 @@ async function setupSkills(ctx) {
   }
   return async () => {
     for (const dest of created) {
-      await fs13.rm(dest, { recursive: true, force: true }).catch((e) => {
+      await fs15.rm(dest, { recursive: true, force: true }).catch((e) => {
         log.warn("failed to clean up skill", { component: "agent-tool-context", dest, error: String(e) });
       });
     }
@@ -13171,7 +13171,7 @@ function assertSafeMemberNames(names) {
     const entry = raw.trim();
     if (!entry)
       continue;
-    if (path8.isAbsolute(entry) || entry.split(/[\\/]/).includes("..")) {
+    if (path11.isAbsolute(entry) || entry.split(/[\\/]/).includes("..")) {
       throw new AnthropicError(`refusing to extract unsafe archive member: ${entry}`);
     }
   }
@@ -13205,9 +13205,9 @@ function classifyArchiveListing(cmd, names, typed) {
   return { plain, special };
 }
 async function assertOnlyPlainEntries(dir) {
-  for (const entry of await fs13.readdir(dir, { withFileTypes: true })) {
+  for (const entry of await fs15.readdir(dir, { withFileTypes: true })) {
     if (entry.isDirectory())
-      await assertOnlyPlainEntries(path8.join(dir, entry.name));
+      await assertOnlyPlainEntries(path11.join(dir, entry.name));
     else if (!entry.isFile())
       throw new AnthropicError(INCONSISTENT_LISTING);
   }
@@ -13241,13 +13241,13 @@ function archiveTopDir(names) {
   return top !== void 0 && nested ? top : "";
 }
 async function extractSkillArchive(resp, dest) {
-  const tmp = path8.join(dest, `.skill-archive-${process.pid}-${Date.now()}`);
+  const tmp = path11.join(dest, `.skill-archive-${process.pid}-${Date.now()}`);
   if (!resp.body) {
     throw new AnthropicError("skill download response had no body");
   }
-  await stream.promises.pipeline(stream.Readable.fromWeb(resp.body), fs11.createWriteStream(tmp));
-  const stage = path8.join(path8.dirname(dest), `.skill-stage-${process.pid}-${Date.now()}`);
-  const excludeFile = path8.join(path8.dirname(dest), `.skill-exclude-${process.pid}-${Date.now()}`);
+  await stream.promises.pipeline(stream.Readable.fromWeb(resp.body), fs13.createWriteStream(tmp));
+  const stage = path11.join(path11.dirname(dest), `.skill-stage-${process.pid}-${Date.now()}`);
+  const excludeFile = path11.join(path11.dirname(dest), `.skill-exclude-${process.pid}-${Date.now()}`);
   try {
     const head = await readHead(tmp, 4);
     const isZip = head.length >= 4 && head[0] === 80 && head[1] === 75 && head[2] === 3 && head[3] === 4;
@@ -13257,22 +13257,22 @@ async function extractSkillArchive(resp, dest) {
     const { plain, special } = classifyArchiveListing(archiveCmd, names, typed);
     assertSafeMemberNames([...plain, ...special]);
     const top = archiveTopDir(plain);
-    await fs13.mkdir(stage, { recursive: true, mode: DIR_CREATE_MODE });
+    await fs15.mkdir(stage, { recursive: true, mode: DIR_CREATE_MODE });
     if (plain.length > 0) {
       await runArchiveTool(archiveCmd, await extractArgs(archiveCmd, tmp, stage, special, excludeFile));
     }
     await assertOnlyPlainEntries(stage);
-    const srcRoot = top ? path8.join(stage, top) : stage;
-    const entries = await fs13.readdir(srcRoot).catch((e) => {
+    const srcRoot = top ? path11.join(stage, top) : stage;
+    const entries = await fs15.readdir(srcRoot).catch((e) => {
       throw errnoCode(e) === "ENOENT" ? new AnthropicError(INCONSISTENT_LISTING) : e;
     });
     for (const entry of entries) {
-      await fs13.rename(path8.join(srcRoot, entry), path8.join(dest, entry));
+      await fs15.rename(path11.join(srcRoot, entry), path11.join(dest, entry));
     }
   } finally {
-    await fs13.rm(tmp, { force: true });
-    await fs13.rm(excludeFile, { force: true });
-    await fs13.rm(stage, { recursive: true, force: true });
+    await fs15.rm(tmp, { force: true });
+    await fs15.rm(excludeFile, { force: true });
+    await fs15.rm(stage, { recursive: true, force: true });
   }
 }
 async function extractArgs(cmd, archive, stage, special, excludeFile) {
@@ -13282,11 +13282,11 @@ async function extractArgs(cmd, archive, stage, special, excludeFile) {
   }
   if (patterns.length === 0)
     return ["-xf", archive, "-C", stage];
-  await fs13.writeFile(excludeFile, patterns.join("\n") + "\n", { flag: "wx", mode: 384 });
+  await fs15.writeFile(excludeFile, patterns.join("\n") + "\n", { flag: "wx", mode: 384 });
   return ["-xf", archive, "-C", stage, "-X", excludeFile];
 }
 async function readHead(file2, n) {
-  const handle = await fs13.open(file2, "r");
+  const handle = await fs15.open(file2, "r");
   try {
     const buf = Buffer.alloc(n);
     const { bytesRead } = await handle.read(buf, 0, n, 0);
@@ -13295,14 +13295,14 @@ async function readHead(file2, n) {
     await handle.close();
   }
 }
-var fs13, execFileAsync, INCONSISTENT_LISTING, PLAIN_TYPE_CHARS;
+var fs15, execFileAsync, INCONSISTENT_LISTING, PLAIN_TYPE_CHARS;
 var init_skills = __esm({
   "node_modules/@anthropic-ai/sdk/tools/agent-toolset/skills.mjs"() {
     init_node();
     init_error();
     init_log();
     init_fs_util();
-    fs13 = fs11.promises;
+    fs15 = fs13.promises;
     execFileAsync = util.promisify(child_process.execFile);
     INCONSISTENT_LISTING = "skill archive listing is inconsistent; refusing to extract";
     PLAIN_TYPE_CHARS = { unzip: /* @__PURE__ */ new Set(["-", "d", "?"]), tar: /* @__PURE__ */ new Set(["-", "d", "C"]) };
@@ -13329,14 +13329,14 @@ async function makeDirAndAncestors(dir) {
         throw e;
     }
     missing.push(current);
-    const parent = path8.dirname(current);
+    const parent = path11.dirname(current);
     if (parent === current)
       break;
     current = parent;
   }
   for (const directory of missing.reverse()) {
     try {
-      await fsp.mkdir(directory, { mode: OWNER_ONLY_DIR_MODE });
+      await fsp.mkdir(directory, { mode: OWNER_ONLY_DIR_MODE2 });
     } catch (e) {
       if (e.code !== "EEXIST")
         throw e;
@@ -13344,14 +13344,14 @@ async function makeDirAndAncestors(dir) {
   }
 }
 async function makeDirsBelowRoot(root, dir) {
-  const below = path8.relative(root, dir);
+  const below = path11.relative(root, dir);
   if (below === "")
     return;
   let current = root;
-  for (const part of below.split(path8.sep)) {
-    current = path8.join(current, part);
+  for (const part of below.split(path11.sep)) {
+    current = path11.join(current, part);
     try {
-      await fsp.mkdir(current, { mode: OWNER_ONLY_DIR_MODE });
+      await fsp.mkdir(current, { mode: OWNER_ONLY_DIR_MODE2 });
     } catch (e) {
       if (e.code !== "EEXIST")
         throw e;
@@ -13359,8 +13359,8 @@ async function makeDirsBelowRoot(root, dir) {
   }
 }
 async function replaceViaTemp(dest, data, isExecutable) {
-  const mode = isExecutable ? OWNER_ONLY_EXEC_MODE : OWNER_ONLY_FILE_MODE;
-  const tmp = path8.join(path8.dirname(dest), `.fs-${crypto.randomBytes(8).toString("hex")}.tmp`);
+  const mode = isExecutable ? OWNER_ONLY_EXEC_MODE : OWNER_ONLY_FILE_MODE2;
+  const tmp = path11.join(path11.dirname(dest), `.fs-${crypto.randomBytes(8).toString("hex")}.tmp`);
   let handle;
   try {
     handle = await fsp.open(tmp, C2.O_WRONLY | C2.O_CREAT | C2.O_EXCL | O_NOFOLLOW, mode);
@@ -13401,7 +13401,7 @@ async function openRegularFile(relPath, dest) {
 }
 async function hashFile(full) {
   const digest = crypto.createHash("sha256");
-  const handle = await openRegularFile(path8.basename(full), full);
+  const handle = await openRegularFile(path11.basename(full), full);
   const buf = new Uint8Array(1024 * 1024);
   try {
     for (; ; ) {
@@ -13421,13 +13421,13 @@ async function filenamesInDir(root, under, base) {
   const out = [];
   await walk(base, (full, entry) => {
     if (entry.isFile())
-      out.push([path8.relative(root, full).split(path8.sep).join("/"), full]);
+      out.push([path11.relative(root, full).split(path11.sep).join("/"), full]);
   });
   out.sort();
   return out;
 }
 async function symlinksInDir(root, under, base) {
-  const relOf = (full) => path8.relative(root, full).split(path8.sep).join("/");
+  const relOf = (full) => path11.relative(root, full).split(path11.sep).join("/");
   let st;
   try {
     st = await fsp.lstat(base, { bigint: true });
@@ -13475,7 +13475,7 @@ async function walk(base, visit2) {
       throw e;
     }
     for (const entry of entries) {
-      const full = path8.join(dir, entry.name);
+      const full = path11.join(dir, entry.name);
       visit2(full, entry);
       if (entry.isDirectory() && !entry.isSymbolicLink())
         stack.push(full);
@@ -13489,15 +13489,15 @@ function oldEnoughToCache(st, walkStartNs) {
   const newestNs = st.mtimeNs > st.ctimeNs ? st.mtimeNs : st.ctimeNs;
   return newestNs < walkStartNs - _internals.timestampTrustMarginNs;
 }
-var fsp, C2, OWNER_ONLY_DIR_MODE, OWNER_ONLY_FILE_MODE, OWNER_ONLY_EXEC_MODE, O_NOFOLLOW, O_NONBLOCK, FileStoreError, FileStore, TIMESTAMP_TRUST_MARGIN_NS, _internals, LocalFileStore, asyncDispose;
+var fsp, C2, OWNER_ONLY_DIR_MODE2, OWNER_ONLY_FILE_MODE2, OWNER_ONLY_EXEC_MODE, O_NOFOLLOW, O_NONBLOCK, FileStoreError, FileStore, TIMESTAMP_TRUST_MARGIN_NS, _internals, LocalFileStore, asyncDispose;
 var init_file_store = __esm({
   "node_modules/@anthropic-ai/sdk/internal/file-store.mjs"() {
     init_node();
     init_bytes();
-    fsp = fs11.promises;
-    C2 = fs11.constants;
-    OWNER_ONLY_DIR_MODE = 448;
-    OWNER_ONLY_FILE_MODE = 384;
+    fsp = fs13.promises;
+    C2 = fs13.constants;
+    OWNER_ONLY_DIR_MODE2 = 448;
+    OWNER_ONLY_FILE_MODE2 = 384;
     OWNER_ONLY_EXEC_MODE = 448;
     O_NOFOLLOW = C2.O_NOFOLLOW ?? 0;
     O_NONBLOCK = C2.O_NONBLOCK ?? 0;
@@ -13540,7 +13540,7 @@ var init_file_store = __esm({
               throw e;
             removedOnDispose = true;
           }
-          return new FileStore2(path8.resolve(root), removedOnDispose, opts?.utf8 ?? false);
+          return new FileStore2(path11.resolve(root), removedOnDispose, opts?.utf8 ?? false);
         }
         /** Create the root directory and any missing ancestors; already existing is fine. */
         async createRoot() {
@@ -13575,7 +13575,7 @@ var init_file_store = __esm({
           const dest = this.resolveUnderRoot(relPath);
           const payload = typeof data === "string" ? encodeUTF8(data) : data;
           this.requireUtf8(relPath, payload);
-          await makeDirsBelowRoot(this.rootPath, path8.dirname(dest));
+          await makeDirsBelowRoot(this.rootPath, path11.dirname(dest));
           await replaceViaTemp(dest, payload, opts?.executable ?? false);
         }
         /** The file's bytes; `null` when absent. */
@@ -13644,7 +13644,7 @@ var init_file_store = __esm({
             throw new FileStoreError(FileStoreError.IS_A_SYMLINK, relPath);
           if (!st.isFile())
             throw new FileStoreError(FileStoreError.NOT_A_FILE, relPath);
-          const rel = path8.relative(this.rootPath, dest).split(path8.sep).join("/");
+          const rel = path11.relative(this.rootPath, dest).split(path11.sep).join("/");
           return this.hashViaCache(rel, dest, _internals.nowNs());
         }
         /**
@@ -13659,7 +13659,7 @@ var init_file_store = __esm({
           const dstExists = await fsp.stat(d2).then(() => true, () => false);
           if (dstExists)
             throw new FileStoreError(FileStoreError.MOVE_DESTINATION_EXISTS, dst);
-          await makeDirsBelowRoot(this.rootPath, path8.dirname(d2));
+          await makeDirsBelowRoot(this.rootPath, path11.dirname(d2));
           await fsp.rename(s, d2);
         }
         /** Delete a file or subtree; absent — and the banned store root — do nothing. */
@@ -13689,10 +13689,10 @@ var init_file_store = __esm({
         resolveUnderRoot(relPath) {
           const norm = relPath.replace(/\\/g, "/").replace(/^\/+/, "");
           const parts = norm.split("/").filter((p) => p !== "" && p !== ".");
-          if (path8.posix.isAbsolute(norm) || parts.includes("..")) {
+          if (path11.posix.isAbsolute(norm) || parts.includes("..")) {
             throw new FileStoreError(FileStoreError.ESCAPES_ROOT, relPath);
           }
-          return parts.length === 0 ? this.rootPath : path8.join(this.rootPath, ...parts);
+          return parts.length === 0 ? this.rootPath : path11.join(this.rootPath, ...parts);
         }
         requireUtf8(relPath, data) {
           if (!this.decoder)
@@ -14000,7 +14000,7 @@ var init_memories = __esm({
           }
           return resource.mount_path;
         }
-        return path8.join(__classPrivateFieldGet(this, _SessionMemoryStores_workdir, "f"), "memory", resource.name || resource.memory_store_id);
+        return path11.join(__classPrivateFieldGet(this, _SessionMemoryStores_workdir, "f"), "memory", resource.name || resource.memory_store_id);
       }, _SessionMemoryStores_scanMarker = async function _SessionMemoryStores_scanMarker2(store) {
         const local = await store.files.hashtree();
         const marker = local[MARKER_PATH];
@@ -14496,12 +14496,12 @@ __export(node_exports2, {
   resolvePath: () => resolvePath,
   setupSkills: () => setupSkills
 });
-import * as fs14 from "node:fs/promises";
+import * as fs16 from "node:fs/promises";
 import * as fssync from "node:fs";
-import * as path10 from "node:path";
+import * as path13 from "node:path";
 import * as cp from "node:child_process";
 import * as crypto2 from "node:crypto";
-import * as readline2 from "node:readline";
+import * as readline3 from "node:readline";
 function resolveMaxBytes(configured) {
   return configured === void 0 ? DEFAULT_MAX_FILE_BYTES : configured;
 }
@@ -14621,7 +14621,7 @@ function betaReadTool(ctx) {
       }
       let data;
       try {
-        const st = await fs14.stat(abs);
+        const st = await fs16.stat(abs);
         if (!st.isFile()) {
           throw new ToolError(`read: ${file_path} is not a regular file`);
         }
@@ -14633,7 +14633,7 @@ function betaReadTool(ctx) {
           const [startLine2, endLine2] = view_range;
           return await readRangeStreaming(abs, file_path, startLine2, endLine2, limit2);
         }
-        data = await fs14.readFile(abs, "utf8");
+        data = await fs16.readFile(abs, "utf8");
       } catch (e) {
         if (e instanceof ToolError)
           throw e;
@@ -14684,7 +14684,7 @@ function betaWriteTool(ctx) {
         throw new ToolError(`write: ${file_path} is inside read-only directory ${ro}`);
       }
       try {
-        await fs14.mkdir(path10.dirname(abs), { recursive: true, mode: DIR_CREATE_MODE });
+        await fs16.mkdir(path13.dirname(abs), { recursive: true, mode: DIR_CREATE_MODE });
         await atomicWriteFile(abs, content ?? "");
       } catch (e) {
         throw new ToolError(`write: ${fsErrorMessage(e, file_path)}`);
@@ -14720,7 +14720,7 @@ function betaEditTool(ctx) {
       }
       let data;
       try {
-        const st = await fs14.stat(abs);
+        const st = await fs16.stat(abs);
         if (!st.isFile()) {
           throw new ToolError(`edit: ${file_path} is not a regular file`);
         }
@@ -14728,7 +14728,7 @@ function betaEditTool(ctx) {
         if (limit2 !== null && st.size > limit2) {
           throw new ToolError(`edit: ${file_path} is ${st.size} bytes, exceeds ${limit2}-byte limit. The edit tool loads the whole file and cannot modify a file this large.`);
         }
-        data = await fs14.readFile(abs, "utf8");
+        data = await fs16.readFile(abs, "utf8");
       } catch (e) {
         if (e instanceof ToolError)
           throw e;
@@ -14773,13 +14773,13 @@ function betaGlobTool(ctx) {
     run: async ({ pattern, path: searchPath }) => {
       if (!pattern)
         throw new ToolError("glob: pattern is required");
-      if (path10.isAbsolute(pattern)) {
+      if (path13.isAbsolute(pattern)) {
         throw new ToolError("glob: absolute pattern not permitted; pass a relative pattern (and optionally path)");
       }
       if (patternCanAscend(pattern)) {
         throw new ToolError('glob: ".." is not permitted in the pattern');
       }
-      const root = searchPath ? await resolvePath(ctx, searchPath) : path10.resolve(ctx.workdir);
+      const root = searchPath ? await resolvePath(ctx, searchPath) : path13.resolve(ctx.workdir);
       const realRoot = searchPath ? root : await canonicalize(root);
       const matches = [];
       let remaining = WALK_MAX_ENTRIES;
@@ -14793,10 +14793,10 @@ function betaGlobTool(ctx) {
             break;
           if (!entry.isFile())
             continue;
-          const full = path10.join(entry.parentPath, entry.name);
+          const full = path13.join(entry.parentPath, entry.name);
           let real;
           try {
-            real = await fs14.realpath(full);
+            real = await fs16.realpath(full);
           } catch {
             continue;
           }
@@ -14804,7 +14804,7 @@ function betaGlobTool(ctx) {
             continue;
           let mtime = 0;
           try {
-            mtime = (await fs14.stat(full)).mtimeMs;
+            mtime = (await fs16.stat(full)).mtimeMs;
           } catch {
           }
           matches.push({ path: full, mtime });
@@ -14832,7 +14832,7 @@ function betaGrepTool(ctx) {
     run: async ({ pattern, path: p }, context) => {
       if (!pattern)
         throw new ToolError("grep: pattern is required");
-      let searchPath = path10.resolve(ctx.workdir);
+      let searchPath = path13.resolve(ctx.workdir);
       if (p)
         searchPath = await resolvePath(ctx, p);
       const rg = await findRg();
@@ -14896,11 +14896,11 @@ async function runWalkGrep(pattern, root, signal) {
     hits.push(line);
     return true;
   };
-  const stat3 = await fs14.stat(root).catch(() => null);
+  const stat3 = await fs16.stat(root).catch(() => null);
   if (stat3?.isFile()) {
     await grepFile(root, re2, push);
   } else {
-    await walk2(root, "", (rel) => grepFile(path10.join(root, rel), re2, push), signal);
+    await walk2(root, "", (rel) => grepFile(path13.join(root, rel), re2, push), signal);
   }
   if (signal?.aborted)
     throw new ToolError("grep: aborted");
@@ -14910,7 +14910,7 @@ async function runWalkGrep(pattern, root, signal) {
 }
 async function grepFile(file2, re2, push) {
   const stream2 = fssync.createReadStream(file2, { encoding: "utf8" });
-  const rl = readline2.createInterface({ input: stream2, crlfDelay: Infinity });
+  const rl = readline3.createInterface({ input: stream2, crlfDelay: Infinity });
   let i = 0;
   try {
     for await (const line of rl) {
@@ -14935,7 +14935,7 @@ async function walk2(root, rel, fn, signal) {
       return false;
     let entries;
     try {
-      entries = await fs14.readdir(path10.join(root, rel2), { withFileTypes: true });
+      entries = await fs16.readdir(path13.join(root, rel2), { withFileTypes: true });
     } catch {
       return true;
     }
@@ -14946,7 +14946,7 @@ async function walk2(root, rel, fn, signal) {
         return false;
       if (signal?.aborted)
         return false;
-      const childRel = rel2 ? path10.join(rel2, e.name) : e.name;
+      const childRel = rel2 ? path13.join(rel2, e.name) : e.name;
       if (e.isDirectory()) {
         if (!await inner(childRel, depth + 1))
           return false;
@@ -14960,11 +14960,11 @@ async function walk2(root, rel, fn, signal) {
   await inner(rel, 0);
 }
 async function findRg() {
-  const dirs = (process.env["PATH"] ?? "").split(path10.delimiter);
+  const dirs = (process.env["PATH"] ?? "").split(path13.delimiter);
   for (const d2 of dirs) {
-    const candidate = path10.join(d2, "rg");
+    const candidate = path13.join(d2, "rg");
     try {
-      await fs14.access(candidate, fssync.constants.X_OK);
+      await fs16.access(candidate, fssync.constants.X_OK);
       return candidate;
     } catch {
     }
@@ -14998,7 +14998,7 @@ var init_node2 = __esm({
       }
     };
     ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
-    fsGlob = fs14.glob;
+    fsGlob = fs16.glob;
     BashSession = /* @__PURE__ */ (() => {
       class BashSession2 {
         constructor(dir, env = scrubbedShellEnv()) {
@@ -15642,7 +15642,7 @@ var init_work = __esm({
          */
         retrieve(workID, params, options) {
           const { environment_id, betas, workspace_id } = params;
-          return this._client.get(path9`/v1/environments/${environment_id}/work/${workID}?beta=true`, {
+          return this._client.get(path12`/v1/environments/${environment_id}/work/${workID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -15672,7 +15672,7 @@ var init_work = __esm({
          */
         update(workID, params, options) {
           const { environment_id, betas, workspace_id, ...body } = params;
-          return this._client.post(path9`/v1/environments/${environment_id}/work/${workID}?beta=true`, {
+          return this._client.post(path12`/v1/environments/${environment_id}/work/${workID}?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -15704,7 +15704,7 @@ var init_work = __esm({
          */
         list(environmentID, params = {}, options) {
           const { betas, ...query2 } = params ?? {};
-          return this._client.getAPIList(path9`/v1/environments/${environmentID}/work?beta=true`, PageCursor, {
+          return this._client.getAPIList(path12`/v1/environments/${environmentID}/work?beta=true`, PageCursor, {
             query: query2,
             ...options,
             headers: buildHeaders([
@@ -15732,7 +15732,7 @@ var init_work = __esm({
          */
         ack(workID, params, options) {
           const { environment_id, betas } = params;
-          return this._client.post(path9`/v1/environments/${environment_id}/work/${workID}/ack?beta=true`, {
+          return this._client.post(path12`/v1/environments/${environment_id}/work/${workID}/ack?beta=true`, {
             ...options,
             headers: buildHeaders([
               { "anthropic-beta": [...betas ?? [], "managed-agents-2026-04-01"].toString() },
@@ -15758,7 +15758,7 @@ var init_work = __esm({
          */
         heartbeat(workID, params, options) {
           const { environment_id, desired_ttl_seconds, expected_last_heartbeat, betas } = params;
-          return this._client.post(path9`/v1/environments/${environment_id}/work/${workID}/heartbeat?beta=true`, {
+          return this._client.post(path12`/v1/environments/${environment_id}/work/${workID}/heartbeat?beta=true`, {
             query: { desired_ttl_seconds, expected_last_heartbeat },
             ...options,
             headers: buildHeaders([
@@ -15785,7 +15785,7 @@ var init_work = __esm({
          */
         poll(environmentID, params = {}, options) {
           const { betas, "Anthropic-Worker-ID": anthropicWorkerID, ...query2 } = params ?? {};
-          return this._client.get(path9`/v1/environments/${environmentID}/work/poll?beta=true`, {
+          return this._client.get(path12`/v1/environments/${environmentID}/work/poll?beta=true`, {
             query: query2,
             ...options,
             headers: buildHeaders([
@@ -15810,7 +15810,7 @@ var init_work = __esm({
          */
         stats(environmentID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.get(path9`/v1/environments/${environmentID}/work/stats?beta=true`, {
+          return this._client.get(path12`/v1/environments/${environmentID}/work/stats?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -15839,7 +15839,7 @@ var init_work = __esm({
          */
         stop(workID, params, options) {
           const { environment_id, betas, workspace_id, ...body } = params;
-          return this._client.post(path9`/v1/environments/${environment_id}/work/${workID}/stop?beta=true`, {
+          return this._client.post(path12`/v1/environments/${environment_id}/work/${workID}/stop?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -15935,7 +15935,7 @@ var init_environments = __esm({
          */
         retrieve(environmentID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.get(path9`/v1/environments/${environmentID}?beta=true`, {
+          return this._client.get(path12`/v1/environments/${environmentID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -15959,7 +15959,7 @@ var init_environments = __esm({
          */
         update(environmentID, params, options) {
           const { betas, workspace_id, ...body } = params;
-          return this._client.post(path9`/v1/environments/${environmentID}?beta=true`, {
+          return this._client.post(path12`/v1/environments/${environmentID}?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -16009,7 +16009,7 @@ var init_environments = __esm({
          */
         delete(environmentID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.delete(path9`/v1/environments/${environmentID}?beta=true`, {
+          return this._client.delete(path12`/v1/environments/${environmentID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -16034,7 +16034,7 @@ var init_environments = __esm({
          */
         archive(environmentID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.post(path9`/v1/environments/${environmentID}/archive?beta=true`, {
+          return this._client.post(path12`/v1/environments/${environmentID}/archive?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -16075,7 +16075,7 @@ var init_memories2 = __esm({
        */
       create(memoryStoreID, params, options) {
         const { view, betas, workspace_id, ...body } = params;
-        return this._client.post(path9`/v1/memory_stores/${memoryStoreID}/memories?beta=true`, {
+        return this._client.post(path12`/v1/memory_stores/${memoryStoreID}/memories?beta=true`, {
           query: { view },
           body,
           ...options,
@@ -16102,7 +16102,7 @@ var init_memories2 = __esm({
        */
       retrieve(memoryID, params, options) {
         const { memory_store_id, betas, workspace_id, ...query2 } = params;
-        return this._client.get(path9`/v1/memory_stores/${memory_store_id}/memories/${memoryID}?beta=true`, {
+        return this._client.get(path12`/v1/memory_stores/${memory_store_id}/memories/${memoryID}?beta=true`, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -16128,7 +16128,7 @@ var init_memories2 = __esm({
        */
       update(memoryID, params, options) {
         const { memory_store_id, view, betas, workspace_id, ...body } = params;
-        return this._client.post(path9`/v1/memory_stores/${memory_store_id}/memories/${memoryID}?beta=true`, {
+        return this._client.post(path12`/v1/memory_stores/${memory_store_id}/memories/${memoryID}?beta=true`, {
           query: { view },
           body,
           ...options,
@@ -16156,7 +16156,7 @@ var init_memories2 = __esm({
        */
       list(memoryStoreID, params = {}, options) {
         const { betas, workspace_id, ...query2 } = params ?? {};
-        return this._client.getAPIList(path9`/v1/memory_stores/${memoryStoreID}/memories?beta=true`, PageCursor, {
+        return this._client.getAPIList(path12`/v1/memory_stores/${memoryStoreID}/memories?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -16182,7 +16182,7 @@ var init_memories2 = __esm({
        */
       delete(memoryID, params, options) {
         const { memory_store_id, expected_content_sha256, betas, workspace_id } = params;
-        return this._client.delete(path9`/v1/memory_stores/${memory_store_id}/memories/${memoryID}?beta=true`, {
+        return this._client.delete(path12`/v1/memory_stores/${memory_store_id}/memories/${memoryID}?beta=true`, {
           query: { expected_content_sha256 },
           ...options,
           headers: buildHeaders([
@@ -16221,7 +16221,7 @@ var init_memory_versions = __esm({
        */
       retrieve(memoryVersionID, params, options) {
         const { memory_store_id, betas, workspace_id, ...query2 } = params;
-        return this._client.get(path9`/v1/memory_stores/${memory_store_id}/memory_versions/${memoryVersionID}?beta=true`, {
+        return this._client.get(path12`/v1/memory_stores/${memory_store_id}/memory_versions/${memoryVersionID}?beta=true`, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -16248,7 +16248,7 @@ var init_memory_versions = __esm({
        */
       list(memoryStoreID, params = {}, options) {
         const { betas, workspace_id, ...query2 } = params ?? {};
-        return this._client.getAPIList(path9`/v1/memory_stores/${memoryStoreID}/memory_versions?beta=true`, PageCursor, {
+        return this._client.getAPIList(path12`/v1/memory_stores/${memoryStoreID}/memory_versions?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -16274,7 +16274,7 @@ var init_memory_versions = __esm({
        */
       redact(memoryVersionID, params, options) {
         const { memory_store_id, betas, workspace_id } = params;
-        return this._client.post(path9`/v1/memory_stores/${memory_store_id}/memory_versions/${memoryVersionID}/redact?beta=true`, {
+        return this._client.post(path12`/v1/memory_stores/${memory_store_id}/memory_versions/${memoryVersionID}/redact?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -16344,7 +16344,7 @@ var init_memory_stores = __esm({
          */
         retrieve(memoryStoreID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.get(path9`/v1/memory_stores/${memoryStoreID}?beta=true`, {
+          return this._client.get(path12`/v1/memory_stores/${memoryStoreID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -16366,7 +16366,7 @@ var init_memory_stores = __esm({
          */
         update(memoryStoreID, params, options) {
           const { betas, workspace_id, ...body } = params;
-          return this._client.post(path9`/v1/memory_stores/${memoryStoreID}?beta=true`, {
+          return this._client.post(path12`/v1/memory_stores/${memoryStoreID}?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -16414,7 +16414,7 @@ var init_memory_stores = __esm({
          */
         delete(memoryStoreID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.delete(path9`/v1/memory_stores/${memoryStoreID}?beta=true`, {
+          return this._client.delete(path12`/v1/memory_stores/${memoryStoreID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -16436,7 +16436,7 @@ var init_memory_stores = __esm({
          */
         archive(memoryStoreID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.post(path9`/v1/memory_stores/${memoryStoreID}/archive?beta=true`, {
+          return this._client.post(path12`/v1/memory_stores/${memoryStoreID}/archive?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -16578,7 +16578,7 @@ var init_batches = __esm({
        */
       retrieve(messageBatchID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.get(path9`/v1/messages/batches/${messageBatchID}?beta=true`, {
+        return this._client.get(path12`/v1/messages/batches/${messageBatchID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -16637,7 +16637,7 @@ var init_batches = __esm({
        */
       delete(messageBatchID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.delete(path9`/v1/messages/batches/${messageBatchID}?beta=true`, {
+        return this._client.delete(path12`/v1/messages/batches/${messageBatchID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -16672,7 +16672,7 @@ var init_batches = __esm({
        */
       cancel(messageBatchID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.post(path9`/v1/messages/batches/${messageBatchID}/cancel?beta=true`, {
+        return this._client.post(path12`/v1/messages/batches/${messageBatchID}/cancel?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -17756,7 +17756,7 @@ var init_api_keys = __esm({
        * ```
        */
       retrieve(apiKeyID, options) {
-        return this._client.get(path9`/v1/organizations/api_keys/${apiKeyID}?beta=true`, options);
+        return this._client.get(path12`/v1/organizations/api_keys/${apiKeyID}?beta=true`, options);
       }
       /**
        * Update API Key
@@ -17770,7 +17770,7 @@ var init_api_keys = __esm({
        * ```
        */
       update(apiKeyID, body, options) {
-        return this._client.post(path9`/v1/organizations/api_keys/${apiKeyID}?beta=true`, { body, ...options });
+        return this._client.post(path12`/v1/organizations/api_keys/${apiKeyID}?beta=true`, { body, ...options });
       }
       /**
        * List API Keys
@@ -18348,7 +18348,7 @@ var init_external_keys = __esm({
        * ```
        */
       retrieve(externalKeyID, options) {
-        return this._client.get(path9`/v1/organizations/external_keys/${externalKeyID}?beta=true`, options);
+        return this._client.get(path12`/v1/organizations/external_keys/${externalKeyID}?beta=true`, options);
       }
       /**
        * Partially update an external key config. Omitted fields are left unchanged.
@@ -18366,7 +18366,7 @@ var init_external_keys = __esm({
        * ```
        */
       update(externalKeyID, body, options) {
-        return this._client.post(path9`/v1/organizations/external_keys/${externalKeyID}?beta=true`, {
+        return this._client.post(path12`/v1/organizations/external_keys/${externalKeyID}?beta=true`, {
           body,
           ...options
         });
@@ -18405,7 +18405,7 @@ var init_external_keys = __esm({
        * ```
        */
       delete(externalKeyID, options) {
-        return this._client.delete(path9`/v1/organizations/external_keys/${externalKeyID}?beta=true`, options);
+        return this._client.delete(path12`/v1/organizations/external_keys/${externalKeyID}?beta=true`, options);
       }
       /**
        * Validate an external key config against the customer's KMS.
@@ -18424,7 +18424,7 @@ var init_external_keys = __esm({
        * ```
        */
       validate(externalKeyID, options) {
-        return this._client.post(path9`/v1/organizations/external_keys/${externalKeyID}/validate?beta=true`, options);
+        return this._client.post(path12`/v1/organizations/external_keys/${externalKeyID}/validate?beta=true`, options);
       }
     };
   }
@@ -18495,7 +18495,7 @@ var init_issuers = __esm({
        */
       retrieve(federationIssuerID, params = {}, options) {
         const { betas } = params ?? {};
-        return this._client.get(path9`/v1/organizations/federation_issuers/${federationIssuerID}?beta=true`, {
+        return this._client.get(path12`/v1/organizations/federation_issuers/${federationIssuerID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -18527,7 +18527,7 @@ var init_issuers = __esm({
        */
       update(federationIssuerID, params, options) {
         const { betas, ...body } = params;
-        return this._client.post(path9`/v1/organizations/federation_issuers/${federationIssuerID}?beta=true`, {
+        return this._client.post(path12`/v1/organizations/federation_issuers/${federationIssuerID}?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -18588,7 +18588,7 @@ var init_issuers = __esm({
        */
       archive(federationIssuerID, params = {}, options) {
         const { betas } = params ?? {};
-        return this._client.post(path9`/v1/organizations/federation_issuers/${federationIssuerID}/archive?beta=true`, {
+        return this._client.post(path12`/v1/organizations/federation_issuers/${federationIssuerID}/archive?beta=true`, {
           ...options,
           headers: buildHeaders([
             { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -18635,7 +18635,7 @@ var init_workspaces = __esm({
        */
       list(federationRuleID, params = {}, options) {
         const { betas, ...query2 } = params ?? {};
-        return this._client.getAPIList(path9`/v1/organizations/federation_rules/${federationRuleID}/workspaces?beta=true`, PageCursor, {
+        return this._client.getAPIList(path12`/v1/organizations/federation_rules/${federationRuleID}/workspaces?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -18671,7 +18671,7 @@ var init_workspaces = __esm({
        */
       add(federationRuleID, params, options) {
         const { betas, ...body } = params;
-        return this._client.post(path9`/v1/organizations/federation_rules/${federationRuleID}/workspaces?beta=true`, {
+        return this._client.post(path12`/v1/organizations/federation_rules/${federationRuleID}/workspaces?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -18703,7 +18703,7 @@ var init_workspaces = __esm({
        */
       remove(workspaceID, params, options) {
         const { federation_rule_id, betas } = params;
-        return this._client.delete(path9`/v1/organizations/federation_rules/${federation_rule_id}/workspaces/${workspaceID}?beta=true`, {
+        return this._client.delete(path12`/v1/organizations/federation_rules/${federation_rule_id}/workspaces/${workspaceID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -18796,7 +18796,7 @@ var init_rules = __esm({
          */
         retrieve(federationRuleID, params = {}, options) {
           const { betas } = params ?? {};
-          return this._client.get(path9`/v1/organizations/federation_rules/${federationRuleID}?beta=true`, {
+          return this._client.get(path12`/v1/organizations/federation_rules/${federationRuleID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -18837,7 +18837,7 @@ var init_rules = __esm({
          */
         update(federationRuleID, params, options) {
           const { betas, ...body } = params;
-          return this._client.post(path9`/v1/organizations/federation_rules/${federationRuleID}?beta=true`, {
+          return this._client.post(path12`/v1/organizations/federation_rules/${federationRuleID}?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -18901,7 +18901,7 @@ var init_rules = __esm({
          */
         archive(federationRuleID, params = {}, options) {
           const { betas } = params ?? {};
-          return this._client.post(path9`/v1/organizations/federation_rules/${federationRuleID}/archive?beta=true`, {
+          return this._client.post(path12`/v1/organizations/federation_rules/${federationRuleID}/archive?beta=true`, {
             ...options,
             headers: buildHeaders([
               { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -18980,7 +18980,7 @@ var init_invites = __esm({
        * ```
        */
       retrieve(inviteID, options) {
-        return this._client.get(path9`/v1/organizations/invites/${inviteID}?beta=true`, options);
+        return this._client.get(path12`/v1/organizations/invites/${inviteID}?beta=true`, options);
       }
       /**
        * List the organization's invites.
@@ -19011,7 +19011,7 @@ var init_invites = __esm({
        * ```
        */
       delete(inviteID, options) {
-        return this._client.delete(path9`/v1/organizations/invites/${inviteID}?beta=true`, options);
+        return this._client.delete(path12`/v1/organizations/invites/${inviteID}?beta=true`, options);
       }
     };
   }
@@ -19051,7 +19051,7 @@ var init_plugin_marketplaces = __esm({
        */
       retrieve(marketplaceID, params = {}, options) {
         const { betas, ...query2 } = params ?? {};
-        return this._client.get(path9`/v1/organizations/plugin_marketplaces/${marketplaceID}?beta=true`, {
+        return this._client.get(path12`/v1/organizations/plugin_marketplaces/${marketplaceID}?beta=true`, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -19088,7 +19088,7 @@ var init_plugin_marketplaces = __esm({
        */
       update(marketplaceID, params, options) {
         const { betas, ...body } = params;
-        return this._client.post(path9`/v1/organizations/plugin_marketplaces/${marketplaceID}?beta=true`, {
+        return this._client.post(path12`/v1/organizations/plugin_marketplaces/${marketplaceID}?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -19298,7 +19298,7 @@ var init_users2 = __esm({
        * ```
        */
       retrieve(userID, options) {
-        return this._client.get(path9`/v1/organizations/users/${userID}?beta=true`, options);
+        return this._client.get(path12`/v1/organizations/users/${userID}?beta=true`, options);
       }
       /**
        * Update a member's organization role.
@@ -19312,7 +19312,7 @@ var init_users2 = __esm({
        * ```
        */
       update(userID, body, options) {
-        return this._client.post(path9`/v1/organizations/users/${userID}?beta=true`, { body, ...options });
+        return this._client.post(path12`/v1/organizations/users/${userID}?beta=true`, { body, ...options });
       }
       /**
        * List the organization's members.
@@ -19342,7 +19342,7 @@ var init_users2 = __esm({
        * ```
        */
       remove(userID, options) {
-        return this._client.delete(path9`/v1/organizations/users/${userID}?beta=true`, options);
+        return this._client.delete(path12`/v1/organizations/users/${userID}?beta=true`, options);
       }
     };
   }
@@ -19388,7 +19388,7 @@ var init_installation_settings = __esm({
        */
       list(pluginID, params = {}, options) {
         const { betas, ...query2 } = params ?? {};
-        return this._client.getAPIList(path9`/v1/organizations/plugins/${pluginID}/installation_settings?beta=true`, PageCursor, {
+        return this._client.getAPIList(path12`/v1/organizations/plugins/${pluginID}/installation_settings?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -19437,7 +19437,7 @@ var init_installation_settings = __esm({
        */
       remove(target, params, options) {
         const { plugin_id, betas } = params;
-        return this._client.delete(path9`/v1/organizations/plugins/${plugin_id}/installation_settings/${target}?beta=true`, {
+        return this._client.delete(path12`/v1/organizations/plugins/${plugin_id}/installation_settings/${target}?beta=true`, {
           ...options,
           headers: buildHeaders([
             { "anthropic-beta": [...betas ?? [], "ce-plugins-2026-09-01"].toString() },
@@ -19483,7 +19483,7 @@ var init_installation_settings = __esm({
        */
       set(target, params, options) {
         const { plugin_id, betas, ...body } = params;
-        return this._client.post(path9`/v1/organizations/plugins/${plugin_id}/installation_settings/${target}?beta=true`, {
+        return this._client.post(path12`/v1/organizations/plugins/${plugin_id}/installation_settings/${target}?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -19538,7 +19538,7 @@ var init_shares = __esm({
        */
       list(pluginID, params = {}, options) {
         const { betas, ...query2 } = params ?? {};
-        return this._client.getAPIList(path9`/v1/organizations/plugins/${pluginID}/shares?beta=true`, PageCursor, {
+        return this._client.getAPIList(path12`/v1/organizations/plugins/${pluginID}/shares?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -19604,7 +19604,7 @@ var init_versions2 = __esm({
        */
       create(pluginID, params, options) {
         const { betas, ...body } = params;
-        return this._client.post(path9`/v1/organizations/plugins/${pluginID}/versions?beta=true`, multipartFormRequestOptions({
+        return this._client.post(path12`/v1/organizations/plugins/${pluginID}/versions?beta=true`, multipartFormRequestOptions({
           body,
           ...options,
           headers: buildHeaders([
@@ -19638,7 +19638,7 @@ var init_versions2 = __esm({
        */
       retrieve(version2, params, options) {
         const { plugin_id, betas, ...query2 } = params;
-        return this._client.get(path9`/v1/organizations/plugins/${plugin_id}/versions/${version2}?beta=true`, {
+        return this._client.get(path12`/v1/organizations/plugins/${plugin_id}/versions/${version2}?beta=true`, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -19676,7 +19676,7 @@ var init_versions2 = __esm({
        */
       list(pluginID, params = {}, options) {
         const { betas, ...query2 } = params ?? {};
-        return this._client.getAPIList(path9`/v1/organizations/plugins/${pluginID}/versions?beta=true`, PageCursor, {
+        return this._client.getAPIList(path12`/v1/organizations/plugins/${pluginID}/versions?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -19729,7 +19729,7 @@ var init_versions2 = __esm({
        */
       download(version2, params, options) {
         const { plugin_id, betas, ...query2 } = params;
-        return this._client.get(path9`/v1/organizations/plugins/${plugin_id}/versions/${version2}/content?beta=true`, {
+        return this._client.get(path12`/v1/organizations/plugins/${plugin_id}/versions/${version2}/content?beta=true`, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -19850,7 +19850,7 @@ var init_plugins2 = __esm({
          */
         retrieve(pluginID, params = {}, options) {
           const { betas, ...query2 } = params ?? {};
-          return this._client.get(path9`/v1/organizations/plugins/${pluginID}?beta=true`, {
+          return this._client.get(path12`/v1/organizations/plugins/${pluginID}?beta=true`, {
             query: query2,
             ...options,
             headers: buildHeaders([
@@ -19906,7 +19906,7 @@ var init_plugins2 = __esm({
          */
         update(pluginID, params, options) {
           const { betas, ...body } = params;
-          return this._client.post(path9`/v1/organizations/plugins/${pluginID}?beta=true`, {
+          return this._client.post(path12`/v1/organizations/plugins/${pluginID}?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -19988,7 +19988,7 @@ var init_plugins2 = __esm({
          */
         delete(pluginID, params = {}, options) {
           const { betas } = params ?? {};
-          return this._client.delete(path9`/v1/organizations/plugins/${pluginID}?beta=true`, {
+          return this._client.delete(path12`/v1/organizations/plugins/${pluginID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               { "anthropic-beta": [...betas ?? [], "ce-plugins-2026-09-01"].toString() },
@@ -20029,7 +20029,7 @@ var init_members = __esm({
        * ```
        */
       list(rbacGroupID, query2 = {}, options) {
-        return this._client.getAPIList(path9`/v1/organizations/rbac_groups/${rbacGroupID}/members?beta=true`, PageCursor, { query: query2, ...options });
+        return this._client.getAPIList(path12`/v1/organizations/rbac_groups/${rbacGroupID}/members?beta=true`, PageCursor, { query: query2, ...options });
       }
       /**
        * Add a User to an RBAC Group. Membership of groups provisioned by an identity
@@ -20048,7 +20048,7 @@ var init_members = __esm({
        * ```
        */
       add(rbacGroupID, body, options) {
-        return this._client.post(path9`/v1/organizations/rbac_groups/${rbacGroupID}/members?beta=true`, {
+        return this._client.post(path12`/v1/organizations/rbac_groups/${rbacGroupID}/members?beta=true`, {
           body,
           ...options
         });
@@ -20071,7 +20071,7 @@ var init_members = __esm({
        */
       remove(userID, params, options) {
         const { rbac_group_id } = params;
-        return this._client.delete(path9`/v1/organizations/rbac_groups/${rbac_group_id}/members/${userID}?beta=true`, options);
+        return this._client.delete(path12`/v1/organizations/rbac_groups/${rbac_group_id}/members/${userID}?beta=true`, options);
       }
     };
   }
@@ -20123,7 +20123,7 @@ var init_rbac_groups = __esm({
          * ```
          */
         retrieve(rbacGroupID, options) {
-          return this._client.get(path9`/v1/organizations/rbac_groups/${rbacGroupID}?beta=true`, options);
+          return this._client.get(path12`/v1/organizations/rbac_groups/${rbacGroupID}?beta=true`, options);
         }
         /**
          * Update an RBAC Group's name. Groups provisioned by an identity provider (source
@@ -20141,7 +20141,7 @@ var init_rbac_groups = __esm({
          * ```
          */
         update(rbacGroupID, body, options) {
-          return this._client.post(path9`/v1/organizations/rbac_groups/${rbacGroupID}?beta=true`, {
+          return this._client.post(path12`/v1/organizations/rbac_groups/${rbacGroupID}?beta=true`, {
             body,
             ...options
           });
@@ -20181,7 +20181,7 @@ var init_rbac_groups = __esm({
          * ```
          */
         delete(rbacGroupID, options) {
-          return this._client.delete(path9`/v1/organizations/rbac_groups/${rbacGroupID}?beta=true`, options);
+          return this._client.delete(path12`/v1/organizations/rbac_groups/${rbacGroupID}?beta=true`, options);
         }
       }
       RBACGroups2.Members = Members;
@@ -20214,7 +20214,7 @@ var init_permissions = __esm({
        * ```
        */
       list(rbacRoleID, query2 = {}, options) {
-        return this._client.getAPIList(path9`/v1/organizations/rbac_roles/${rbacRoleID}/permissions?beta=true`, PageCursor, { query: query2, ...options });
+        return this._client.getAPIList(path12`/v1/organizations/rbac_roles/${rbacRoleID}/permissions?beta=true`, PageCursor, { query: query2, ...options });
       }
     };
   }
@@ -20249,7 +20249,7 @@ var init_rbac_roles = __esm({
          * ```
          */
         retrieve(rbacRoleID, options) {
-          return this._client.get(path9`/v1/organizations/rbac_roles/${rbacRoleID}?beta=true`, options);
+          return this._client.get(path12`/v1/organizations/rbac_roles/${rbacRoleID}?beta=true`, options);
         }
         /**
          * List RBAC Roles in the organization.
@@ -20318,7 +20318,7 @@ var init_workspaces2 = __esm({
        */
       list(serviceAccountID, params = {}, options) {
         const { betas, ...query2 } = params ?? {};
-        return this._client.getAPIList(path9`/v1/organizations/service_accounts/${serviceAccountID}/workspaces?beta=true`, PageCursor, {
+        return this._client.getAPIList(path12`/v1/organizations/service_accounts/${serviceAccountID}/workspaces?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -20355,7 +20355,7 @@ var init_workspaces2 = __esm({
        */
       add(serviceAccountID, params, options) {
         const { betas, ...body } = params;
-        return this._client.post(path9`/v1/organizations/service_accounts/${serviceAccountID}/workspaces?beta=true`, {
+        return this._client.post(path12`/v1/organizations/service_accounts/${serviceAccountID}/workspaces?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -20391,7 +20391,7 @@ var init_workspaces2 = __esm({
        */
       remove(workspaceID, params, options) {
         const { service_account_id, betas } = params;
-        return this._client.delete(path9`/v1/organizations/service_accounts/${service_account_id}/workspaces/${workspaceID}?beta=true`, {
+        return this._client.delete(path12`/v1/organizations/service_accounts/${service_account_id}/workspaces/${workspaceID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -20471,7 +20471,7 @@ var init_service_accounts = __esm({
          */
         retrieve(serviceAccountID, params = {}, options) {
           const { betas } = params ?? {};
-          return this._client.get(path9`/v1/organizations/service_accounts/${serviceAccountID}?beta=true`, {
+          return this._client.get(path12`/v1/organizations/service_accounts/${serviceAccountID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -20502,7 +20502,7 @@ var init_service_accounts = __esm({
          */
         update(serviceAccountID, params, options) {
           const { betas, ...body } = params;
-          return this._client.post(path9`/v1/organizations/service_accounts/${serviceAccountID}?beta=true`, {
+          return this._client.post(path12`/v1/organizations/service_accounts/${serviceAccountID}?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -20565,7 +20565,7 @@ var init_service_accounts = __esm({
          */
         archive(serviceAccountID, params = {}, options) {
           const { betas } = params ?? {};
-          return this._client.post(path9`/v1/organizations/service_accounts/${serviceAccountID}/archive?beta=true`, {
+          return this._client.post(path12`/v1/organizations/service_accounts/${serviceAccountID}/archive?beta=true`, {
             ...options,
             headers: buildHeaders([
               { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -20632,7 +20632,7 @@ var init_increase_requests = __esm({
        * ```
        */
       retrieve(spendLimitIncreaseRequestID, options) {
-        return this._client.get(path9`/v1/organizations/spend_limit_increase_requests/${spendLimitIncreaseRequestID}?beta=true`, options);
+        return this._client.get(path12`/v1/organizations/spend_limit_increase_requests/${spendLimitIncreaseRequestID}?beta=true`, options);
       }
       /**
        * List spend limit increase requests, most recent first.
@@ -20668,7 +20668,7 @@ var init_increase_requests = __esm({
        * ```
        */
       approve(spendLimitIncreaseRequestID, body, options) {
-        return this._client.post(path9`/v1/organizations/spend_limit_increase_requests/${spendLimitIncreaseRequestID}/approve?beta=true`, { body, ...options });
+        return this._client.post(path12`/v1/organizations/spend_limit_increase_requests/${spendLimitIncreaseRequestID}/approve?beta=true`, { body, ...options });
       }
       /**
        * Deny a pending spend limit increase request.
@@ -20685,7 +20685,7 @@ var init_increase_requests = __esm({
        * ```
        */
       deny(spendLimitIncreaseRequestID, body, options) {
-        return this._client.post(path9`/v1/organizations/spend_limit_increase_requests/${spendLimitIncreaseRequestID}/deny?beta=true`, { body, ...options });
+        return this._client.post(path12`/v1/organizations/spend_limit_increase_requests/${spendLimitIncreaseRequestID}/deny?beta=true`, { body, ...options });
       }
     };
   }
@@ -20722,7 +20722,7 @@ var init_spend_limits = __esm({
          * ```
          */
         retrieve(spendLimitID, options) {
-          return this._client.get(path9`/v1/organizations/spend_limits/${spendLimitID}?beta=true`, options);
+          return this._client.get(path12`/v1/organizations/spend_limits/${spendLimitID}?beta=true`, options);
         }
         /**
          * List the organization's spend limits.
@@ -20769,7 +20769,7 @@ var init_spend_limits = __esm({
          * ```
          */
         delete(spendLimitID, options) {
-          return this._client.delete(path9`/v1/organizations/spend_limits/${spendLimitID}?beta=true`, options);
+          return this._client.delete(path12`/v1/organizations/spend_limits/${spendLimitID}?beta=true`, options);
         }
         /**
          * Set a spend limit.
@@ -20826,7 +20826,7 @@ var init_members2 = __esm({
        */
       retrieve(userID, params, options) {
         const { workspace_id } = params;
-        return this._client.get(path9`/v1/organizations/workspaces/${workspace_id}/members/${userID}?beta=true`, options);
+        return this._client.get(path12`/v1/organizations/workspaces/${workspace_id}/members/${userID}?beta=true`, options);
       }
       /**
        * Update Workspace Member
@@ -20845,7 +20845,7 @@ var init_members2 = __esm({
        */
       update(userID, params, options) {
         const { workspace_id, ...body } = params;
-        return this._client.post(path9`/v1/organizations/workspaces/${workspace_id}/members/${userID}?beta=true`, {
+        return this._client.post(path12`/v1/organizations/workspaces/${workspace_id}/members/${userID}?beta=true`, {
           body,
           ...options
         });
@@ -20864,7 +20864,7 @@ var init_members2 = __esm({
        * ```
        */
       list(workspaceID, query2 = {}, options) {
-        return this._client.getAPIList(path9`/v1/organizations/workspaces/${workspaceID}/members?beta=true`, Page, { query: query2, ...options });
+        return this._client.getAPIList(path12`/v1/organizations/workspaces/${workspaceID}/members?beta=true`, Page, { query: query2, ...options });
       }
       /**
        * Create Workspace Member
@@ -20882,7 +20882,7 @@ var init_members2 = __esm({
        * ```
        */
       add(workspaceID, body, options) {
-        return this._client.post(path9`/v1/organizations/workspaces/${workspaceID}/members?beta=true`, {
+        return this._client.post(path12`/v1/organizations/workspaces/${workspaceID}/members?beta=true`, {
           body,
           ...options
         });
@@ -20901,7 +20901,7 @@ var init_members2 = __esm({
        */
       remove(userID, params, options) {
         const { workspace_id } = params;
-        return this._client.delete(path9`/v1/organizations/workspaces/${workspace_id}/members/${userID}?beta=true`, options);
+        return this._client.delete(path12`/v1/organizations/workspaces/${workspace_id}/members/${userID}?beta=true`, options);
       }
     };
   }
@@ -20938,7 +20938,7 @@ var init_rate_limits2 = __esm({
        * ```
        */
       list(workspaceID, query2 = {}, options) {
-        return this._client.getAPIList(path9`/v1/organizations/workspaces/${workspaceID}/rate_limits?beta=true`, PageCursor, { query: query2, ...options });
+        return this._client.getAPIList(path12`/v1/organizations/workspaces/${workspaceID}/rate_limits?beta=true`, PageCursor, { query: query2, ...options });
       }
     };
   }
@@ -20978,7 +20978,7 @@ var init_service_accounts2 = __esm({
        */
       retrieve(serviceAccountID, params, options) {
         const { workspace_id, betas } = params;
-        return this._client.get(path9`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}?beta=true`, {
+        return this._client.get(path12`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -21014,7 +21014,7 @@ var init_service_accounts2 = __esm({
        */
       update(serviceAccountID, params, options) {
         const { workspace_id, betas, ...body } = params;
-        return this._client.post(path9`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}?beta=true`, {
+        return this._client.post(path12`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -21049,7 +21049,7 @@ var init_service_accounts2 = __esm({
        */
       list(workspaceID, params = {}, options) {
         const { betas, ...query2 } = params ?? {};
-        return this._client.getAPIList(path9`/v1/organizations/workspaces/${workspaceID}/service_accounts?beta=true`, PageCursor, {
+        return this._client.getAPIList(path12`/v1/organizations/workspaces/${workspaceID}/service_accounts?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -21088,7 +21088,7 @@ var init_service_accounts2 = __esm({
        */
       add(workspaceID, params, options) {
         const { betas, ...body } = params;
-        return this._client.post(path9`/v1/organizations/workspaces/${workspaceID}/service_accounts?beta=true`, {
+        return this._client.post(path12`/v1/organizations/workspaces/${workspaceID}/service_accounts?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -21122,7 +21122,7 @@ var init_service_accounts2 = __esm({
        */
       remove(serviceAccountID, params, options) {
         const { workspace_id, betas } = params;
-        return this._client.delete(path9`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}?beta=true`, {
+        return this._client.delete(path12`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -21190,7 +21190,7 @@ var init_workspaces3 = __esm({
          * ```
          */
         retrieve(workspaceID, options) {
-          return this._client.get(path9`/v1/organizations/workspaces/${workspaceID}?beta=true`, options);
+          return this._client.get(path12`/v1/organizations/workspaces/${workspaceID}?beta=true`, options);
         }
         /**
          * Update Workspace
@@ -21204,7 +21204,7 @@ var init_workspaces3 = __esm({
          * ```
          */
         update(workspaceID, body, options) {
-          return this._client.post(path9`/v1/organizations/workspaces/${workspaceID}?beta=true`, {
+          return this._client.post(path12`/v1/organizations/workspaces/${workspaceID}?beta=true`, {
             body,
             ...options
           });
@@ -21238,7 +21238,7 @@ var init_workspaces3 = __esm({
          * ```
          */
         archive(workspaceID, options) {
-          return this._client.post(path9`/v1/organizations/workspaces/${workspaceID}/archive?beta=true`, options);
+          return this._client.post(path12`/v1/organizations/workspaces/${workspaceID}/archive?beta=true`, options);
         }
       }
       Workspaces7.RateLimits = RateLimits2;
@@ -21364,7 +21364,7 @@ var init_events = __esm({
          */
         list(sessionID, params = {}, options) {
           const { betas, workspace_id, ...query2 } = params ?? {};
-          return this._client.getAPIList(path9`/v1/sessions/${sessionID}/events?beta=true`, PageCursor, {
+          return this._client.getAPIList(path12`/v1/sessions/${sessionID}/events?beta=true`, PageCursor, {
             query: query2,
             ...options,
             headers: buildHeaders([
@@ -21402,7 +21402,7 @@ var init_events = __esm({
          */
         send(sessionID, params, options) {
           const { betas, workspace_id, ...body } = params;
-          return this._client.post(path9`/v1/sessions/${sessionID}/events?beta=true`, {
+          return this._client.post(path12`/v1/sessions/${sessionID}/events?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -21427,7 +21427,7 @@ var init_events = __esm({
          */
         stream(sessionID, params = {}, options) {
           const { betas, workspace_id, ...query2 } = params ?? {};
-          return this._client.get(path9`/v1/sessions/${sessionID}/events/stream?beta=true`, {
+          return this._client.get(path12`/v1/sessions/${sessionID}/events/stream?beta=true`, {
             query: query2,
             ...options,
             headers: buildHeaders([
@@ -21492,7 +21492,7 @@ var init_resources = __esm({
        */
       retrieve(resourceID, params, options) {
         const { session_id, betas, workspace_id } = params;
-        return this._client.get(path9`/v1/sessions/${session_id}/resources/${resourceID}?beta=true`, {
+        return this._client.get(path12`/v1/sessions/${session_id}/resources/${resourceID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -21520,7 +21520,7 @@ var init_resources = __esm({
        */
       update(resourceID, params, options) {
         const { session_id, betas, workspace_id, ...body } = params;
-        return this._client.post(path9`/v1/sessions/${session_id}/resources/${resourceID}?beta=true`, {
+        return this._client.post(path12`/v1/sessions/${session_id}/resources/${resourceID}?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -21547,7 +21547,7 @@ var init_resources = __esm({
        */
       list(sessionID, params = {}, options) {
         const { betas, workspace_id, ...query2 } = params ?? {};
-        return this._client.getAPIList(path9`/v1/sessions/${sessionID}/resources?beta=true`, PageCursor, {
+        return this._client.getAPIList(path12`/v1/sessions/${sessionID}/resources?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -21573,7 +21573,7 @@ var init_resources = __esm({
        */
       delete(resourceID, params, options) {
         const { session_id, betas, workspace_id } = params;
-        return this._client.delete(path9`/v1/sessions/${session_id}/resources/${resourceID}?beta=true`, {
+        return this._client.delete(path12`/v1/sessions/${session_id}/resources/${resourceID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -21601,7 +21601,7 @@ var init_resources = __esm({
        */
       add(sessionID, params, options) {
         const { betas, workspace_id, ...body } = params;
-        return this._client.post(path9`/v1/sessions/${sessionID}/resources?beta=true`, {
+        return this._client.post(path12`/v1/sessions/${sessionID}/resources?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -21642,7 +21642,7 @@ var init_events2 = __esm({
        */
       list(threadID, params, options) {
         const { session_id, betas, workspace_id, ...query2 } = params;
-        return this._client.getAPIList(path9`/v1/sessions/${session_id}/threads/${threadID}/events?beta=true`, PageCursor, {
+        return this._client.getAPIList(path12`/v1/sessions/${session_id}/threads/${threadID}/events?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -21668,7 +21668,7 @@ var init_events2 = __esm({
        */
       stream(threadID, params, options) {
         const { session_id, betas, workspace_id, ...query2 } = params;
-        return this._client.get(path9`/v1/sessions/${session_id}/threads/${threadID}/stream?beta=true`, {
+        return this._client.get(path12`/v1/sessions/${session_id}/threads/${threadID}/stream?beta=true`, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -21715,7 +21715,7 @@ var init_threads = __esm({
          */
         retrieve(threadID, params, options) {
           const { session_id, betas, workspace_id } = params;
-          return this._client.get(path9`/v1/sessions/${session_id}/threads/${threadID}?beta=true`, {
+          return this._client.get(path12`/v1/sessions/${session_id}/threads/${threadID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -21741,7 +21741,7 @@ var init_threads = __esm({
          */
         list(sessionID, params = {}, options) {
           const { betas, workspace_id, ...query2 } = params ?? {};
-          return this._client.getAPIList(path9`/v1/sessions/${sessionID}/threads?beta=true`, PageCursor, {
+          return this._client.getAPIList(path12`/v1/sessions/${sessionID}/threads?beta=true`, PageCursor, {
             query: query2,
             ...options,
             headers: buildHeaders([
@@ -21767,7 +21767,7 @@ var init_threads = __esm({
          */
         archive(threadID, params, options) {
           const { session_id, betas, workspace_id } = params;
-          return this._client.post(path9`/v1/sessions/${session_id}/threads/${threadID}/archive?beta=true`, {
+          return this._client.post(path12`/v1/sessions/${session_id}/threads/${threadID}/archive?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -21846,7 +21846,7 @@ var init_sessions = __esm({
          */
         retrieve(sessionID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.get(path9`/v1/sessions/${sessionID}?beta=true`, {
+          return this._client.get(path12`/v1/sessions/${sessionID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -21870,7 +21870,7 @@ var init_sessions = __esm({
          */
         update(sessionID, params, options) {
           const { betas, workspace_id, ...body } = params;
-          return this._client.post(path9`/v1/sessions/${sessionID}?beta=true`, {
+          return this._client.post(path12`/v1/sessions/${sessionID}?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -21920,7 +21920,7 @@ var init_sessions = __esm({
          */
         delete(sessionID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.delete(path9`/v1/sessions/${sessionID}?beta=true`, {
+          return this._client.delete(path12`/v1/sessions/${sessionID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -21944,7 +21944,7 @@ var init_sessions = __esm({
          */
         archive(sessionID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.post(path9`/v1/sessions/${sessionID}/archive?beta=true`, {
+          return this._client.post(path12`/v1/sessions/${sessionID}/archive?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -21987,7 +21987,7 @@ var init_versions3 = __esm({
        */
       create(skillID, params, options) {
         const { betas, workspace_id, ...body } = params;
-        return this._client.post(path9`/v1/skills/${skillID}/versions?beta=true`, multipartFormRequestOptions({
+        return this._client.post(path12`/v1/skills/${skillID}/versions?beta=true`, multipartFormRequestOptions({
           body,
           ...options,
           headers: buildHeaders([
@@ -22012,7 +22012,7 @@ var init_versions3 = __esm({
        */
       retrieve(version2, params, options) {
         const { skill_id, betas, workspace_id } = params;
-        return this._client.get(path9`/v1/skills/${skill_id}/versions/${version2}?beta=true`, {
+        return this._client.get(path12`/v1/skills/${skill_id}/versions/${version2}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -22038,7 +22038,7 @@ var init_versions3 = __esm({
        */
       list(skillID, params = {}, options) {
         const { betas, workspace_id, ...query2 } = params ?? {};
-        return this._client.getAPIList(path9`/v1/skills/${skillID}/versions?beta=true`, PageCursor, {
+        return this._client.getAPIList(path12`/v1/skills/${skillID}/versions?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -22063,7 +22063,7 @@ var init_versions3 = __esm({
        */
       delete(version2, params, options) {
         const { skill_id, betas, workspace_id } = params;
-        return this._client.delete(path9`/v1/skills/${skill_id}/versions/${version2}?beta=true`, {
+        return this._client.delete(path12`/v1/skills/${skill_id}/versions/${version2}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -22090,7 +22090,7 @@ var init_versions3 = __esm({
        */
       download(version2, params, options) {
         const { skill_id, betas, workspace_id } = params;
-        return this._client.get(path9`/v1/skills/${skill_id}/versions/${version2}/content?beta=true`, {
+        return this._client.get(path12`/v1/skills/${skill_id}/versions/${version2}/content?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -22160,7 +22160,7 @@ var init_skills3 = __esm({
          */
         retrieve(skillID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.get(path9`/v1/skills/${skillID}?beta=true`, {
+          return this._client.get(path12`/v1/skills/${skillID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -22208,7 +22208,7 @@ var init_skills3 = __esm({
          */
         delete(skillID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.delete(path9`/v1/skills/${skillID}?beta=true`, {
+          return this._client.delete(path12`/v1/skills/${skillID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -22256,7 +22256,7 @@ var init_certificates = __esm({
        */
       create(tunnelID, params, options) {
         const { betas, workspace_id, ...body } = params;
-        return this._client.post(path9`/v1/tunnels/${tunnelID}/certificates?beta=true`, {
+        return this._client.post(path12`/v1/tunnels/${tunnelID}/certificates?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -22287,7 +22287,7 @@ var init_certificates = __esm({
        */
       retrieve(certificateID, params, options) {
         const { tunnel_id, betas, workspace_id } = params;
-        return this._client.get(path9`/v1/tunnels/${tunnel_id}/certificates/${certificateID}?beta=true`, {
+        return this._client.get(path12`/v1/tunnels/${tunnel_id}/certificates/${certificateID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -22319,7 +22319,7 @@ var init_certificates = __esm({
        */
       list(tunnelID, params = {}, options) {
         const { betas, workspace_id, ...query2 } = params ?? {};
-        return this._client.getAPIList(path9`/v1/tunnels/${tunnelID}/certificates?beta=true`, PageCursor, {
+        return this._client.getAPIList(path12`/v1/tunnels/${tunnelID}/certificates?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -22353,7 +22353,7 @@ var init_certificates = __esm({
        */
       archive(certificateID, params, options) {
         const { tunnel_id, betas, workspace_id } = params;
-        return this._client.post(path9`/v1/tunnels/${tunnel_id}/certificates/${certificateID}/archive?beta=true`, {
+        return this._client.post(path12`/v1/tunnels/${tunnel_id}/certificates/${certificateID}/archive?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -22430,7 +22430,7 @@ var init_tunnels = __esm({
          */
         retrieve(tunnelID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.get(path9`/v1/tunnels/${tunnelID}?beta=true`, {
+          return this._client.get(path12`/v1/tunnels/${tunnelID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -22492,7 +22492,7 @@ var init_tunnels = __esm({
          */
         archive(tunnelID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.post(path9`/v1/tunnels/${tunnelID}/archive?beta=true`, {
+          return this._client.post(path12`/v1/tunnels/${tunnelID}/archive?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -22522,7 +22522,7 @@ var init_tunnels = __esm({
          */
         revealToken(tunnelID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.post(path9`/v1/tunnels/${tunnelID}/reveal_token?beta=true`, {
+          return this._client.post(path12`/v1/tunnels/${tunnelID}/reveal_token?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -22551,7 +22551,7 @@ var init_tunnels = __esm({
          */
         rotateToken(tunnelID, params, options) {
           const { betas, workspace_id, ...body } = params;
-          return this._client.post(path9`/v1/tunnels/${tunnelID}/rotate_token?beta=true`, {
+          return this._client.post(path12`/v1/tunnels/${tunnelID}/rotate_token?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -22600,7 +22600,7 @@ var init_credentials2 = __esm({
        */
       create(vaultID, params, options) {
         const { betas, workspace_id, ...body } = params;
-        return this._client.post(path9`/v1/vaults/${vaultID}/credentials?beta=true`, {
+        return this._client.post(path12`/v1/vaults/${vaultID}/credentials?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -22626,7 +22626,7 @@ var init_credentials2 = __esm({
        */
       retrieve(credentialID, params, options) {
         const { vault_id, betas, workspace_id } = params;
-        return this._client.get(path9`/v1/vaults/${vault_id}/credentials/${credentialID}?beta=true`, {
+        return this._client.get(path12`/v1/vaults/${vault_id}/credentials/${credentialID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -22651,7 +22651,7 @@ var init_credentials2 = __esm({
        */
       update(credentialID, params, options) {
         const { vault_id, betas, workspace_id, ...body } = params;
-        return this._client.post(path9`/v1/vaults/${vault_id}/credentials/${credentialID}?beta=true`, {
+        return this._client.post(path12`/v1/vaults/${vault_id}/credentials/${credentialID}?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -22678,7 +22678,7 @@ var init_credentials2 = __esm({
        */
       list(vaultID, params = {}, options) {
         const { betas, workspace_id, ...query2 } = params ?? {};
-        return this._client.getAPIList(path9`/v1/vaults/${vaultID}/credentials?beta=true`, PageCursor, {
+        return this._client.getAPIList(path12`/v1/vaults/${vaultID}/credentials?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -22704,7 +22704,7 @@ var init_credentials2 = __esm({
        */
       delete(credentialID, params, options) {
         const { vault_id, betas, workspace_id } = params;
-        return this._client.delete(path9`/v1/vaults/${vault_id}/credentials/${credentialID}?beta=true`, {
+        return this._client.delete(path12`/v1/vaults/${vault_id}/credentials/${credentialID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -22729,7 +22729,7 @@ var init_credentials2 = __esm({
        */
       archive(credentialID, params, options) {
         const { vault_id, betas, workspace_id } = params;
-        return this._client.post(path9`/v1/vaults/${vault_id}/credentials/${credentialID}/archive?beta=true`, {
+        return this._client.post(path12`/v1/vaults/${vault_id}/credentials/${credentialID}/archive?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -22754,7 +22754,7 @@ var init_credentials2 = __esm({
        */
       mcpOAuthValidate(credentialID, params, options) {
         const { vault_id, betas, workspace_id } = params;
-        return this._client.post(path9`/v1/vaults/${vault_id}/credentials/${credentialID}/mcp_oauth_validate?beta=true`, {
+        return this._client.post(path12`/v1/vaults/${vault_id}/credentials/${credentialID}/mcp_oauth_validate?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -22823,7 +22823,7 @@ var init_vaults = __esm({
          */
         retrieve(vaultID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.get(path9`/v1/vaults/${vaultID}?beta=true`, {
+          return this._client.get(path12`/v1/vaults/${vaultID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -22847,7 +22847,7 @@ var init_vaults = __esm({
          */
         update(vaultID, params, options) {
           const { betas, workspace_id, ...body } = params;
-          return this._client.post(path9`/v1/vaults/${vaultID}?beta=true`, {
+          return this._client.post(path12`/v1/vaults/${vaultID}?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -22897,7 +22897,7 @@ var init_vaults = __esm({
          */
         delete(vaultID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.delete(path9`/v1/vaults/${vaultID}?beta=true`, {
+          return this._client.delete(path12`/v1/vaults/${vaultID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -22921,7 +22921,7 @@ var init_vaults = __esm({
          */
         archive(vaultID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.post(path9`/v1/vaults/${vaultID}/archive?beta=true`, {
+          return this._client.post(path12`/v1/vaults/${vaultID}/archive?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -24079,7 +24079,7 @@ var init_files2 = __esm({
        */
       delete(fileID, params = {}, options) {
         const { workspace_id } = params ?? {};
-        return this._client.delete(path9`/v1/files/${fileID}`, {
+        return this._client.delete(path12`/v1/files/${fileID}`, {
           ...options,
           headers: buildHeaders([
             { ...workspace_id != null ? { "anthropic-workspace-id": workspace_id } : void 0 },
@@ -24100,7 +24100,7 @@ var init_files2 = __esm({
        */
       download(fileID, params = {}, options) {
         const { workspace_id } = params ?? {};
-        return this._client.get(path9`/v1/files/${fileID}/content`, {
+        return this._client.get(path12`/v1/files/${fileID}/content`, {
           ...options,
           headers: buildHeaders([
             {
@@ -24124,7 +24124,7 @@ var init_files2 = __esm({
        */
       retrieveMetadata(fileID, params = {}, options) {
         const { workspace_id } = params ?? {};
-        return this._client.get(path9`/v1/files/${fileID}`, {
+        return this._client.get(path12`/v1/files/${fileID}`, {
           ...options,
           headers: buildHeaders([
             { ...workspace_id != null ? { "anthropic-workspace-id": workspace_id } : void 0 },
@@ -24886,7 +24886,7 @@ var init_batches2 = __esm({
        */
       retrieve(messageBatchID, params = {}, options) {
         const { workspace_id } = params ?? {};
-        return this._client.get(path9`/v1/messages/batches/${messageBatchID}`, {
+        return this._client.get(path12`/v1/messages/batches/${messageBatchID}`, {
           ...options,
           headers: buildHeaders([
             { ...workspace_id != null ? { "anthropic-workspace-id": workspace_id } : void 0 },
@@ -24937,7 +24937,7 @@ var init_batches2 = __esm({
        */
       delete(messageBatchID, params = {}, options) {
         const { workspace_id } = params ?? {};
-        return this._client.delete(path9`/v1/messages/batches/${messageBatchID}`, {
+        return this._client.delete(path12`/v1/messages/batches/${messageBatchID}`, {
           ...options,
           headers: buildHeaders([
             { ...workspace_id != null ? { "anthropic-workspace-id": workspace_id } : void 0 },
@@ -24968,7 +24968,7 @@ var init_batches2 = __esm({
        */
       cancel(messageBatchID, params = {}, options) {
         const { workspace_id } = params ?? {};
-        return this._client.post(path9`/v1/messages/batches/${messageBatchID}/cancel`, {
+        return this._client.post(path12`/v1/messages/batches/${messageBatchID}/cancel`, {
           ...options,
           headers: buildHeaders([
             { ...workspace_id != null ? { "anthropic-workspace-id": workspace_id } : void 0 },
@@ -25174,7 +25174,7 @@ var init_models2 = __esm({
        */
       retrieve(modelID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.get(path9`/v1/models/${modelID}`, {
+        return this._client.get(path12`/v1/models/${modelID}`, {
           ...options,
           headers: buildHeaders([
             {
@@ -25236,7 +25236,7 @@ var init_api_keys2 = __esm({
        * ```
        */
       retrieve(apiKeyID, options) {
-        return this._client.get(path9`/v1/organizations/api_keys/${apiKeyID}`, options);
+        return this._client.get(path12`/v1/organizations/api_keys/${apiKeyID}`, options);
       }
       /**
        * Update API Key
@@ -25249,7 +25249,7 @@ var init_api_keys2 = __esm({
        * ```
        */
       update(apiKeyID, body, options) {
-        return this._client.post(path9`/v1/organizations/api_keys/${apiKeyID}`, { body, ...options });
+        return this._client.post(path12`/v1/organizations/api_keys/${apiKeyID}`, { body, ...options });
       }
       /**
        * List API Keys
@@ -25360,7 +25360,7 @@ var init_external_keys2 = __esm({
        * ```
        */
       retrieve(externalKeyID, options) {
-        return this._client.get(path9`/v1/organizations/external_keys/${externalKeyID}`, options);
+        return this._client.get(path12`/v1/organizations/external_keys/${externalKeyID}`, options);
       }
       /**
        * Partially update an external key config. Omitted fields are left unchanged.
@@ -25378,7 +25378,7 @@ var init_external_keys2 = __esm({
        * ```
        */
       update(externalKeyID, body, options) {
-        return this._client.post(path9`/v1/organizations/external_keys/${externalKeyID}`, { body, ...options });
+        return this._client.post(path12`/v1/organizations/external_keys/${externalKeyID}`, { body, ...options });
       }
       /**
        * List external key configs in the caller's organization.
@@ -25414,7 +25414,7 @@ var init_external_keys2 = __esm({
        * ```
        */
       delete(externalKeyID, options) {
-        return this._client.delete(path9`/v1/organizations/external_keys/${externalKeyID}`, options);
+        return this._client.delete(path12`/v1/organizations/external_keys/${externalKeyID}`, options);
       }
       /**
        * Validate an external key config against the customer's KMS.
@@ -25433,7 +25433,7 @@ var init_external_keys2 = __esm({
        * ```
        */
       validate(externalKeyID, options) {
-        return this._client.post(path9`/v1/organizations/external_keys/${externalKeyID}/validate`, options);
+        return this._client.post(path12`/v1/organizations/external_keys/${externalKeyID}/validate`, options);
       }
     };
   }
@@ -25477,7 +25477,7 @@ var init_invites2 = __esm({
        * ```
        */
       retrieve(inviteID, options) {
-        return this._client.get(path9`/v1/organizations/invites/${inviteID}`, options);
+        return this._client.get(path12`/v1/organizations/invites/${inviteID}`, options);
       }
       /**
        * List the organization's invites.
@@ -25507,7 +25507,7 @@ var init_invites2 = __esm({
        * ```
        */
       delete(inviteID, options) {
-        return this._client.delete(path9`/v1/organizations/invites/${inviteID}`, options);
+        return this._client.delete(path12`/v1/organizations/invites/${inviteID}`, options);
       }
     };
   }
@@ -25566,7 +25566,7 @@ var init_users3 = __esm({
        * ```
        */
       retrieve(userID, options) {
-        return this._client.get(path9`/v1/organizations/users/${userID}`, options);
+        return this._client.get(path12`/v1/organizations/users/${userID}`, options);
       }
       /**
        * Update a member's organization role.
@@ -25580,7 +25580,7 @@ var init_users3 = __esm({
        * ```
        */
       update(userID, body, options) {
-        return this._client.post(path9`/v1/organizations/users/${userID}`, { body, ...options });
+        return this._client.post(path12`/v1/organizations/users/${userID}`, { body, ...options });
       }
       /**
        * List the organization's members.
@@ -25607,7 +25607,7 @@ var init_users3 = __esm({
        * ```
        */
       remove(userID, options) {
-        return this._client.delete(path9`/v1/organizations/users/${userID}`, options);
+        return this._client.delete(path12`/v1/organizations/users/${userID}`, options);
       }
     };
   }
@@ -25668,7 +25668,7 @@ var init_issuers2 = __esm({
        * ```
        */
       retrieve(federationIssuerID, options) {
-        return this._client.get(path9`/v1/organizations/federation_issuers/${federationIssuerID}`, options);
+        return this._client.get(path12`/v1/organizations/federation_issuers/${federationIssuerID}`, options);
       }
       /**
        * **Requires an OAuth access token with the `org:admin` scope**, from
@@ -25693,7 +25693,7 @@ var init_issuers2 = __esm({
        * ```
        */
       update(federationIssuerID, body, options) {
-        return this._client.post(path9`/v1/organizations/federation_issuers/${federationIssuerID}`, {
+        return this._client.post(path12`/v1/organizations/federation_issuers/${federationIssuerID}`, {
           body,
           ...options
         });
@@ -25744,7 +25744,7 @@ var init_issuers2 = __esm({
        * ```
        */
       archive(federationIssuerID, options) {
-        return this._client.post(path9`/v1/organizations/federation_issuers/${federationIssuerID}/archive`, options);
+        return this._client.post(path12`/v1/organizations/federation_issuers/${federationIssuerID}/archive`, options);
       }
     };
   }
@@ -25783,7 +25783,7 @@ var init_workspaces4 = __esm({
        * ```
        */
       list(federationRuleID, query2 = {}, options) {
-        return this._client.getAPIList(path9`/v1/organizations/federation_rules/${federationRuleID}/workspaces`, PageCursor, { query: query2, ...options });
+        return this._client.getAPIList(path12`/v1/organizations/federation_rules/${federationRuleID}/workspaces`, PageCursor, { query: query2, ...options });
       }
       /**
        * **Requires an OAuth access token with the `org:admin` scope**, from
@@ -25811,7 +25811,7 @@ var init_workspaces4 = __esm({
        * ```
        */
       add(federationRuleID, body, options) {
-        return this._client.post(path9`/v1/organizations/federation_rules/${federationRuleID}/workspaces`, {
+        return this._client.post(path12`/v1/organizations/federation_rules/${federationRuleID}/workspaces`, {
           body,
           ...options
         });
@@ -25839,7 +25839,7 @@ var init_workspaces4 = __esm({
        */
       remove(workspaceID, params, options) {
         const { federation_rule_id } = params;
-        return this._client.delete(path9`/v1/organizations/federation_rules/${federation_rule_id}/workspaces/${workspaceID}`, options);
+        return this._client.delete(path12`/v1/organizations/federation_rules/${federation_rule_id}/workspaces/${workspaceID}`, options);
       }
     };
   }
@@ -25916,7 +25916,7 @@ var init_rules2 = __esm({
          * ```
          */
         retrieve(federationRuleID, options) {
-          return this._client.get(path9`/v1/organizations/federation_rules/${federationRuleID}`, options);
+          return this._client.get(path12`/v1/organizations/federation_rules/${federationRuleID}`, options);
         }
         /**
          * **Requires an OAuth access token with the `org:admin` scope**, from
@@ -25950,7 +25950,7 @@ var init_rules2 = __esm({
          * ```
          */
         update(federationRuleID, body, options) {
-          return this._client.post(path9`/v1/organizations/federation_rules/${federationRuleID}`, {
+          return this._client.post(path12`/v1/organizations/federation_rules/${federationRuleID}`, {
             body,
             ...options
           });
@@ -26004,7 +26004,7 @@ var init_rules2 = __esm({
          * ```
          */
         archive(federationRuleID, options) {
-          return this._client.post(path9`/v1/organizations/federation_rules/${federationRuleID}/archive`, options);
+          return this._client.post(path12`/v1/organizations/federation_rules/${federationRuleID}/archive`, options);
         }
       }
       Rules3.Workspaces = Workspaces4;
@@ -26076,7 +26076,7 @@ var init_workspaces5 = __esm({
        * ```
        */
       list(serviceAccountID, query2 = {}, options) {
-        return this._client.getAPIList(path9`/v1/organizations/service_accounts/${serviceAccountID}/workspaces`, PageCursor, { query: query2, ...options });
+        return this._client.getAPIList(path12`/v1/organizations/service_accounts/${serviceAccountID}/workspaces`, PageCursor, { query: query2, ...options });
       }
       /**
        * **Requires an OAuth access token with the `org:admin` scope**, from
@@ -26105,7 +26105,7 @@ var init_workspaces5 = __esm({
        * ```
        */
       add(serviceAccountID, body, options) {
-        return this._client.post(path9`/v1/organizations/service_accounts/${serviceAccountID}/workspaces`, {
+        return this._client.post(path12`/v1/organizations/service_accounts/${serviceAccountID}/workspaces`, {
           body,
           ...options
         });
@@ -26137,7 +26137,7 @@ var init_workspaces5 = __esm({
        */
       remove(workspaceID, params, options) {
         const { service_account_id } = params;
-        return this._client.delete(path9`/v1/organizations/service_accounts/${service_account_id}/workspaces/${workspaceID}`, options);
+        return this._client.delete(path12`/v1/organizations/service_accounts/${service_account_id}/workspaces/${workspaceID}`, options);
       }
     };
   }
@@ -26201,7 +26201,7 @@ var init_service_accounts3 = __esm({
          * ```
          */
         retrieve(serviceAccountID, options) {
-          return this._client.get(path9`/v1/organizations/service_accounts/${serviceAccountID}`, options);
+          return this._client.get(path12`/v1/organizations/service_accounts/${serviceAccountID}`, options);
         }
         /**
          * **Requires an OAuth access token with the `org:admin` scope**, from
@@ -26225,7 +26225,7 @@ var init_service_accounts3 = __esm({
          * ```
          */
         update(serviceAccountID, body, options) {
-          return this._client.post(path9`/v1/organizations/service_accounts/${serviceAccountID}`, {
+          return this._client.post(path12`/v1/organizations/service_accounts/${serviceAccountID}`, {
             body,
             ...options
           });
@@ -26278,7 +26278,7 @@ var init_service_accounts3 = __esm({
          * ```
          */
         archive(serviceAccountID, options) {
-          return this._client.post(path9`/v1/organizations/service_accounts/${serviceAccountID}/archive`, options);
+          return this._client.post(path12`/v1/organizations/service_accounts/${serviceAccountID}/archive`, options);
         }
       }
       ServiceAccounts5.Workspaces = Workspaces5;
@@ -26309,7 +26309,7 @@ var init_members3 = __esm({
        */
       retrieve(userID, params, options) {
         const { workspace_id } = params;
-        return this._client.get(path9`/v1/organizations/workspaces/${workspace_id}/members/${userID}`, options);
+        return this._client.get(path12`/v1/organizations/workspaces/${workspace_id}/members/${userID}`, options);
       }
       /**
        * Update Workspace Member
@@ -26328,7 +26328,7 @@ var init_members3 = __esm({
        */
       update(userID, params, options) {
         const { workspace_id, ...body } = params;
-        return this._client.post(path9`/v1/organizations/workspaces/${workspace_id}/members/${userID}`, {
+        return this._client.post(path12`/v1/organizations/workspaces/${workspace_id}/members/${userID}`, {
           body,
           ...options
         });
@@ -26347,7 +26347,7 @@ var init_members3 = __esm({
        * ```
        */
       list(workspaceID, query2 = {}, options) {
-        return this._client.getAPIList(path9`/v1/organizations/workspaces/${workspaceID}/members`, Page, { query: query2, ...options });
+        return this._client.getAPIList(path12`/v1/organizations/workspaces/${workspaceID}/members`, Page, { query: query2, ...options });
       }
       /**
        * Create Workspace Member
@@ -26365,7 +26365,7 @@ var init_members3 = __esm({
        * ```
        */
       add(workspaceID, body, options) {
-        return this._client.post(path9`/v1/organizations/workspaces/${workspaceID}/members`, { body, ...options });
+        return this._client.post(path12`/v1/organizations/workspaces/${workspaceID}/members`, { body, ...options });
       }
       /**
        * Delete Workspace Member
@@ -26381,7 +26381,7 @@ var init_members3 = __esm({
        */
       remove(userID, params, options) {
         const { workspace_id } = params;
-        return this._client.delete(path9`/v1/organizations/workspaces/${workspace_id}/members/${userID}`, options);
+        return this._client.delete(path12`/v1/organizations/workspaces/${workspace_id}/members/${userID}`, options);
       }
     };
   }
@@ -26418,7 +26418,7 @@ var init_rate_limits4 = __esm({
        * ```
        */
       list(workspaceID, query2 = {}, options) {
-        return this._client.getAPIList(path9`/v1/organizations/workspaces/${workspaceID}/rate_limits`, PageCursor, { query: query2, ...options });
+        return this._client.getAPIList(path12`/v1/organizations/workspaces/${workspaceID}/rate_limits`, PageCursor, { query: query2, ...options });
       }
     };
   }
@@ -26457,7 +26457,7 @@ var init_service_accounts4 = __esm({
        */
       retrieve(serviceAccountID, params, options) {
         const { workspace_id } = params;
-        return this._client.get(path9`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}`, options);
+        return this._client.get(path12`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}`, options);
       }
       /**
        * **Requires an OAuth access token with the `org:admin` scope**, from
@@ -26487,7 +26487,7 @@ var init_service_accounts4 = __esm({
        */
       update(serviceAccountID, params, options) {
         const { workspace_id, ...body } = params;
-        return this._client.post(path9`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}`, { body, ...options });
+        return this._client.post(path12`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}`, { body, ...options });
       }
       /**
        * **Requires an OAuth access token with the `org:admin` scope**, from
@@ -26514,7 +26514,7 @@ var init_service_accounts4 = __esm({
        * ```
        */
       list(workspaceID, query2 = {}, options) {
-        return this._client.getAPIList(path9`/v1/organizations/workspaces/${workspaceID}/service_accounts`, PageCursor, { query: query2, ...options });
+        return this._client.getAPIList(path12`/v1/organizations/workspaces/${workspaceID}/service_accounts`, PageCursor, { query: query2, ...options });
       }
       /**
        * **Requires an OAuth access token with the `org:admin` scope**, from
@@ -26545,7 +26545,7 @@ var init_service_accounts4 = __esm({
        * ```
        */
       add(workspaceID, body, options) {
-        return this._client.post(path9`/v1/organizations/workspaces/${workspaceID}/service_accounts`, {
+        return this._client.post(path12`/v1/organizations/workspaces/${workspaceID}/service_accounts`, {
           body,
           ...options
         });
@@ -26575,7 +26575,7 @@ var init_service_accounts4 = __esm({
        */
       remove(serviceAccountID, params, options) {
         const { workspace_id } = params;
-        return this._client.delete(path9`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}`, options);
+        return this._client.delete(path12`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}`, options);
       }
     };
   }
@@ -26628,7 +26628,7 @@ var init_workspaces6 = __esm({
          * ```
          */
         retrieve(workspaceID, options) {
-          return this._client.get(path9`/v1/organizations/workspaces/${workspaceID}`, options);
+          return this._client.get(path12`/v1/organizations/workspaces/${workspaceID}`, options);
         }
         /**
          * Update Workspace
@@ -26642,7 +26642,7 @@ var init_workspaces6 = __esm({
          * ```
          */
         update(workspaceID, body, options) {
-          return this._client.post(path9`/v1/organizations/workspaces/${workspaceID}`, { body, ...options });
+          return this._client.post(path12`/v1/organizations/workspaces/${workspaceID}`, { body, ...options });
         }
         /**
          * List Workspaces
@@ -26670,7 +26670,7 @@ var init_workspaces6 = __esm({
          * ```
          */
         archive(workspaceID, options) {
-          return this._client.post(path9`/v1/organizations/workspaces/${workspaceID}/archive`, options);
+          return this._client.post(path12`/v1/organizations/workspaces/${workspaceID}/archive`, options);
         }
       }
       Workspaces7.RateLimits = RateLimits4;
@@ -26769,7 +26769,7 @@ var init_versions4 = __esm({
        */
       create(skillID, params, options) {
         const { workspace_id, ...body } = params;
-        return this._client.post(path9`/v1/skills/${skillID}/versions`, multipartFormRequestOptions({
+        return this._client.post(path12`/v1/skills/${skillID}/versions`, multipartFormRequestOptions({
           body,
           ...options,
           headers: buildHeaders([
@@ -26791,7 +26791,7 @@ var init_versions4 = __esm({
        */
       retrieve(version2, params, options) {
         const { skill_id, workspace_id } = params;
-        return this._client.get(path9`/v1/skills/${skill_id}/versions/${version2}`, {
+        return this._client.get(path12`/v1/skills/${skill_id}/versions/${version2}`, {
           ...options,
           headers: buildHeaders([
             { ...workspace_id != null ? { "anthropic-workspace-id": workspace_id } : void 0 },
@@ -26814,7 +26814,7 @@ var init_versions4 = __esm({
        */
       list(skillID, params = {}, options) {
         const { workspace_id, ...query2 } = params ?? {};
-        return this._client.getAPIList(path9`/v1/skills/${skillID}/versions`, PageCursor, {
+        return this._client.getAPIList(path12`/v1/skills/${skillID}/versions`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -26836,7 +26836,7 @@ var init_versions4 = __esm({
        */
       delete(version2, params, options) {
         const { skill_id, workspace_id } = params;
-        return this._client.delete(path9`/v1/skills/${skill_id}/versions/${version2}`, {
+        return this._client.delete(path12`/v1/skills/${skill_id}/versions/${version2}`, {
           ...options,
           headers: buildHeaders([
             { ...workspace_id != null ? { "anthropic-workspace-id": workspace_id } : void 0 },
@@ -26896,7 +26896,7 @@ var init_skills4 = __esm({
          */
         retrieve(skillID, params = {}, options) {
           const { workspace_id } = params ?? {};
-          return this._client.get(path9`/v1/skills/${skillID}`, {
+          return this._client.get(path12`/v1/skills/${skillID}`, {
             ...options,
             headers: buildHeaders([
               { ...workspace_id != null ? { "anthropic-workspace-id": workspace_id } : void 0 },
@@ -26936,7 +26936,7 @@ var init_skills4 = __esm({
          */
         delete(skillID, params = {}, options) {
           const { workspace_id } = params ?? {};
-          return this._client.delete(path9`/v1/skills/${skillID}`, {
+          return this._client.delete(path12`/v1/skills/${skillID}`, {
             ...options,
             headers: buildHeaders([
               { ...workspace_id != null ? { "anthropic-workspace-id": workspace_id } : void 0 },
@@ -27313,9 +27313,9 @@ var init_client = __esm({
         makeStatusError(status, error62, message, headers) {
           return APIError.generate(status, error62, message, headers);
         }
-        buildURL(path13, query2, defaultBaseURL) {
+        buildURL(path17, query2, defaultBaseURL) {
           const baseURL = !__classPrivateFieldGet(this, _BaseAnthropic_instances, "m", _BaseAnthropic_baseURLOverridden).call(this) && defaultBaseURL || this.baseURL;
-          const url2 = isAbsoluteURL(path13) ? new URL(path13) : new URL(baseURL + (baseURL.endsWith("/") && path13.startsWith("/") ? path13.slice(1) : path13));
+          const url2 = isAbsoluteURL(path17) ? new URL(path17) : new URL(baseURL + (baseURL.endsWith("/") && path17.startsWith("/") ? path17.slice(1) : path17));
           const defaultQuery = this.defaultQuery();
           const pathQuery = Object.fromEntries(url2.searchParams);
           if (!isEmptyObj(defaultQuery) || !isEmptyObj(pathQuery)) {
@@ -27387,24 +27387,24 @@ var init_client = __esm({
         backendMiddleware() {
           return [];
         }
-        get(path13, opts) {
-          return this.methodRequest("get", path13, opts);
+        get(path17, opts) {
+          return this.methodRequest("get", path17, opts);
         }
-        post(path13, opts) {
-          return this.methodRequest("post", path13, opts);
+        post(path17, opts) {
+          return this.methodRequest("post", path17, opts);
         }
-        patch(path13, opts) {
-          return this.methodRequest("patch", path13, opts);
+        patch(path17, opts) {
+          return this.methodRequest("patch", path17, opts);
         }
-        put(path13, opts) {
-          return this.methodRequest("put", path13, opts);
+        put(path17, opts) {
+          return this.methodRequest("put", path17, opts);
         }
-        delete(path13, opts) {
-          return this.methodRequest("delete", path13, opts);
+        delete(path17, opts) {
+          return this.methodRequest("delete", path17, opts);
         }
-        methodRequest(method, path13, opts) {
+        methodRequest(method, path17, opts) {
           return this.request(Promise.resolve(opts).then((opts2) => {
-            return { method, path: path13, ...opts2 };
+            return { method, path: path17, ...opts2 };
           }));
         }
         request(options, remainingRetries = null) {
@@ -27525,8 +27525,8 @@ var init_client = __esm({
           armAbandonmentBackstop(response.body ?? response, controller);
           return { response, options, controller, requestLogID, retryOfRequestLogID, startTime };
         }
-        getAPIList(path13, Page2, opts) {
-          return this.requestAPIList(Page2, opts && "then" in opts ? opts.then((opts2) => ({ method: "get", path: path13, ...opts2 })) : { method: "get", path: path13, ...opts });
+        getAPIList(path17, Page2, opts) {
+          return this.requestAPIList(Page2, opts && "then" in opts ? opts.then((opts2) => ({ method: "get", path: path17, ...opts2 })) : { method: "get", path: path17, ...opts });
         }
         requestAPIList(Page2, options) {
           const request = this.makeRequest(options, null, void 0);
@@ -27644,14 +27644,14 @@ var init_client = __esm({
         }
         async buildRequest(inputOptions, { retryCount = 0 } = {}) {
           const options = { ...inputOptions };
-          const { method, path: path13, query: query2, defaultBaseURL } = options;
+          const { method, path: path17, query: query2, defaultBaseURL } = options;
           if (this._authState.resolution) {
             await this._authState.resolution;
           }
           if (!this._baseURLIsExplicit && this._authState.baseURL && this.baseURL !== this._authState.baseURL) {
             this.baseURL = this._authState.baseURL;
           }
-          const url2 = this.buildURL(path13, query2, defaultBaseURL);
+          const url2 = this.buildURL(path17, query2, defaultBaseURL);
           if ("timeout" in options)
             validatePositiveInteger("timeout", options.timeout);
           options.timeout = options.timeout ?? this.timeout;
@@ -27823,8 +27823,8 @@ function patchField(target, key, value) {
 function betaRefusalFallbackMiddleware(fallbacks, options = {}) {
   let warnedMissingState = false;
   return async (request, next, ctx) => {
-    const [path13, query2] = (ctx.options?.path ?? "").split("?");
-    if (fallbacks.length === 0 || ctx.options?.method !== "post" || path13 !== "/v1/messages" || new URLSearchParams(query2).get("beta") !== "true" || typeof ctx.options.body !== "object" || ctx.options.body == null) {
+    const [path17, query2] = (ctx.options?.path ?? "").split("?");
+    if (fallbacks.length === 0 || ctx.options?.method !== "post" || path17 !== "/v1/messages" || new URLSearchParams(query2).get("beta") !== "true" || typeof ctx.options.body !== "object" || ctx.options.body == null) {
       return next(request);
     }
     if (ctx.options.body.fallbacks != null) {
@@ -28922,10 +28922,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path13) {
-  if (!path13)
+function getElementAtPath(obj, path17) {
+  if (!path17)
     return obj;
-  return path13.reduce((acc, key) => acc?.[key], obj);
+  return path17.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -29265,11 +29265,11 @@ function explicitlyAborted(x2, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path13, issues) {
+function prefixIssues(path17, issues) {
   return issues.map((iss) => {
     var _a4;
     (_a4 = iss).path ?? (_a4.path = []);
-    iss.path.unshift(path13);
+    iss.path.unshift(path17);
     return iss;
   });
 }
@@ -29719,16 +29719,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path13 = []) => {
+  const processError = (error63, path17 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path13, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path17, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path13, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path17, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path13, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path17, ...issue2.path]);
       } else {
-        const fullpath = [...path13, ...issue2.path];
+        const fullpath = [...path17, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -29767,17 +29767,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path13 = []) => {
+  const processError = (error63, path17 = []) => {
     var _a4;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path13, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path17, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path13, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path17, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path13, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path17, ...issue2.path]);
       } else {
-        const fullpath = [...path13, ...issue2.path];
+        const fullpath = [...path17, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -29816,8 +29816,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path13 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path13) {
+  const path17 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path17) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -31162,13 +31162,13 @@ var CC_SANITIZE = /[- ]/g;
 function isLuhnAlgo(digits) {
   let length = digits.length;
   let bit = 1;
-  let sum = 0;
+  let sum2 = 0;
   while (length) {
     const value = digits.charCodeAt(--length) - 48;
     bit ^= 1;
-    sum += bit ? [0, 2, 4, 6, 8, 1, 3, 5, 7, 9][value] : value;
+    sum2 += bit ? [0, 2, 4, 6, 8, 1, 3, 5, 7, 9][value] : value;
   }
-  return sum % 10 === 0;
+  return sum2 % 10 === 0;
 }
 function isValidCreditCard(input2) {
   if (!creditCard.test(input2))
@@ -38776,8 +38776,8 @@ var error43 = () => {
       case "not_multiple_of":
         return `N\xFAmero inv\xE1lido: deve ser m\xFAltiplo de ${issue2.divisor}`;
       case "unrecognized_keys": {
-        const plural2 = issue2.keys.length > 1 ? "s" : "";
-        return `Chave${plural2} inv\xE1lida${plural2}: ${joinValues(issue2.keys, ", ")}`;
+        const plural3 = issue2.keys.length > 1 ? "s" : "";
+        return `Chave${plural3} inv\xE1lida${plural3}: ${joinValues(issue2.keys, ", ")}`;
       }
       case "invalid_key":
         return `Entrada inv\xE1lida n${translateOriginWithArticle(issue2.origin, "definite")}`;
@@ -38921,8 +38921,8 @@ var error44 = () => {
       case "not_multiple_of":
         return `N\xFAmero inv\xE1lido: deve ser m\xFAltiplo de ${issue2.divisor}`;
       case "unrecognized_keys": {
-        const plural2 = issue2.keys.length > 1 ? "s" : "";
-        return `Chave${plural2} inv\xE1lida${plural2}: ${joinValues(issue2.keys, ", ")}`;
+        const plural3 = issue2.keys.length > 1 ? "s" : "";
+        return `Chave${plural3} inv\xE1lida${plural3}: ${joinValues(issue2.keys, ", ")}`;
       }
       case "invalid_key":
         return `Entrada inv\xE1lida n${translateOriginWithArticle(issue2.origin, "definite")}`;
@@ -47400,13 +47400,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path13 = ref.slice(1).split("/").filter(Boolean);
-  if (path13.length === 0) {
+  const path17 = ref.slice(1).split("/").filter(Boolean);
+  if (path17.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path13[0] === defsKey) {
-    const key = path13[1] === void 0 ? void 0 : decodeJSONPointerSegment(path13[1]);
+  if (path17[0] === defsKey) {
+    const key = path17[1] === void 0 ? void 0 : decodeJSONPointerSegment(path17[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -51424,7 +51424,8 @@ var StdioServerTransport = class {
 
 // src/inject-daemon.ts
 import net from "node:net";
-import fs9 from "node:fs";
+import fs11 from "node:fs";
+import path9 from "node:path";
 
 // src/paths.ts
 import os from "os";
@@ -51432,7 +51433,7 @@ import path from "path";
 import fs from "fs";
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true, mode: 448 });
   }
   return dir;
 }
@@ -51474,8 +51475,8 @@ var LLM_WORKDIR_BASENAME = "memory-bank-llm";
 
 // src/db.ts
 import Database from "better-sqlite3";
-import path2 from "path";
-import fs2 from "fs";
+import path4 from "path";
+import fs4 from "fs";
 import * as sqliteVec from "sqlite-vec";
 
 // src/project-canon.ts
@@ -51550,6 +51551,174 @@ function modelVersion(model) {
   return 1e3 + h % 1e6;
 }
 var EMBEDDING_VERSION = modelVersion(EMBEDDING_MODEL);
+
+// src/test-guard.ts
+import fs2 from "fs";
+import os2 from "os";
+import path2 from "path";
+var TEST_GUARD_ENV = "MEMORY_BANK_TEST_GUARD";
+var TEST_GUARD_EXTRA_ROOT_ENV = "MEMORY_BANK_TEST_GUARD_EXTRA_ROOT";
+function liveConfigRoots(env = process.env) {
+  let home;
+  try {
+    home = os2.userInfo().homedir;
+  } catch {
+    home = os2.homedir();
+  }
+  const roots = [path2.join(home, ".config", "superpowers")];
+  const extra = env[TEST_GUARD_EXTRA_ROOT_ENV];
+  if (extra) roots.push(extra);
+  return roots;
+}
+function resolveExisting(p) {
+  let current = path2.resolve(p);
+  const rest = [];
+  for (; ; ) {
+    try {
+      return path2.join(fs2.realpathSync.native(current), ...rest);
+    } catch {
+      const parent = path2.dirname(current);
+      if (parent === current) return path2.join(current, ...rest);
+      rest.unshift(path2.basename(current));
+      current = parent;
+    }
+  }
+}
+function isInside(candidate, root) {
+  const rel = path2.relative(root, candidate);
+  return rel === "" || !rel.startsWith("..") && !path2.isAbsolute(rel);
+}
+function assertNotLiveDbUnderTest(dbPath, env = process.env) {
+  if (env[TEST_GUARD_ENV] !== "1") return;
+  const literal2 = path2.resolve(dbPath);
+  const resolved = resolveExisting(dbPath);
+  for (const root of liveConfigRoots(env)) {
+    const resolvedRoot = resolveExisting(root);
+    if (isInside(literal2, path2.resolve(root)) || isInside(resolved, resolvedRoot)) {
+      throw new Error(
+        `memory-bank test guard: refusing to open ${dbPath} \u2014 it is under the live config dir ${root}. Point MEMORY_BANK_CONFIG_DIR (or MEMORY_BANK_DB_PATH / TEST_DB_PATH) at a temp dir; test/setup.ts sets one when none is given.`
+      );
+    }
+  }
+}
+
+// src/file-perms.ts
+import fs3 from "fs";
+import path3 from "path";
+var OWNER_ONLY_DIR_MODE = 448;
+var OWNER_ONLY_FILE_MODE = 384;
+var PERMS_MARKER = ".owner-only-v1";
+var POSIX = process.platform !== "win32";
+function ensurePrivateDir(dir) {
+  if (!fs3.existsSync(dir)) {
+    fs3.mkdirSync(dir, { recursive: true, mode: OWNER_ONLY_DIR_MODE });
+  }
+  return dir;
+}
+function ensurePrivateFile(file2) {
+  if (!POSIX || fs3.existsSync(file2)) return;
+  ensurePrivateDir(path3.dirname(file2));
+  try {
+    fs3.closeSync(fs3.openSync(file2, "wx", OWNER_ONLY_FILE_MODE));
+  } catch (error62) {
+    if (error62.code !== "EEXIST") throw error62;
+  }
+}
+function tighten(target, mode, result) {
+  try {
+    const stat3 = fs3.lstatSync(target);
+    if ((stat3.mode & 63) === 0) return;
+    fs3.chmodSync(target, mode);
+    result.changed.push(target);
+  } catch (error62) {
+    result.failed.push({ path: target, error: error62.message });
+  }
+}
+function tightenConfigTree(indexDir) {
+  const result = { changed: [], failed: [], skippedLinks: [] };
+  if (!POSIX) return result;
+  let root = indexDir;
+  let linked = false;
+  try {
+    linked = fs3.lstatSync(indexDir).isSymbolicLink();
+  } catch {
+  }
+  if (linked) {
+    try {
+      root = fs3.realpathSync(indexDir);
+    } catch (error62) {
+      result.failed.push({ path: indexDir, error: error62.message });
+      return result;
+    }
+  }
+  const dirs = [root, path3.join(root, "sync"), path3.join(root, "logs")];
+  const archiveDir = path3.join(path3.dirname(indexDir), "conversation-archive");
+  for (const dir of [...dirs, archiveDir]) {
+    let stat3;
+    try {
+      stat3 = fs3.lstatSync(dir);
+    } catch {
+      continue;
+    }
+    if (stat3.isSymbolicLink()) {
+      result.skippedLinks.push(dir);
+      continue;
+    }
+    if (!stat3.isDirectory()) continue;
+    tighten(dir, OWNER_ONLY_DIR_MODE, result);
+    if (dir === archiveDir) continue;
+    let entries;
+    try {
+      entries = fs3.readdirSync(dir, { withFileTypes: true });
+    } catch (error62) {
+      result.failed.push({ path: dir, error: error62.message });
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const file2 = path3.join(dir, entry.name);
+      try {
+        if ((fs3.lstatSync(file2).mode & 73) !== 0) continue;
+      } catch {
+        continue;
+      }
+      tighten(file2, OWNER_ONLY_FILE_MODE, result);
+    }
+  }
+  return result;
+}
+function tightenConfigTreeOnce(indexDir) {
+  if (!POSIX) return null;
+  const marker = path3.join(indexDir, PERMS_MARKER);
+  if (fs3.existsSync(marker)) return null;
+  const result = tightenConfigTree(indexDir);
+  if (result.failed.length > 0) {
+    const first = result.failed[0];
+    process.stderr.write(`memory-bank: could not make ${result.failed.length} path(s) owner-only (first: ${first.path}: ${first.error}) \u2014 will retry
+`);
+    return result;
+  }
+  if (result.skippedLinks.length > 0) {
+    process.stderr.write(`memory-bank: left ${result.skippedLinks.length} symlinked folder(s) as they are (${result.skippedLinks.join(", ")}) \u2014 a symlink is not followed; set the permissions of what it points at yourself
+`);
+  }
+  try {
+    fs3.writeFileSync(marker, `${(/* @__PURE__ */ new Date()).toISOString()} changed=${result.changed.length} skipped_links=${result.skippedLinks.length}
+`, { mode: OWNER_ONLY_FILE_MODE });
+  } catch (error62) {
+    process.stderr.write(`memory-bank: could not record the owner-only pass (${marker}): ${error62.message}
+`);
+  }
+  return result;
+}
+function preparePrivateDbFile(dbPath) {
+  if (!POSIX) return;
+  ensurePrivateFile(dbPath);
+  const indexDir = path3.dirname(dbPath);
+  if (path3.basename(dbPath) === "db.sqlite" && path3.basename(indexDir) === "conversation-index") {
+    tightenConfigTreeOnce(indexDir);
+  }
+}
 
 // src/db.ts
 var VEC_INT8_SCALE = 127;
@@ -51631,11 +51800,86 @@ function migrateSchema(db) {
     console.error("Migration complete.");
   }
 }
+var EXCHANGES_FTS_AD_DDL = `
+    CREATE TRIGGER IF NOT EXISTS exchanges_fts_ad AFTER DELETE ON exchanges BEGIN
+      INSERT INTO exchanges_fts(exchanges_fts, rowid, user_message, assistant_message)
+      VALUES('delete', old.rowid, old.user_message, old.assistant_message);
+    END
+  `;
+var EXCHANGES_FTS_AU_DDL = `
+    CREATE TRIGGER IF NOT EXISTS exchanges_fts_au AFTER UPDATE OF user_message, assistant_message ON exchanges BEGIN
+      INSERT INTO exchanges_fts(exchanges_fts, rowid, user_message, assistant_message)
+      VALUES('delete', old.rowid, old.user_message, old.assistant_message);
+      INSERT INTO exchanges_fts(rowid, user_message, assistant_message)
+      VALUES (new.rowid, new.user_message, new.assistant_message);
+    END
+  `;
+function narrowFtsUpdateTrigger(db) {
+  const current = () => db.prepare(
+    `SELECT sql FROM sqlite_master WHERE type='trigger' AND name='exchanges_fts_au'`
+  ).get()?.sql ?? "";
+  const isNarrow = (sql) => /AFTER\s+UPDATE\s+OF\s+user_message\s*,\s*assistant_message\s+ON/i.test(sql);
+  if (isNarrow(current())) return;
+  try {
+    db.transaction(() => {
+      if (isNarrow(current())) return;
+      db.exec("DROP TRIGGER IF EXISTS exchanges_fts_au");
+      db.exec(EXCHANGES_FTS_AU_DDL);
+    }).immediate();
+  } catch (e) {
+    const msg = e?.message ?? "";
+    if (!/database is locked|database table is locked|SQLITE_BUSY/i.test(msg)) throw e;
+    console.error("[db] exchanges_fts_au \uD2B8\uB9AC\uAC70 \uAD50\uCCB4 \uC9C0\uC5F0 \u2014 \uB77D \uACBD\uD569, \uB2E4\uC74C \uCD08\uAE30\uD654\uC5D0\uC11C \uC7AC\uC2DC\uB3C4");
+  }
+}
+var FACTS_ACTIVE_INDEX_REDROP_MS = 6 * 60 * 60 * 1e3;
+var FACTS_ACTIVE_INDEX_DROPPED_AT = "idx_facts_active_dropped_at";
+function dropFactsActiveIndex(db) {
+  const exists = () => db.prepare(
+    `SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_facts_active'`
+  ).get() !== void 0;
+  if (!exists()) return;
+  const recorded = Number(db.prepare(
+    `SELECT value FROM fts_meta WHERE key = ?`
+  ).get(FACTS_ACTIVE_INDEX_DROPPED_AT)?.value);
+  const sinceDrop = Date.now() - recorded;
+  if (Number.isFinite(sinceDrop) && sinceDrop >= 0 && sinceDrop < FACTS_ACTIVE_INDEX_REDROP_MS) return;
+  try {
+    db.transaction(() => {
+      db.exec(`DROP INDEX IF EXISTS idx_facts_active`);
+      db.prepare(`INSERT OR REPLACE INTO fts_meta(key, value) VALUES(?, ?)`).run(FACTS_ACTIVE_INDEX_DROPPED_AT, String(Date.now()));
+    }).immediate();
+  } catch (e) {
+    const msg = e?.message ?? "";
+    if (!/database is locked|database table is locked|SQLITE_BUSY/i.test(msg)) throw e;
+    console.error("[db] idx_facts_active \uC81C\uAC70 \uC9C0\uC5F0 \u2014 \uB77D \uACBD\uD569, \uB2E4\uC74C \uCD08\uAE30\uD654\uC5D0\uC11C \uC7AC\uC2DC\uB3C4");
+  }
+}
+var EXCHANGE_TURN_INDEX = "idx_exchanges_path_line";
+var EXCHANGE_TURN_INDEX_DDL = `CREATE INDEX IF NOT EXISTS ${EXCHANGE_TURN_INDEX} ON exchanges(archive_path, line_start)`;
+function ensureExchangeTurnIndex(db) {
+  const has2 = db.prepare(
+    `SELECT 1 FROM sqlite_master WHERE type='index' AND name=?`
+  ).get(EXCHANGE_TURN_INDEX) !== void 0;
+  if (has2) return;
+  if (db.prepare("SELECT 1 FROM exchanges LIMIT 1").get() !== void 0) return;
+  db.exec(EXCHANGE_TURN_INDEX_DDL);
+}
+var EXCHANGE_REPOINT_TABLE = "exchange_repoints";
+var EXCHANGE_REPOINT_DDL = `
+  CREATE TABLE IF NOT EXISTS ${EXCHANGE_REPOINT_TABLE} (
+    from_id TEXT PRIMARY KEY,
+    to_id TEXT NOT NULL,
+    session_id TEXT,
+    queued_at INTEGER NOT NULL
+  )`;
 function initDatabase() {
   const dbPath = getDbPath();
-  const dbDir = path2.dirname(dbPath);
-  if (!fs2.existsSync(dbDir)) {
-    fs2.mkdirSync(dbDir, { recursive: true });
+  assertNotLiveDbUnderTest(dbPath);
+  preparePrivateDbFile(dbPath);
+  const dbDir = path4.dirname(dbPath);
+  if (!fs4.existsSync(dbDir)) {
+    fs4.mkdirSync(dbDir, { recursive: true });
   }
   const db = new Database(dbPath);
   sqliteVec.load(db);
@@ -51707,6 +51951,8 @@ function initDatabase() {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_coding_agent ON exchanges(coding_agent)
   `);
+  ensureExchangeTurnIndex(db);
+  db.exec(EXCHANGE_REPOINT_DDL);
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_tool_name ON tool_calls(tool_name)
   `);
@@ -51733,20 +51979,9 @@ function initDatabase() {
       VALUES (new.rowid, new.user_message, new.assistant_message);
     END
   `);
-  db.exec(`
-    CREATE TRIGGER IF NOT EXISTS exchanges_fts_ad AFTER DELETE ON exchanges BEGIN
-      INSERT INTO exchanges_fts(exchanges_fts, rowid, user_message, assistant_message)
-      VALUES('delete', old.rowid, old.user_message, old.assistant_message);
-    END
-  `);
-  db.exec(`
-    CREATE TRIGGER IF NOT EXISTS exchanges_fts_au AFTER UPDATE ON exchanges BEGIN
-      INSERT INTO exchanges_fts(exchanges_fts, rowid, user_message, assistant_message)
-      VALUES('delete', old.rowid, old.user_message, old.assistant_message);
-      INSERT INTO exchanges_fts(rowid, user_message, assistant_message)
-      VALUES (new.rowid, new.user_message, new.assistant_message);
-    END
-  `);
+  db.exec(EXCHANGES_FTS_AD_DDL);
+  db.exec(EXCHANGES_FTS_AU_DDL);
+  narrowFtsUpdateTrigger(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS facts (
       id TEXT PRIMARY KEY,
@@ -51768,9 +52003,7 @@ function initDatabase() {
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_facts_category ON facts(category)
   `);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_facts_active ON facts(is_active)
-  `);
+  dropFactsActiveIndex(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS fact_revisions (
       id TEXT PRIMARY KEY,
@@ -51913,6 +52146,10 @@ function initDatabase() {
   return db;
 }
 
+// src/noise.ts
+var WARMUP_MESSAGE = "Warmup";
+var OBSERVER_PROMPT_PREFIX = "<observed_from_primary_session>";
+
 // src/embeddings.ts
 import { pipeline } from "@xenova/transformers";
 var embeddingPipeline = null;
@@ -52015,10 +52252,61 @@ async function queryBaseline(queryEmbedding) {
   return max;
 }
 
+// src/fact-validity.ts
+var ENV_PATH = String.raw`[~/][^\s,;]*`;
+var ENV_BRANCH = String.raw`(?:the )?[\w./-]+ branch`;
+var ENV_OWNER = String.raw`(?:the |this |(?:the )?user'?s )?`;
+var ENV_NOUN = String.raw`(?:project|repository|repo|codebase)(?: repository)?`;
+var ENV_WORKING = String.raw`(?:the )?user (?:is(?: currently)? working|works)`;
+var SESSION_ENVIRONMENT_SENTENCES = [
+  // "(The|User's) project is located at <path>"
+  String.raw`^${ENV_OWNER}${ENV_NOUN} is located (?:at|in|under) ${ENV_PATH}$`,
+  // "(The) [name] project is a git repository [at <path>] [on the main branch]"
+  String.raw`^${ENV_OWNER}(?:[\w.-]+ )?${ENV_NOUN} is a git repo(?:sitory)?(?: (?:located )?(?:at|in) ${ENV_PATH})?(?: on ${ENV_BRANCH})?$`,
+  // "(The) [name] repository is [currently] on the main branch"
+  String.raw`^${ENV_OWNER}(?:[\w.-]+ )?${ENV_NOUN} is(?: currently)? on ${ENV_BRANCH}$`,
+  // "User is working (in|with|on) a [name] [git] project [called 'x'] [located] at <path> [on the main branch]"
+  String.raw`^${ENV_WORKING} (?:in|with|on|within) (?:a |an |the )?(?:[\w.-]+ )?(?:git )?${ENV_NOUN}(?: called ['"][^'"]+['"])? (?:located )?(?:at|in) ${ENV_PATH}(?: on ${ENV_BRANCH})?$`,
+  // "User is working in [the] <path> [directory] [which is a git repository] [on the main branch]"
+  String.raw`^${ENV_WORKING} (?:in|within|from) (?:the )?${ENV_PATH}(?: directory)?(?:,? which is a git repo(?:sitory)?)?(?: on ${ENV_BRANCH})?$`,
+  // "User is [currently] on the main branch [of the repository]"
+  String.raw`^(?:the )?user is(?: currently)? on ${ENV_BRANCH}(?: of (?:the|this|their) (?:repository|repo|project))?$`
+].map((source) => new RegExp(source, "i"));
+var FACT_CATEGORIES = /* @__PURE__ */ new Set(["decision", "preference", "pattern", "knowledge", "constraint"]);
+var CATEGORY_ALIASES = {
+  decisions: "decision",
+  preferences: "preference",
+  patterns: "pattern",
+  constraints: "constraint",
+  requirement: "constraint",
+  requirements: "constraint",
+  convention: "pattern",
+  conventions: "pattern",
+  process: "pattern",
+  solution: "pattern",
+  bugfix: "pattern",
+  "bug fix": "pattern",
+  project: "knowledge",
+  "project knowledge": "knowledge",
+  configuration: "knowledge",
+  feature: "knowledge",
+  architecture: "knowledge"
+};
+function normalizeCategory(category) {
+  const name = category.replace(/\s+/g, " ").trim().toLowerCase();
+  if (FACT_CATEGORIES.has(name)) return { category: name, known: true };
+  const alias = CATEGORY_ALIASES[name];
+  if (alias) return { category: alias, known: true };
+  return { category: "knowledge", known: false };
+}
+function categoryLabel(category) {
+  return typeof category === "string" ? normalizeCategory(category).category : "knowledge";
+}
+
 // src/project-family.ts
-import fs3 from "fs";
-import os2 from "os";
-import path3 from "path";
+import fs5 from "fs";
+import os3 from "os";
+import path5 from "path";
 var WORKTREE_CONTAINERS = Object.freeze(["/.auto-issue-worktrees/", "/.claude/worktrees/"]);
 var CACHE_LIMIT = 256;
 var CACHE_TTL_MS = 6e4;
@@ -52026,7 +52314,7 @@ var cache = /* @__PURE__ */ new Map();
 var UNREADABLE = Symbol("unreadable");
 function lstat(p) {
   try {
-    return fs3.lstatSync(p);
+    return fs5.lstatSync(p);
   } catch (e) {
     const code = e.code;
     return code === "ENOENT" || code === "ENOTDIR" ? null : UNREADABLE;
@@ -52044,9 +52332,9 @@ function isHead(p) {
   return st !== null && (st.isFile() || st.isSymbolicLink());
 }
 function homes() {
-  const out = [path3.resolve(os2.homedir())];
+  const out = [path5.resolve(os3.homedir())];
   try {
-    out.push(path3.resolve(os2.userInfo().homedir));
+    out.push(path5.resolve(os3.userInfo().homedir));
   } catch {
   }
   return out;
@@ -52056,13 +52344,13 @@ function fold(p) {
 }
 function tooBroad(root) {
   const r = fold(root);
-  return root === path3.parse(root).root || homes().some((h) => {
+  return root === path5.parse(root).root || homes().some((h) => {
     const home = fold(h);
-    return home === r || home.startsWith(r + path3.sep);
+    return home === r || home.startsWith(r + path5.sep);
   });
 }
 function isRepoRoot(root) {
-  return isDir(path3.join(root, ".git")) && isHead(path3.join(root, ".git", "HEAD"));
+  return isDir(path5.join(root, ".git")) && isHead(path5.join(root, ".git", "HEAD"));
 }
 function mainRootOf(worktreeTop, adminDir) {
   const parts = /^(.*)\/\.git\/worktrees\/[^/]+$/.exec(adminDir);
@@ -52070,42 +52358,42 @@ function mainRootOf(worktreeTop, adminDir) {
   const root = parts[1];
   const rootSt = lstat(root);
   if (rootSt === null || rootSt === UNREADABLE || rootSt.isSymbolicLink() || !isRepoRoot(root)) return null;
-  const backFile = path3.join(adminDir, "gitdir");
+  const backFile = path5.join(adminDir, "gitdir");
   if (stat(backFile)?.isFile() !== true) return null;
   let back;
   try {
-    back = fs3.readFileSync(backFile, "utf8").trim();
+    back = fs5.readFileSync(backFile, "utf8").trim();
   } catch {
     return null;
   }
-  if (path3.resolve(adminDir, back) !== path3.join(worktreeTop, ".git")) return null;
+  if (path5.resolve(adminDir, back) !== path5.join(worktreeTop, ".git")) return null;
   return root;
 }
 function dotGitOf(dir) {
-  const st = lstat(path3.join(dir, ".git"));
+  const st = lstat(path5.join(dir, ".git"));
   if (st === UNREADABLE) return { kind: "invalid" };
   if (!st) return { kind: "none" };
   if (st.isDirectory()) return isRepoRoot(dir) ? { kind: "root" } : { kind: "invalid" };
   if (!st.isFile()) return { kind: "invalid" };
   let content;
   try {
-    content = fs3.readFileSync(path3.join(dir, ".git"), "utf8");
+    content = fs5.readFileSync(path5.join(dir, ".git"), "utf8");
   } catch {
     return { kind: "invalid" };
   }
   const m2 = /^gitdir:\s*(.+?)\s*$/m.exec(content);
   if (!m2) return { kind: "invalid" };
-  const adminDir = path3.resolve(dir, m2[1]);
-  if (!isDir(adminDir) || !isHead(path3.join(adminDir, "HEAD"))) return { kind: "invalid" };
+  const adminDir = path5.resolve(dir, m2[1]);
+  if (!isDir(adminDir) || !isHead(path5.join(adminDir, "HEAD"))) return { kind: "invalid" };
   return { kind: "linked", main: mainRootOf(dir, adminDir) };
 }
 function resolveUncached(cwd) {
-  if (path3.sep !== "/") return [];
-  if (!path3.isAbsolute(cwd)) return [];
-  const start = path3.resolve(cwd);
+  if (path5.sep !== "/") return [];
+  if (!path5.isAbsolute(cwd)) return [];
+  const start = path5.resolve(cwd);
   const own2 = lstat(start);
   if (own2 === null || own2 === UNREADABLE || !own2.isDirectory()) return [];
-  for (let dir = start; ; dir = path3.dirname(dir)) {
+  for (let dir = start; ; dir = path5.dirname(dir)) {
     const st = dir === start ? own2 : lstat(dir);
     if (st === UNREADABLE || st !== null && st.isSymbolicLink()) return [];
     const g = dotGitOf(dir);
@@ -52114,7 +52402,7 @@ function resolveUncached(cwd) {
       const roots = g.kind === "root" ? [dir] : g.main && !tooBroad(g.main) && g.main !== dir ? [dir, g.main] : [dir];
       return dir !== start && excludedUnderRoot(dir, start, roots) ? [] : roots;
     }
-    if (dir === path3.dirname(dir)) return [];
+    if (dir === path5.dirname(dir)) return [];
   }
 }
 function resolveRepoRoots(cwd) {
@@ -52132,7 +52420,7 @@ function excludedUnderRoot(root, scopeProject, roots) {
   for (const seg of scopeProject.slice(root.length + 1).split("/")) {
     if (!seg) continue;
     const parent = dir;
-    dir = path3.join(dir, seg);
+    dir = path5.join(dir, seg);
     const st = lstat(dir);
     if (st === null || st === UNREADABLE || st.isSymbolicLink()) return true;
     const g = dotGitOf(dir);
@@ -52171,6 +52459,9 @@ function scopeMatcher(project, family) {
   };
 }
 
+// src/vec-limits.ts
+var VEC0_KNN_K_MAX = 4096;
+
 // src/fact-db.ts
 function vecParamFor(db, table, embedding) {
   const q2 = getVecQuant(db, table);
@@ -52189,7 +52480,7 @@ function getRevisions(db, factId) {
     "SELECT * FROM fact_revisions WHERE fact_id = ? ORDER BY created_at DESC"
   ).all(factId);
 }
-var VISIBLE_FETCH_CAP = 6400;
+var VISIBLE_FETCH_CAP = VEC0_KNN_K_MAX;
 function searchSimilarFacts(db, embedding, project, limit2 = 5, threshold = 0.85, opts = {}) {
   const canonProject = project ? canonicalizeProject(db, project) : project;
   const inScope = scopeMatcher(canonProject, opts.scopeFamily === true);
@@ -52208,7 +52499,7 @@ function searchSimilarFacts(db, embedding, project, limit2 = 5, threshold = 0.85
   const visibleId = opts.visibleId;
   const fetch2 = (table) => {
     if (!visibleId) return knn(table, candidateFetch);
-    for (let n = candidateFetch * 4; ; n = Math.min(n * 4, VISIBLE_FETCH_CAP)) {
+    for (let n = Math.min(candidateFetch * 4, VISIBLE_FETCH_CAP); ; n = Math.min(n * 4, VISIBLE_FETCH_CAP)) {
       const rows = knn(table, n);
       const visible = rows.filter((r) => visibleId(r.id));
       if (visible.length >= candidateFetch || rows.length < n || n >= VISIBLE_FETCH_CAP) return visible.slice(0, candidateFetch);
@@ -52249,29 +52540,72 @@ function factVectorDistance(db, factId, embedding) {
   }
   return best;
 }
-function searchAllFacts(db, embedding, limit2 = 10, threshold = 0.6) {
-  const vecResults = factKnn("vec_facts", () => {
-    const pAll = vecParamFor(db, "vec_facts", embedding);
+var FACT_KNN_MAX = 4096;
+function searchFactsFiltered(db, embedding, opts) {
+  const limit2 = opts.limit ?? 5;
+  const threshold = opts.threshold ?? 0.85;
+  const canonProject = opts.project ? canonicalizeProject(db, opts.project) : opts.project;
+  const inScope = scopeMatcher(canonProject, false);
+  const scopeOk = opts.scope === "other-projects" ? (fact) => fact.scope_type === "project" && fact.scope_project !== canonProject : (fact) => fact.scope_type !== "project" || inScope(fact.scope_project);
+  const knn = (table, n) => factKnn(table, () => {
+    const p = vecParamFor(db, table, embedding);
     const rows = db.prepare(`
-      SELECT id, distance
-      FROM vec_facts
-      WHERE embedding MATCH ${pAll.sql}
+      SELECT id, distance FROM ${table}
+      WHERE embedding MATCH ${p.sql}
       ORDER BY distance
       LIMIT ?
-    `).all(pAll.blob, limit2 * 2);
-    for (const r of rows) r.distance = normalizeVecDistance(r.distance, pAll.q);
+    `).all(p.blob, n);
+    for (const r of rows) r.distance = normalizeVecDistance(r.distance, p.q);
     return rows;
   }, []);
-  const results = [];
-  for (const vr of vecResults) {
-    const similarity = l2DistanceToSimilarity(vr.distance);
-    if (similarity < threshold) continue;
-    const row = db.prepare("SELECT * FROM facts WHERE id = ? AND is_active = 1").get(vr.id);
-    if (!row) continue;
-    results.push({ fact: rowToFact(row), distance: vr.distance });
-    if (results.length >= limit2) break;
+  const rowStmt = db.prepare("SELECT * FROM facts WHERE id = ? AND is_active = 1 AND embedding_version = ?");
+  for (let fetchCount = Math.min(FACT_KNN_MAX, Math.max(limit2 * 4, 50)); ; fetchCount = Math.min(fetchCount * 4, FACT_KNN_MAX)) {
+    const a = knn("vec_facts", fetchCount);
+    const b2 = knn("vec_facts_kr", fetchCount);
+    const best = /* @__PURE__ */ new Map();
+    for (const vr of [...a, ...b2]) {
+      const cur = best.get(vr.id);
+      if (cur === void 0 || vr.distance < cur) best.set(vr.id, vr.distance);
+    }
+    const merged = [...best.entries()].map(([id, distance]) => ({ id, distance })).sort((x2, y2) => x2.distance - y2.distance);
+    const results = [];
+    const bySentence = /* @__PURE__ */ new Map();
+    let crossedThreshold = false;
+    for (const vr of merged) {
+      if (l2DistanceToSimilarity(vr.distance) < threshold) {
+        crossedThreshold = true;
+        break;
+      }
+      if (results.length >= limit2 && !opts.foldSameText) break;
+      const row = rowStmt.get(vr.id, EMBEDDING_VERSION);
+      if (!row) continue;
+      const fact = rowToFact(row);
+      if (!scopeOk(fact)) continue;
+      if (opts.filter && !opts.filter(fact)) continue;
+      if (opts.foldSameText) {
+        const key = fact.fact.replace(/\s+/g, " ").trim().toLowerCase();
+        const shown = bySentence.get(key);
+        if (shown) {
+          shown.duplicateIds.push(fact.id);
+          continue;
+        }
+        if (results.length >= limit2) continue;
+        const hit = { fact, distance: vr.distance, duplicateIds: [] };
+        bySentence.set(key, hit);
+        results.push(hit);
+      } else {
+        results.push({ fact, distance: vr.distance, duplicateIds: [] });
+      }
+    }
+    const exhausted = a.length < fetchCount && b2.length < fetchCount;
+    if (results.length >= limit2 || exhausted || crossedThreshold || fetchCount >= FACT_KNN_MAX) {
+      return {
+        results,
+        examined: merged.length,
+        truncated: results.length < limit2 && !exhausted && !crossedThreshold
+      };
+    }
   }
-  return results;
 }
 function rowToFact(row) {
   const embeddingRaw = row["embedding"];
@@ -52441,11 +52775,6 @@ function listCategories(db, domainId) {
   }
   return db.prepare(`SELECT * FROM ontology_categories ORDER BY name`).all();
 }
-function getFactsByCategory(db, categoryId) {
-  return db.prepare(
-    `SELECT * FROM facts WHERE ontology_category_id = ? AND is_active = 1 ORDER BY consolidated_count DESC`
-  ).all(categoryId).map(rowToFact2);
-}
 function getRelatedFacts(db, factId, hops = 1, decay = 0.6, minRelevance = 0.2, scopeProject, opts = {}) {
   const inScope = scopeMatcher(scopeProject ? canonicalizeProject(db, scopeProject) : null, opts.scopeFamily === true);
   const visited = /* @__PURE__ */ new Set([factId]);
@@ -52539,20 +52868,85 @@ function getRelatedFacts(db, factId, hops = 1, decay = 0.6, minRelevance = 0.2, 
   results.sort((a, b2) => b2.relevance - a.relevance);
   return results;
 }
-function getOntologyTree(db) {
-  const domains = listDomains(db);
+function getOntologyTree(db, opts = {}) {
+  const likePattern = (text) => `%${text.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+  const where = [];
+  const params = [];
+  if (opts.domain) {
+    where.push(`d.name LIKE ? ESCAPE '\\'`);
+    params.push(likePattern(opts.domain));
+  }
+  if (opts.category) {
+    where.push(`c.name LIKE ? ESCAPE '\\'`);
+    params.push(likePattern(opts.category));
+  }
+  if (opts.categoryIds) {
+    where.push(`c.id IN (SELECT value FROM json_each(?))`);
+    params.push(JSON.stringify(opts.categoryIds));
+  }
+  const rows = db.prepare(
+    `SELECT d.id AS d_id, d.name AS d_name, d.description AS d_description, d.created_at AS d_created_at,
+              c.id AS c_id, c.name AS c_name, c.description AS c_description, c.created_at AS c_created_at,
+              COUNT(f.id) AS fact_count
+       FROM ontology_domains d
+       LEFT JOIN ontology_categories c ON c.domain_id = d.id
+       LEFT JOIN facts f ON f.ontology_category_id = c.id AND +f.is_active = 1
+       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+       GROUP BY d.id, c.id
+       ORDER BY d.name, c.name`
+  ).all(...params);
   const tree = [];
-  for (const domain2 of domains) {
-    const categories = listCategories(db, domain2.id);
-    const domainEntry = {
-      domain: domain2,
-      categories: []
-    };
-    for (const category of categories) {
-      const facts = getFactsByCategory(db, category.id);
-      domainEntry.categories.push({ category, facts });
+  const byCategory = /* @__PURE__ */ new Map();
+  let current = null;
+  for (const row of rows) {
+    if (!current || current.domain.id !== row["d_id"]) {
+      current = {
+        domain: {
+          id: row["d_id"],
+          name: row["d_name"],
+          description: row["d_description"] ?? null,
+          created_at: row["d_created_at"]
+        },
+        categories: []
+      };
+      tree.push(current);
     }
-    tree.push(domainEntry);
+    if (row["c_id"] === null) continue;
+    const entry = {
+      category: {
+        id: row["c_id"],
+        domain_id: current.domain.id,
+        name: row["c_name"],
+        description: row["c_description"] ?? null,
+        created_at: row["c_created_at"]
+      },
+      facts: [],
+      factCount: row["fact_count"]
+    };
+    current.categories.push(entry);
+    byCategory.set(entry.category.id, entry);
+  }
+  const perCategory = opts.factsPerCategory ?? Number.MAX_SAFE_INTEGER;
+  const wanted = [...byCategory.values()].filter((entry) => entry.factCount > 0).map((entry) => entry.category.id);
+  if (perCategory > 0 && wanted.length > 0) {
+    const factRows = db.prepare(
+      `WITH ranked AS (
+           SELECT f.id AS id, f.ontology_category_id AS cid,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY f.ontology_category_id
+                    ORDER BY f.consolidated_count DESC, f.created_at DESC, f.id
+                  ) AS rn
+           FROM json_each(?) AS want
+           CROSS JOIN facts f ON f.ontology_category_id = want.value
+           WHERE +f.is_active = 1
+         )
+         SELECT f.* FROM ranked r JOIN facts f ON f.id = r.id
+         WHERE r.rn <= ?
+         ORDER BY r.cid, r.rn`
+    ).all(JSON.stringify(wanted), perCategory);
+    for (const row of factRows) {
+      byCategory.get(row["ontology_category_id"])?.facts.push(rowToFact2(row));
+    }
   }
   return tree;
 }
@@ -52589,14 +52983,39 @@ function rowToRelation(row) {
   };
 }
 
+// src/related-format.ts
+var RELATED_MAX_ITEMS = 5;
+var RELATED_MAX_CHARS = 160;
+function clipLine(text, maxChars) {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length <= maxChars) return t;
+  let cut = t.slice(0, maxChars - 1);
+  if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+  return cut + "\u2026";
+}
+var BELIEF_FIRST = { CONTRADICTS: 0, SUPERSEDES: 1 };
+function pickRelated(related, maxItems = RELATED_MAX_ITEMS) {
+  const ordered = related.map((r, index) => ({ r, index, rank: BELIEF_FIRST[r.relation.relation_type] ?? 2 })).sort((a, b2) => a.rank - b2.rank || a.index - b2.index).map(({ r }) => r);
+  return { picked: ordered.slice(0, maxItems), omitted: Math.max(0, ordered.length - maxItems) };
+}
+function summarizeRelated(related, opts = {}) {
+  const maxChars = opts.maxChars ?? RELATED_MAX_CHARS;
+  const { picked, omitted } = pickRelated(related, opts.maxItems ?? RELATED_MAX_ITEMS);
+  return {
+    shown: picked.map((r) => ({ relationType: r.relation.relation_type, text: clipLine(r.fact.fact, maxChars) })),
+    omitted
+  };
+}
+
 // src/search.ts
-import fs5 from "fs";
-import readline from "readline";
+import fs7 from "fs";
+import readline2 from "readline";
 
 // src/archive-io.ts
-import fs4 from "fs";
+import fs6 from "fs";
 import { Readable, Transform, pipeline as pipeline2 } from "stream";
 import * as zlib from "node:zlib";
+import readline from "readline";
 var ZST_SUFFIX = ".zst";
 var DEFAULT_MAX_DECOMPRESSED_BYTES = 256 * 1024 * 1024;
 function maxDecompressedBytes() {
@@ -52611,7 +53030,7 @@ function resolveArchiveFile(filePath) {
   const variant = filePath.endsWith(ZST_SUFFIX) ? filePath.slice(0, -ZST_SUFFIX.length) : filePath + ZST_SUFFIX;
   const statOrNull = (p) => {
     try {
-      return fs4.statSync(p);
+      return fs6.statSync(p);
     } catch {
       return null;
     }
@@ -52642,6 +53061,90 @@ function createByteLimit(maxBytes) {
     }
   });
 }
+var ZSTD_MAGIC = 4247762216;
+var ZSTD_SKIPPABLE_MAGIC = 407710288;
+var ZSTD_MAGIC_BYTES = [40, 181, 47, 253];
+var ZSTD_SKIPPABLE_MAGIC_BYTES = [80, 42, 77, 24];
+function beginsLikeFrame(head) {
+  if (head.length === 0) return false;
+  const isPrefixOf = (magic, firstByteMask) => {
+    for (let i = 0; i < head.length && i < 4; i++) {
+      if ((i === 0 ? head[i] & firstByteMask : head[i]) !== magic[i]) return false;
+    }
+    return true;
+  };
+  return isPrefixOf(ZSTD_MAGIC_BYTES, 255) || isPrefixOf(ZSTD_SKIPPABLE_MAGIC_BYTES, 240);
+}
+function zstdLayout(size, read) {
+  const layout = { frames: [], cutFrameAt: null, problem: null, trailingBytes: 0 };
+  const take = (position, length) => {
+    if (position + length > size) return null;
+    const bytes = read(position, length);
+    return bytes.length === length ? bytes : null;
+  };
+  if (size === 0) {
+    layout.problem = "the file is empty";
+    return layout;
+  }
+  let pos = 0;
+  while (pos < size) {
+    const start = pos;
+    const cut = (where) => {
+      layout.cutFrameAt = start;
+      layout.problem = `it ends inside ${where} (frame ${layout.frames.length + 1} starts at byte ${start} of ${size})`;
+      return layout;
+    };
+    if (layout.frames.length > 0) {
+      const wanted = Math.min(4, size - pos);
+      const head = read(pos, wanted);
+      if (head.length === wanted && !beginsLikeFrame(head)) {
+        layout.trailingBytes = size - start;
+        return layout;
+      }
+    }
+    const magic = take(pos, 4);
+    if (!magic) return cut("a frame header");
+    const magicNumber = magic.readUInt32LE(0);
+    if ((magicNumber & 4294967280) === ZSTD_SKIPPABLE_MAGIC) {
+      const length = take(pos + 4, 4);
+      if (!length) return cut("a skippable frame");
+      pos += 8 + length.readUInt32LE(0);
+      if (pos > size) return cut("a skippable frame");
+      continue;
+    }
+    if (magicNumber !== ZSTD_MAGIC) {
+      layout.problem = start === 0 ? "it does not start with a zstd frame" : `${size - start} byte(s) after its last complete frame are not a zstd frame`;
+      if (start === 0) layout.cutFrameAt = 0;
+      return layout;
+    }
+    const descriptor = take(pos + 4, 1);
+    if (!descriptor) return cut("a frame header");
+    const contentSizeFlag = descriptor[0] >> 6;
+    const singleSegment = descriptor[0] >> 5 & 1;
+    const hasChecksum = descriptor[0] >> 2 & 1;
+    const dictionaryIdFlag = descriptor[0] & 3;
+    pos += 5 + (singleSegment ? 0 : 1) + [0, 1, 2, 4][dictionaryIdFlag] + (contentSizeFlag === 0 ? singleSegment : [0, 2, 4, 8][contentSizeFlag]);
+    if (pos > size) return cut("a frame header");
+    for (; ; ) {
+      const blockHeader = take(pos, 3);
+      if (!blockHeader) return cut("a frame, before its last block");
+      const header = blockHeader[0] | blockHeader[1] << 8 | blockHeader[2] << 16;
+      const blockType = header >> 1 & 3;
+      pos += 3 + (blockType === 1 ? 1 : header >> 3);
+      if (pos > size) return cut("a block");
+      if (header & 1) break;
+    }
+    if (hasChecksum) {
+      pos += 4;
+      if (pos > size) return cut("a frame checksum");
+    }
+    layout.frames.push({ start, end: pos });
+  }
+  return layout;
+}
+function incompleteZstdError(filePath, problem) {
+  return new Error(`zstd archive is incomplete \u2014 ${problem}: ${filePath}`);
+}
 function requireZstdSync() {
   const decompress = zstd.zstdDecompressSync;
   if (!decompress) {
@@ -52649,43 +53152,122 @@ function requireZstdSync() {
       "Archive file is zstd-compressed but this Node runtime has no zstd support (need Node >= 22.15)"
     );
   }
-  return (buf) => decompress(buf, { maxOutputLength: maxDecompressedBytes() });
+  return (buf, filePath) => {
+    const layout = zstdLayout(buf.length, (position, length) => buf.subarray(position, position + length));
+    if (layout.problem && layout.cutFrameAt === 0 && layout.frames.length === 0 && buf.length >= 4 && buf.readUInt32LE(0) !== ZSTD_MAGIC) {
+      decompress(buf, { maxOutputLength: maxDecompressedBytes() });
+    }
+    if (layout.problem) throw incompleteZstdError(filePath, layout.problem);
+    const cap = maxDecompressedBytes();
+    const parts = [];
+    let total = 0;
+    for (const frame of layout.frames) {
+      if (total >= cap) throw new Error(`Decompressed archive exceeds ${cap} byte limit`);
+      const part = decompress(buf.subarray(frame.start, frame.end), { maxOutputLength: cap - total });
+      parts.push(part);
+      total += part.length;
+    }
+    return parts.length === 1 ? parts[0] : Buffer.concat(parts);
+  };
+}
+function zstdLayoutOfFile(filePath) {
+  const fd = fs6.openSync(filePath, "r");
+  try {
+    const size = fs6.fstatSync(fd).size;
+    return zstdLayout(size, (position, length) => {
+      const bytes = Buffer.alloc(length);
+      return bytes.subarray(0, fs6.readSync(fd, bytes, 0, length, position));
+    });
+  } finally {
+    fs6.closeSync(fd);
+  }
+}
+async function* decompressedZstdChunks(resolved) {
+  const layout = zstdLayoutOfFile(resolved);
+  const size = fs6.statSync(resolved).size;
+  const ranges = layout.cutFrameAt === null ? layout.frames : [...layout.frames, { start: layout.cutFrameAt, end: size }];
+  for (const range of ranges) {
+    if (range.end <= range.start) continue;
+    const decoded = pipeline2(
+      fs6.createReadStream(resolved, { start: range.start, end: range.end - 1 }),
+      zstd.createZstdDecompress(),
+      () => {
+      }
+    );
+    for await (const chunk of decoded) yield chunk;
+  }
+  if (layout.problem) throw incompleteZstdError(resolved, layout.problem);
 }
 function readArchiveFile(filePath) {
   const resolved = resolveArchiveFile(filePath);
   if (!resolved) {
     throw Object.assign(new Error(`ENOENT: no such file, open '${filePath}'`), { code: "ENOENT" });
   }
-  const buf = fs4.readFileSync(resolved);
+  const buf = fs6.readFileSync(resolved);
   if (resolved.endsWith(ZST_SUFFIX)) {
-    return requireZstdSync()(buf).toString("utf-8");
+    return requireZstdSync()(buf, resolved).toString("utf-8");
   }
   return buf.toString("utf-8");
 }
 function createArchiveReadStream(filePath) {
   const resolved = resolveArchiveFile(filePath);
   if (!resolved) {
-    return fs4.createReadStream(filePath);
+    return fs6.createReadStream(filePath);
   }
   if (resolved.endsWith(ZST_SUFFIX)) {
     if (zstd.createZstdDecompress) {
-      const source = fs4.createReadStream(resolved);
-      const decompress = zstd.createZstdDecompress();
       const limiter = createByteLimit(maxDecompressedBytes());
-      pipeline2(source, decompress, limiter, () => {
-      });
+      pipeline2(
+        Readable.from(decompressedZstdChunks(resolved), { objectMode: false }),
+        limiter,
+        () => {
+        }
+      );
       return limiter;
     }
-    const content = requireZstdSync()(fs4.readFileSync(resolved));
+    const content = requireZstdSync()(fs6.readFileSync(resolved), resolved);
     return Readable.from([content]);
   }
-  return fs4.createReadStream(resolved);
+  return fs6.createReadStream(resolved);
+}
+function readArchiveLineRange(filePath, opts = {}) {
+  const startLine = opts.startLine ?? 1;
+  const lastWanted = opts.endLine === void 0 ? Infinity : opts.endLine + (opts.lookahead ?? 0);
+  const maxChars = opts.maxChars ?? Infinity;
+  return new Promise((resolve2, reject) => {
+    const stream2 = createArchiveReadStream(filePath);
+    const rl = readline.createInterface({ input: stream2, crlfDelay: Infinity });
+    const lines = [];
+    let lineNumber = 0;
+    let chars = 0;
+    let settled = false;
+    const settle2 = (error62, result) => {
+      if (settled) return;
+      settled = true;
+      rl.close();
+      stream2.destroy();
+      if (error62) reject(error62);
+      else resolve2(result);
+    };
+    stream2.on("error", (error62) => settle2(error62));
+    rl.on("error", (error62) => settle2(error62));
+    rl.on("line", (text) => {
+      if (settled) return;
+      lineNumber++;
+      if (lineNumber < startLine) return;
+      lines.push({ line: lineNumber, text });
+      chars += text.length;
+      if (lineNumber >= lastWanted) settle2(null, { lines, totalLines: null, stoppedEarly: false });
+      else if (chars >= maxChars) settle2(null, { lines, totalLines: null, stoppedEarly: true });
+    });
+    rl.on("close", () => settle2(null, { lines, totalLines: lineNumber, stoppedEarly: false }));
+  });
 }
 function statArchiveFile(filePath) {
   const resolved = resolveArchiveFile(filePath);
   if (!resolved) return null;
   try {
-    return fs4.statSync(resolved);
+    return fs6.statSync(resolved);
   } catch {
     return null;
   }
@@ -52697,7 +53279,7 @@ var cachedSearchDbPath = null;
 var cachedSearchDbIdent = null;
 function fileIdent(p) {
   try {
-    const st = fs5.statSync(p);
+    const st = fs7.statSync(p);
     return `${st.dev}:${st.ino}`;
   } catch {
     return null;
@@ -52729,84 +53311,79 @@ function getSearchDb() {
   cachedSearchDbIdent = fileIdent(p);
   return cachedSearchDb;
 }
+var NOISE_OBSERVER_PREFIX = OBSERVER_PROMPT_PREFIX;
+var NOISE_EXCHANGE_SQL = `((COALESCE(e.is_sidechain, 0) = 1 AND e.user_message = '${WARMUP_MESSAGE}') OR substr(e.user_message, 1, ${NOISE_OBSERVER_PREFIX.length}) = '${NOISE_OBSERVER_PREFIX}')`;
+var VEC_KNN_K_MAX = 4096;
+var VEC_KNN_FLAT_K = 1024;
+function knnK(k2) {
+  return k2 >= VEC_KNN_FLAT_K ? VEC_KNN_K_MAX : Math.max(1, Math.ceil(k2));
+}
+var RRF_K = 60;
+var TEXT_LOOKAHEAD_MAX = 4096;
+var RARE_AGENT_ROWS = 2e4;
+function countAgentRows(db, agent) {
+  return db.prepare(
+    "SELECT count(*) AS c FROM (SELECT 1 FROM exchanges WHERE coding_agent = ? LIMIT ?)"
+  ).get(agent, RARE_AGENT_ROWS + 1).c;
+}
+function ftsTerm(token) {
+  return /^[\uAC00-\uD7A3]{2,}$/.test(token) ? `"${token}"*` : `"${token}"`;
+}
+var turnKey = (row) => `${row.archive_path}\0${row.line_start}`;
+function foldTurns(rows) {
+  const turns = /* @__PURE__ */ new Map();
+  for (const row of rows) {
+    const key = turnKey(row);
+    const turn = turns.get(key);
+    if (!turn) {
+      turns.set(key, { rep: row, first: row, members: 1 });
+    } else {
+      turn.members++;
+      if (row.line_end > turn.rep.line_end) turn.rep = row;
+    }
+  }
+  return [...turns.values()];
+}
+function isErrorSummary(text) {
+  const t = text.trim();
+  if (!t) return true;
+  if (/^(Invalid API key|API Error\b|Your account does not have access to Claude Code)/i.test(t)) return true;
+  if (/^```(?:json)?\s*[{[]/.test(t) || /^[{[]\s*"/.test(t)) return true;
+  return false;
+}
 function validateISODate(dateStr, paramName) {
   const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
   if (!isoDateRegex.test(dateStr)) {
     throw new Error(`Invalid ${paramName} date: "${dateStr}". Expected YYYY-MM-DD format (e.g., 2025-10-01)`);
   }
   const date5 = new Date(dateStr);
-  if (isNaN(date5.getTime())) {
+  if (isNaN(date5.getTime()) || date5.toISOString().slice(0, 10) !== dateStr) {
     throw new Error(`Invalid ${paramName} date: "${dateStr}". Not a valid calendar date.`);
   }
 }
-async function searchConversations(query2, options = {}) {
-  const { limit: limit2 = 10, mode = "both", after, before, coding_agent } = options;
+function validateDateRange(after, before) {
   if (after) validateISODate(after, "--after");
   if (before) validateISODate(before, "--before");
+  if (!after || !before) return;
+  if (after > before) {
+    throw new Error(`Invalid date range: --after ${after} is later than --before ${before} \u2014 no conversation can be in it`);
+  }
+  if (after === before) {
+    throw new Error(
+      `Invalid date range: --after and --before are both ${after} \u2014 --before keeps the days before it, so no conversation can be in it (for one day, give the following day as --before)`
+    );
+  }
+}
+async function searchConversationsDetailed(query2, options = {}) {
+  const { limit: limit2 = 10, mode = "both", after, before, coding_agent, include_noise = false, require_all_tokens = false, vector_first_k } = options;
+  validateDateRange(after, before);
   const db = getSearchDb();
-  let results = [];
-  {
-    const filterParts = [];
-    const filterParams = [];
-    if (after) {
-      filterParts.push(`e.timestamp >= ?`);
-      filterParams.push(after);
-    }
-    if (before) {
-      filterParts.push(`e.timestamp <= ?`);
-      filterParams.push(before);
-    }
-    if (coding_agent) {
-      filterParts.push(`e.coding_agent = ?`);
-      filterParams.push(coding_agent);
-    }
-    const timeClause = filterParts.length > 0 ? `AND ${filterParts.join(" AND ")}` : "";
-    const timeParams = filterParams;
-    if (mode === "vector" || mode === "both") {
-      await initEmbeddings();
-      const queryEmbedding = await generateEmbedding(query2, "query");
-      const vecQuery = (vecQuant2) => {
-        const stmt = db.prepare(`
-          SELECT
-            e.id,
-            e.project,
-            e.timestamp,
-            e.user_message,
-            e.assistant_message,
-            e.archive_path,
-            e.line_start,
-            e.line_end,
-            e.coding_agent,
-            vec.distance
-          FROM vec_exchanges AS vec
-          JOIN exchanges AS e ON vec.id = e.id
-          WHERE vec.embedding MATCH ${vecParamSql(vecQuant2)}
-            AND k = ?
-            AND e.embedding_version = ?
-            ${timeClause}
-          ORDER BY vec.distance ASC
-        `);
-        const rows = stmt.all(
-          embeddingToVecBlob(queryEmbedding, vecQuant2),
-          limit2,
-          EMBEDDING_VERSION,
-          ...timeParams
-        );
-        for (const r of rows) r.distance = normalizeVecDistance(r.distance, vecQuant2);
-        return rows;
-      };
-      let vecQuant = getVecQuant(db, "vec_exchanges");
-      try {
-        results = vecQuery(vecQuant);
-      } catch (e) {
-        const fresh = getVecQuant(db, "vec_exchanges");
-        if (fresh.dtype === vecQuant.dtype && fresh.scale === vecQuant.scale) throw e;
-        vecQuant = fresh;
-        results = vecQuery(vecQuant);
-      }
-    }
-    if (mode === "text" || mode === "both") {
-      const cols = `
+  const meta3 = { folded: 0 };
+  let folded = 0;
+  let vectorRows = [];
+  let textRows = [];
+  const agentRows = coding_agent ? countAgentRows(db, coding_agent) : null;
+  const cols = `
           e.id,
           e.project,
           e.timestamp,
@@ -52816,9 +53393,111 @@ async function searchConversations(query2, options = {}) {
           e.line_start,
           e.line_end,
           e.coding_agent`;
+  {
+    const filterParts = [];
+    const ftsFilterParts = [];
+    const filterParams = [];
+    if (after) {
+      filterParts.push(`e.timestamp >= ?`);
+      ftsFilterParts.push(`e.timestamp >= ?`);
+      filterParams.push(after);
+    }
+    if (before) {
+      filterParts.push(`e.timestamp <= ?`);
+      ftsFilterParts.push(`e.timestamp <= ?`);
+      filterParams.push(before);
+    }
+    if (coding_agent) {
+      filterParts.push(`e.coding_agent = ?`);
+      ftsFilterParts.push((agentRows ?? 0) <= RARE_AGENT_ROWS ? `+fts.rowid IN (SELECT a.rowid FROM exchanges AS a WHERE a.coding_agent = ?)` : `e.coding_agent = ?`);
+      filterParams.push(coding_agent);
+    }
+    const timeClause = filterParts.length > 0 ? `AND ${filterParts.join(" AND ")}` : "";
+    const timeParams = filterParams;
+    const noiseClause = include_noise ? "" : `AND NOT ${NOISE_EXCHANGE_SQL}`;
+    const rowClause = [timeClause, noiseClause].filter(Boolean).join(" ");
+    const ftsRowClause = [ftsFilterParts.length > 0 ? `AND ${ftsFilterParts.join(" AND ")}` : "", noiseClause].filter(Boolean).join(" ");
+    const fetchRows = (ids) => {
+      const byId = /* @__PURE__ */ new Map();
+      for (let at = 0; at < ids.length; at += 500) {
+        const chunk = ids.slice(at, at + 500);
+        const rows = db.prepare(
+          `SELECT ${cols}, 0 as distance FROM exchanges AS e WHERE e.id IN (${chunk.map(() => "?").join(",")})`
+        ).all(...chunk);
+        for (const row of rows) byId.set(row.id, row);
+      }
+      return byId;
+    };
+    if (agentRows === 0) {
+      if (mode !== "text") meta3.vector = { k: 0, candidates: 0, matched: 0, truncated: false };
+    } else if (mode === "vector" || mode === "both") {
+      await initEmbeddings();
+      const queryEmbedding = await generateEmbedding(query2, "query");
+      const vecQuery = (vecQuant2) => {
+        const stmt = db.prepare(`
+          SELECT
+            vec.id AS id,
+            vec.distance AS distance,
+            e.archive_path AS archive_path,
+            e.line_start AS line_start,
+            e.line_end AS line_end,
+            (e.id IS NOT NULL AND e.embedding_version = ? ${rowClause}) AS pass
+          FROM vec_exchanges AS vec
+          LEFT JOIN exchanges AS e ON e.id = vec.id
+          WHERE vec.embedding MATCH ${vecParamSql(vecQuant2)}
+            AND k = ?
+          ORDER BY vec.distance ASC
+        `);
+        const blob = embeddingToVecBlob(queryEmbedding, vecQuant2);
+        const want = Math.min(limit2, VEC_KNN_K_MAX);
+        let k2 = vector_first_k !== void 0 ? knnK(Math.max(want, vector_first_k)) : rowClause ? knnK(Math.max(want * 8, 64)) : want;
+        for (; ; ) {
+          const candidates = stmt.all(EMBEDDING_VERSION, ...timeParams, blob, k2);
+          const passing = candidates.filter((c) => c.pass);
+          const turns = foldTurns(passing);
+          const exhausted = candidates.length < k2;
+          if (turns.length >= want || exhausted || k2 >= VEC_KNN_K_MAX) {
+            const winners = turns.slice(0, want);
+            const full = fetchRows(winners.map((w2) => w2.rep.id));
+            const rows = [];
+            let foldedHere = 0;
+            for (const w2 of winners) {
+              const row = full.get(w2.rep.id);
+              if (row) rows.push({ ...row, distance: normalizeVecDistance(w2.first.distance, vecQuant2) });
+              foldedHere += w2.members - 1;
+            }
+            return {
+              rows,
+              folded: foldedHere,
+              stats: {
+                k: k2,
+                candidates: candidates.length,
+                matched: passing.length,
+                truncated: !exhausted && (turns.length < want || limit2 > want)
+              }
+            };
+          }
+          k2 = knnK(Math.max(k2 * 4, turns.length === 0 ? VEC_KNN_K_MAX : Math.ceil(k2 * want * 2 / turns.length)));
+        }
+      };
+      let vecQuant = getVecQuant(db, "vec_exchanges");
+      let vec;
+      try {
+        vec = vecQuery(vecQuant);
+      } catch (e) {
+        const fresh = getVecQuant(db, "vec_exchanges");
+        if (fresh.dtype === vecQuant.dtype && fresh.scale === vecQuant.scale) throw e;
+        vecQuant = fresh;
+        vec = vecQuery(vecQuant);
+      }
+      vectorRows = vec.rows;
+      folded += vec.folded;
+      meta3.vector = vec.stats;
+    }
+    if (mode === "text" || mode === "both") {
       let textResults = [];
       const ftsTokens = query2.split(/[^\p{L}\p{N}]+/u).map((t) => t.trim()).filter(Boolean);
-      const ftsExpr = ftsTokens.map((t) => `"${t}"`).join(" ");
+      const ftsExpr = ftsTokens.map(ftsTerm).join(" ");
       const MAX_FTS_TOKENS = 6;
       const MAX_OR_TOKENS = 10;
       let orTokens = ftsTokens;
@@ -52829,19 +53508,33 @@ async function searchConversations(query2, options = {}) {
         orTokens = [.../* @__PURE__ */ new Set([...longest, ...identifiers])].slice(0, MAX_OR_TOKENS);
       }
       let usedFts = false;
+      let likeReason = ftsExpr ? null : "the query has no letter or digit to look up in the keyword index";
+      let textTruncated = false;
       if (ftsExpr) {
         try {
           const built = db.prepare(`SELECT value FROM fts_meta WHERE key='exchanges_fts_built'`).get();
-          if (built?.value === "1") {
-            const mkFtsStmt = timeClause ? (orderBy) => db.prepare(`
+          if (built?.value !== "1") {
+            likeReason = "the keyword index has not been built yet (scripts/backfill-fts.mjs builds it)";
+          } else {
+            const ftsStatements = /* @__PURE__ */ new Map();
+            const ftsStatement = (key, sql) => {
+              let stmt = ftsStatements.get(key);
+              if (!stmt) {
+                stmt = db.prepare(sql());
+                ftsStatements.set(key, stmt);
+              }
+              return stmt;
+            };
+            const filteredSql = (orderBy) => `
                   SELECT ${cols}, 0 as distance
                   FROM exchanges_fts AS fts
-                  JOIN exchanges AS e ON e.rowid = fts.rowid
+                  CROSS JOIN exchanges AS e ON e.rowid = fts.rowid
                   WHERE exchanges_fts MATCH ?
-                    ${timeClause}
+                    ${ftsRowClause}
                   ORDER BY ${orderBy.replace("rowid", "fts.rowid")}
                   LIMIT ?
-                `) : (orderBy) => db.prepare(`
+                `;
+            const innerLimitSql = (orderBy) => `
                   SELECT ${cols}, 0 as distance
                   FROM (
                     SELECT rowid FROM exchanges_fts
@@ -52851,9 +53544,17 @@ async function searchConversations(query2, options = {}) {
                   ) AS fts
                   JOIN exchanges AS e ON e.rowid = fts.rowid
                   LIMIT ?
-                `);
-            const rankedStmt = mkFtsStmt("rank");
-            const recentStmt = mkFtsStmt("rowid DESC");
+                `;
+            const lookAheadSql = (orderBy) => `
+                  SELECT e.id AS id, (NOT ${NOISE_EXCHANGE_SQL}) AS pass
+                  FROM (
+                    SELECT rowid FROM exchanges_fts
+                    WHERE exchanges_fts MATCH ?
+                    ORDER BY ${orderBy}
+                    LIMIT ?
+                  ) AS fts
+                  JOIN exchanges AS e ON e.rowid = fts.rowid
+                `;
             const ftsSchema = db.prepare(
               `SELECT sql FROM sqlite_master WHERE name='exchanges_fts'`
             ).get()?.sql ?? "";
@@ -52861,45 +53562,60 @@ async function searchConversations(query2, options = {}) {
             const countStmt = db.prepare(
               `SELECT count(*) c FROM exchanges_fts WHERE exchanges_fts MATCH ?`
             );
-            const ftsStmt = {
-              all: (expr, ...rest) => {
-                const n = countStmt.get(expr).c;
-                if (n === 0) return [];
-                const lim = rest[rest.length - 1];
-                const params = rest.slice(0, -1);
-                const stmt = n <= RANK_BUDGET ? rankedStmt : recentStmt;
-                if (timeClause) return stmt.all(expr, ...params, lim);
-                const rows = stmt.all(expr, lim, lim);
-                if (rows.length < Math.min(n, lim)) {
-                  const healStmt = db.prepare(`
+            const healRows = (expr, lim) => db.prepare(`
                     SELECT ${cols}, 0 as distance
                     FROM exchanges_fts AS fts
                     JOIN exchanges AS e ON e.rowid = fts.rowid
                     WHERE exchanges_fts MATCH ?
+                      ${noiseClause}
                     ORDER BY fts.rowid DESC
                     LIMIT ?
-                  `);
-                  return healStmt.all(expr, lim);
-                }
+                  `).all(expr, lim);
+            const ftsRows = (expr, lim) => {
+              const n = countStmt.get(expr).c;
+              if (n === 0) return [];
+              const orderBy = n <= RANK_BUDGET ? "rank" : "rowid DESC";
+              if (timeClause) {
+                return ftsStatement(`filtered:${orderBy}`, () => filteredSql(orderBy)).all(expr, ...timeParams, lim);
+              }
+              if (!noiseClause) {
+                const rows = ftsStatement(`inner:${orderBy}`, () => innerLimitSql(orderBy)).all(expr, lim, lim);
+                if (rows.length < Math.min(n, lim)) return healRows(expr, lim);
                 return rows;
+              }
+              const lookAhead = ftsStatement(`ahead:${orderBy}`, () => lookAheadSql(orderBy));
+              let inner = Math.min(n, Math.max(lim * 4, 64));
+              for (; ; ) {
+                const candidates = lookAhead.all(expr, inner);
+                if (candidates.length < Math.min(n, inner)) return healRows(expr, lim);
+                const passing = candidates.filter((c) => c.pass).slice(0, lim);
+                if (passing.length >= lim || inner >= n || inner >= TEXT_LOOKAHEAD_MAX) {
+                  if (passing.length < lim && inner < n) textTruncated = true;
+                  const full = fetchRows(passing.map((c) => c.id));
+                  const rows = [];
+                  for (const c of passing) {
+                    const row = full.get(c.id);
+                    if (row) rows.push(row);
+                  }
+                  return rows;
+                }
+                inner = Math.min(n, TEXT_LOOKAHEAD_MAX, Math.max(
+                  inner * 4,
+                  passing.length === 0 ? TEXT_LOOKAHEAD_MAX : Math.ceil(inner * lim * 2 / passing.length)
+                ));
               }
             };
             const orFallbackRows = (lim) => {
-              let rare = [];
-              try {
-                rare = [...new Set(orTokens)].map((t) => ({ t, df: countStmt.get(`"${t}"`).c })).filter((x2) => x2.df > 0).sort((a, b2) => a.df - b2.df).map((x2) => x2.t);
-              } catch {
-                return [];
-              }
+              const rare = [...new Set(orTokens)].map((t) => ({ t, df: countStmt.get(ftsTerm(t)).c })).filter((x2) => x2.df > 0).sort((a, b2) => a.df - b2.df).map((x2) => x2.t);
               const rungs = [];
               for (let k2 = Math.min(4, rare.length); k2 >= 2; k2--) {
-                rungs.push(rare.slice(0, k2).map((t) => `"${t}"`).join(" "));
+                rungs.push(rare.slice(0, k2).map(ftsTerm).join(" "));
               }
-              for (const t of rare) rungs.push(`"${t}"`);
+              for (const t of rare) rungs.push(ftsTerm(t));
               const perRung = [];
               for (const expr of rungs) {
                 if (expr === ftsExpr) continue;
-                perRung.push(ftsStmt.all(expr, ...timeParams, lim));
+                perRung.push(ftsRows(expr, lim));
                 const distinct = new Set(perRung.flat().map((r) => r.id));
                 if (distinct.size >= lim * 2) break;
               }
@@ -52928,13 +53644,17 @@ async function searchConversations(query2, options = {}) {
               }
               return acc;
             };
-            if (ftsTokens.length <= MAX_FTS_TOKENS) {
-              textResults = ftsStmt.all(ftsExpr, ...timeParams, limit2);
+            if (agentRows === 0) {
+              textResults = [];
+            } else if (require_all_tokens) {
+              textResults = ftsRows(ftsExpr, limit2);
+            } else if (ftsTokens.length <= MAX_FTS_TOKENS) {
+              textResults = ftsRows(ftsExpr, limit2);
               if (textResults.length === 0 && ftsTokens.length > 1) {
                 textResults = orFallbackRows(limit2);
               }
             } else {
-              textResults = ftsStmt.all(ftsExpr, ...timeParams, limit2);
+              textResults = ftsRows(ftsExpr, limit2);
               if (textResults.length < limit2) {
                 const orResults = orFallbackRows(limit2);
                 const seenText = new Set(textResults.map((r) => r.id));
@@ -52947,8 +53667,11 @@ async function searchConversations(query2, options = {}) {
             }
             usedFts = true;
           }
-        } catch {
+        } catch (error62) {
           usedFts = false;
+          const message = error62 instanceof Error ? error62.message : String(error62);
+          console.error(`memory-bank search: keyword index query failed, scanning every exchange instead: ${message}`);
+          likeReason = `the keyword index query failed: ${message}`;
         }
       }
       if (!usedFts) {
@@ -52958,25 +53681,39 @@ async function searchConversations(query2, options = {}) {
           SELECT ${cols}, 0 as distance
           FROM exchanges AS e
           WHERE (e.user_message LIKE ? ESCAPE '\\' OR e.assistant_message LIKE ? ESCAPE '\\')
-            ${timeClause}
+            ${rowClause}
           ORDER BY e.timestamp DESC
           LIMIT ?
         `);
         textResults = textStmt.all(likePattern, likePattern, ...timeParams, limit2);
       }
-      if (mode === "both") {
-        const seenIds = new Set(results.map((r) => r.id));
-        for (const textResult of textResults) {
-          if (!seenIds.has(textResult.id)) {
-            results.push(textResult);
-          }
-        }
-      } else {
-        results = textResults;
-      }
+      meta3.text = usedFts ? { path: "fts", truncated: textTruncated } : { path: "like-scan", reason: likeReason ?? "the keyword index was not usable", truncated: false };
+      const textTurns = foldTurns(textResults);
+      textRows = textTurns.map((turn) => turn.rep);
+      folded += textResults.length - textTurns.length;
     }
   }
-  return results.map((row) => {
+  const merged = /* @__PURE__ */ new Map();
+  vectorRows.forEach((row, rank) => {
+    merged.set(turnKey(row), { row, matchedBy: "vector", distance: row.distance, score: 1 / (RRF_K + rank + 1) });
+  });
+  textRows.forEach((row, rank) => {
+    const score = 1 / (RRF_K + rank + 1);
+    const hit = merged.get(turnKey(row));
+    if (hit) {
+      hit.matchedBy = "both";
+      hit.score += score;
+      if (row.id !== hit.row.id) {
+        folded++;
+        if (row.line_end > hit.row.line_end) hit.row = row;
+      }
+    } else {
+      merged.set(turnKey(row), { row, matchedBy: "text", score });
+    }
+  });
+  meta3.folded = folded;
+  const ranked = [...merged.values()].sort((a, b2) => b2.score - a.score).slice(0, limit2);
+  const results = ranked.map(({ row, matchedBy, distance }) => {
     const exchange = {
       id: row.id,
       project: row.project,
@@ -52994,14 +53731,91 @@ async function searchConversations(query2, options = {}) {
       summary = readArchiveFile(summaryPath).trim();
     } catch {
     }
+    if (summary !== void 0 && isErrorSummary(summary)) summary = void 0;
     const snippetText = exchange.userMessage.substring(0, 200).replace(/\s+/g, " ").trim();
     const snippet = snippetText + (exchange.userMessage.length > 200 ? "..." : "");
-    return {
+    const hit = {
       exchange,
-      similarity: mode === "text" ? void 0 : 1 - row.distance,
+      // Cosine similarity of the (unit) embeddings — the same conversion every
+      // other relevance figure uses. Absent for a keyword-only hit.
+      similarity: distance === void 0 ? void 0 : l2DistanceToSimilarity(distance),
+      matchedBy,
       snippet,
       summary
     };
+    return hit;
+  });
+  return { results, meta: meta3 };
+}
+function searchNotes(meta3) {
+  const notes = [];
+  if (meta3?.vector?.truncated) {
+    notes.push(
+      `Semantic results are incomplete: only the nearest ${meta3.vector.candidates} vector candidates could be examined (sqlite-vec ceiling) and ${meta3.vector.matched} passed the filters \u2014 narrow the query or relax the date/agent filter.`
+    );
+  }
+  if (meta3?.text?.truncated) {
+    notes.push(
+      `Keyword results are incomplete: the first ${TEXT_LOOKAHEAD_MAX} keyword matches were mostly machine-generated turns and were skipped; older matches were not examined \u2014 add a date filter or more specific words.`
+    );
+  }
+  if (meta3?.text?.path === "like-scan") {
+    notes.push(`Keyword pass ran as a full scan (${meta3.text.reason}) \u2014 slow on a large index.`);
+  }
+  return notes;
+}
+var SEARCH_JSON_MESSAGE_CHARS = 500;
+var JSON_READ_HINT = `Messages are clipped to ${SEARCH_JSON_MESSAGE_CHARS} characters. Read a full exchange with the read tool: path = exchange.archivePath, startLine = exchange.lineStart, endLine = exchange.lineEnd.`;
+function clipMessage(text) {
+  if (text.length <= SEARCH_JSON_MESSAGE_CHARS) return text;
+  let cut = text.slice(0, SEARCH_JSON_MESSAGE_CHARS);
+  if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+  return cut + "\u2026";
+}
+function exchangeForJson(exchange) {
+  const userMessage = clipMessage(exchange.userMessage);
+  const assistantMessage = clipMessage(exchange.assistantMessage);
+  return {
+    exchange: {
+      id: exchange.id,
+      project: exchange.project,
+      timestamp: exchange.timestamp,
+      codingAgent: exchange.codingAgent,
+      archivePath: exchange.archivePath,
+      lineStart: exchange.lineStart,
+      lineEnd: exchange.lineEnd,
+      userMessage,
+      assistantMessage
+    },
+    clipped: userMessage !== exchange.userMessage || assistantMessage !== exchange.assistantMessage
+  };
+}
+function searchResultsToJson(results, meta3, mode) {
+  return JSON.stringify({
+    results: results.map((r) => ({
+      ...exchangeForJson(r.exchange),
+      similarity: r.similarity,
+      matchedBy: r.matchedBy,
+      snippet: r.snippet
+    })),
+    count: results.length,
+    mode,
+    notes: searchNotes(meta3),
+    hint: JSON_READ_HINT
+  });
+}
+function multiConceptResultsToJson(results, concepts) {
+  return JSON.stringify({
+    results: results.map((r) => ({
+      ...exchangeForJson(r.exchange),
+      snippet: r.snippet,
+      matchedBy: r.matchedBy,
+      conceptSimilarities: r.conceptSimilarities,
+      averageSimilarity: r.averageSimilarity
+    })),
+    count: results.length,
+    concepts,
+    hint: JSON_READ_HINT
   });
 }
 var lineCountCache = /* @__PURE__ */ new Map();
@@ -53025,7 +53839,7 @@ async function countLines(filePath) {
   const scan = (async () => {
     try {
       const fileStream = createArchiveReadStream(filePath);
-      const rl = readline.createInterface({
+      const rl = readline2.createInterface({
         input: fileStream,
         crlfDelay: Infinity
       });
@@ -53048,9 +53862,13 @@ function getFileSizeInKB(filePath) {
   if (!stats) return 0;
   return Math.round(stats.size / 1024 * 10) / 10;
 }
-async function formatResults(results) {
+async function formatResults(results, meta3) {
+  const notes = searchNotes(meta3).map((note) => `_Note: ${note}_
+`).join("");
   if (results.length === 0) {
-    return "No results found.";
+    return notes ? `No results found.
+
+${notes}` : "No results found.";
   }
   let output2 = `Found ${results.length} relevant conversation${results.length > 1 ? "s" : ""}:
 
@@ -53064,7 +53882,9 @@ async function formatResults(results) {
     const agentTag = agent !== "claude-code" ? ` @${agent}` : "";
     output2 += `${index + 1}. [${result.exchange.project}, ${date5}${agentTag}]`;
     if (simPct !== null) {
-      output2 += ` - ${simPct}% match`;
+      output2 += ` - ${simPct}% match${result.matchedBy === "both" ? " (semantic + keyword)" : ""}`;
+    } else if (result.matchedBy === "text") {
+      output2 += " - keyword match";
     }
     output2 += "\n";
     if (result.summary && result.summary.length < 300) {
@@ -53089,16 +53909,76 @@ async function formatResults(results) {
 
 `;
   }
-  return output2;
+  return output2 + notes;
+}
+async function keywordConceptMatches(concepts, options, limit2) {
+  const { results, meta: meta3 } = await searchConversationsDetailed(concepts.join(" "), {
+    ...options,
+    mode: "text",
+    limit: limit2 * 5,
+    require_all_tokens: true
+  });
+  if (meta3.text?.path !== "fts") {
+    console.error(`memory-bank search: multi-concept keyword matching skipped (${meta3.text?.reason ?? "keyword index unavailable"})`);
+    return [];
+  }
+  const perConversation = /* @__PURE__ */ new Map();
+  for (const hit of results) {
+    if (!perConversation.has(hit.exchange.archivePath)) perConversation.set(hit.exchange.archivePath, hit);
+  }
+  const hits = [...perConversation.values()];
+  if (hits.length === 0) return [];
+  await initEmbeddings();
+  const embeddings = [];
+  for (const concept of concepts) embeddings.push(await generateEmbedding(concept, "query"));
+  const db = getSearchDb();
+  const quant = getVecQuant(db, "vec_exchanges");
+  const distance = db.prepare(`SELECT vec_distance_l2(embedding, ${vecParamSql(quant)}) AS d FROM vec_exchanges WHERE id = ?`);
+  const blobs = embeddings.map((embedding) => embeddingToVecBlob(embedding, quant));
+  return hits.map((hit) => {
+    const conceptSimilarities = blobs.map((blob) => {
+      const row = distance.get(blob, hit.exchange.id);
+      return row ? l2DistanceToSimilarity(normalizeVecDistance(row.d, quant)) : Number.NaN;
+    });
+    return {
+      exchange: hit.exchange,
+      snippet: hit.snippet,
+      conceptSimilarities,
+      averageSimilarity: conceptSimilarities.reduce((sum2, sim) => sum2 + sim, 0) / conceptSimilarities.length,
+      matchedBy: "keyword"
+    };
+  });
+}
+function fuseConceptMatches(keyword, semantic, limit2) {
+  const fused = /* @__PURE__ */ new Map();
+  keyword.forEach((result, rank) => {
+    fused.set(result.exchange.archivePath, { result, score: 1 / (RRF_K + rank + 1) });
+  });
+  semantic.forEach((result, rank) => {
+    const score = 1 / (RRF_K + rank + 1);
+    const hit = fused.get(result.exchange.archivePath);
+    if (hit) hit.score += score;
+    else fused.set(result.exchange.archivePath, { result, score });
+  });
+  return [...fused.values()].sort((a, b2) => b2.score - a.score).slice(0, limit2).map((entry) => entry.result);
 }
 async function searchMultipleConcepts(concepts, options = {}) {
   const { limit: limit2 = 10 } = options;
   if (concepts.length === 0) {
     return [];
   }
-  const conceptResults = await Promise.all(
-    concepts.map((concept) => searchConversations(concept, { ...options, limit: limit2 * 5, mode: "vector" }))
-  );
+  const conceptResults = [];
+  let firstK;
+  for (const concept of concepts) {
+    const { results, meta: meta3 } = await searchConversationsDetailed(concept, {
+      ...options,
+      limit: limit2 * 5,
+      mode: "vector",
+      vector_first_k: firstK
+    });
+    conceptResults.push(results);
+    if (meta3.vector && meta3.vector.k > (firstK ?? 0)) firstK = meta3.vector.k;
+  }
   const conversationMap = /* @__PURE__ */ new Map();
   conceptResults.forEach((results, conceptIndex) => {
     results.forEach((result) => {
@@ -53117,19 +53997,22 @@ async function searchMultipleConcepts(concepts, options = {}) {
         const result = results.find((r) => r.conceptIndex === index);
         return result?.similarity || 0;
       });
-      const averageSimilarity = conceptSimilarities.reduce((sum, sim) => sum + sim, 0) / conceptSimilarities.length;
+      const averageSimilarity = conceptSimilarities.reduce((sum2, sim) => sum2 + sim, 0) / conceptSimilarities.length;
       const firstResult = results[0];
       multiConceptResults.push({
         exchange: firstResult.exchange,
         snippet: firstResult.snippet,
         conceptSimilarities,
-        averageSimilarity
+        averageSimilarity,
+        matchedBy: "semantic"
       });
     }
   }
   multiConceptResults.sort((a, b2) => b2.averageSimilarity - a.averageSimilarity);
-  return multiConceptResults.slice(0, limit2);
+  const keywordResults = await keywordConceptMatches(concepts, options, limit2);
+  return fuseConceptMatches(keywordResults, multiConceptResults, limit2);
 }
+var KNOWLEDGE_FACT_CHARS = 300;
 async function getKnowledgeContext(query2, project, limit2 = 5) {
   await initEmbeddings();
   const db = getSearchDb();
@@ -53149,18 +54032,19 @@ async function getKnowledgeContext(query2, project, limit2 = 5) {
     const catInfo = fact.ontology_category_id ? categoryStmt.get(fact.ontology_category_id) : void 0;
     const domainName = catInfo ? catInfo.domainName ?? "Unclassified" : "Unclassified";
     const catName = catInfo ? catInfo.categoryName : "Unclassified";
-    const related = getRelatedFacts(db, fact.id, 1);
-    const relatedFacts = related.map(({ fact: relFact, relation }) => ({
-      fact: relFact.fact,
-      relationType: relation.relation_type
+    const related = summarizeRelated(getRelatedFacts(db, fact.id, 1));
+    const relatedFacts = related.shown.map((line) => ({
+      fact: line.text,
+      relationType: line.relationType
     }));
     enrichedFacts.push({
-      fact: fact.fact,
+      fact: clipLine(fact.fact, KNOWLEDGE_FACT_CHARS),
       category: fact.category,
       domain: domainName,
       categoryName: catName,
       similarity,
-      relatedFacts
+      relatedFacts,
+      relatedOmitted: related.omitted
     });
   }
   return { facts: enrichedFacts };
@@ -53173,6 +54057,10 @@ function formatKnowledgeContext(context) {
 `;
     for (const rel of fact.relatedFacts) {
       output2 += `  - ${rel.relationType}: ${rel.fact}
+`;
+    }
+    if (fact.relatedOmitted) {
+      output2 += `  - _\u2026and ${fact.relatedOmitted} more related facts_
 `;
     }
   }
@@ -53188,10 +54076,12 @@ async function formatMultiConceptResults(results, concepts) {
   for (let index = 0; index < results.length; index++) {
     const result = results[index];
     const date5 = new Date(result.exchange.timestamp).toISOString().split("T")[0];
-    const avgPct = Math.round(result.averageSimilarity * 100);
-    output2 += `${index + 1}. [${result.exchange.project}, ${date5}] - ${avgPct}% avg match
+    const pct = (value) => Number.isFinite(value) ? `${Math.round(value * 100)}%` : "n/a";
+    const avgPct = pct(result.averageSimilarity);
+    output2 += result.matchedBy === "keyword" ? `${index + 1}. [${result.exchange.project}, ${date5}] - every word in one exchange (${avgPct} avg semantic)
+` : `${index + 1}. [${result.exchange.project}, ${date5}] - ${avgPct} avg match
 `;
-    const scores = result.conceptSimilarities.map((sim, i) => `${concepts[i]}: ${Math.round(sim * 100)}%`).join(", ");
+    const scores = result.conceptSimilarities.map((sim, i) => `${concepts[i]}: ${pct(sim)}`).join(", ");
     output2 += `   Concepts: ${scores}
 `;
     output2 += `   "${result.snippet}"
@@ -53287,8 +54177,8 @@ function formatRepeatContext(matches) {
 }
 
 // src/inject-log.ts
-import fs6 from "fs";
-import path4 from "path";
+import fs8 from "fs";
+import path6 from "path";
 import { createHash } from "crypto";
 var MAX_LOG_BYTES = 5 * 1024 * 1024;
 function shortId(id) {
@@ -53301,7 +54191,7 @@ var cachedVersion;
 function pluginVersion() {
   if (cachedVersion === void 0) {
     try {
-      const pkg = JSON.parse(fs6.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+      const pkg = JSON.parse(fs8.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
       cachedVersion = typeof pkg.version === "string" ? pkg.version : null;
     } catch {
       cachedVersion = null;
@@ -53310,34 +54200,34 @@ function pluginVersion() {
   return cachedVersion ?? void 0;
 }
 function getInjectLogPath() {
-  const dir = path4.join(getIndexDir(), "logs");
-  if (!fs6.existsSync(dir)) {
-    fs6.mkdirSync(dir, { recursive: true });
+  const dir = path6.join(getIndexDir(), "logs");
+  if (!fs8.existsSync(dir)) {
+    fs8.mkdirSync(dir, { recursive: true });
   }
-  return path4.join(dir, "inject-context.jsonl");
+  return path6.join(dir, "inject-context.jsonl");
 }
 function appendInjectLog(entry) {
   try {
     const logPath = getInjectLogPath();
     try {
-      const stat3 = fs6.statSync(logPath);
+      const stat3 = fs8.statSync(logPath);
       if (stat3.size > MAX_LOG_BYTES) {
-        fs6.renameSync(logPath, `${logPath}.old`);
+        fs8.renameSync(logPath, `${logPath}.old`);
       }
     } catch {
     }
     const line = JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), ...entry });
-    fs6.appendFileSync(logPath, line + "\n");
+    fs8.appendFileSync(logPath, line + "\n");
   } catch {
   }
 }
 
 // src/inject-ledger.ts
-import fs7 from "node:fs";
-import path5 from "node:path";
+import fs9 from "node:fs";
+import path7 from "node:path";
 var TTL_MS = 7 * 24 * 60 * 60 * 1e3;
 function ledgerDir() {
-  return path5.join(getIndexDir(), "state", "inject-ledger");
+  return path7.join(getIndexDir(), "state", "inject-ledger");
 }
 function sanitizeSessionId(sessionId) {
   if (!sessionId) return null;
@@ -53345,13 +54235,13 @@ function sanitizeSessionId(sessionId) {
   return clean.length >= 4 ? clean : null;
 }
 function ledgerPath(cleanId) {
-  return path5.join(ledgerDir(), cleanId + ".json");
+  return path7.join(ledgerDir(), cleanId + ".json");
 }
 function loadLedger(sessionId) {
   const id = sanitizeSessionId(sessionId);
   if (!id) return /* @__PURE__ */ new Set();
   try {
-    const raw = fs7.readFileSync(ledgerPath(id), "utf8");
+    const raw = fs9.readFileSync(ledgerPath(id), "utf8");
     const arr = JSON.parse(raw);
     if (Array.isArray(arr)) return new Set(arr.filter((x2) => typeof x2 === "string"));
   } catch {
@@ -53519,13 +54409,20 @@ function formatInjectBlock(items) {
   let shown = 0;
   for (const { fact, note } of items) {
     const dateStr = fact.created_at.slice(0, 10);
-    const line = `- ${note ? note + " " : ""}[${fact.category}] ${truncateFact(fact.fact)} (${dateStr})`;
+    const line = `- ${note ? note + " " : ""}[${categoryLabel(fact.category)}] ${truncateFact(fact.fact)} (${dateStr})`;
     if (blockChars + line.length > BLOCK_CHAR_BUDGET && shown > 0) break;
     lines.push(line);
     blockChars += line.length + 1;
     shown++;
   }
   return { lines, shown };
+}
+
+// src/inject-host-skip.ts
+function hostSkipReason(meta3, env = process.env) {
+  if (env.MEMORY_BANK_INJECT_HEADLESS === "0" && (meta3.entrypoint ?? "").startsWith("sdk-")) return "headless";
+  if (env.MEMORY_BANK_INJECT_CODEX === "0" && meta3.client === "codex") return "codex-off";
+  return null;
 }
 
 // src/inject-core.ts
@@ -53551,6 +54448,11 @@ async function computeInjectResult(userPrompt, project, via, sessionId, meta3 = 
   const gate = injectionQuery(userPrompt);
   if (gate.reason !== null) {
     appendInjectLog({ ...base, status: "skipped", reason: gate.reason });
+    return { context: "", ledgerKeys: [] };
+  }
+  const hostSkip = hostSkipReason(meta3);
+  if (hostSkip !== null) {
+    appendInjectLog({ ...base, status: "skipped", reason: hostSkip });
     return { context: "", ledgerKeys: [] };
   }
   const query2 = gate.query;
@@ -53672,27 +54574,33 @@ async function computeInjectResult(userPrompt, project, via, sessionId, meta3 = 
 }
 
 // src/version-guard.ts
-import fs8 from "node:fs";
-import path6 from "node:path";
+import fs10 from "node:fs";
+import path8 from "node:path";
 import { fileURLToPath } from "node:url";
 var ownVersionCache;
 function ownPackageVersion() {
   if (ownVersionCache !== void 0) return ownVersionCache;
   try {
-    const pkgPath = path6.join(path6.dirname(fileURLToPath(import.meta.url)), "..", "package.json");
-    const v2 = JSON.parse(fs8.readFileSync(pkgPath, "utf8")).version;
+    const pkgPath = path8.join(path8.dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+    const v2 = JSON.parse(fs10.readFileSync(pkgPath, "utf8")).version;
     ownVersionCache = typeof v2 === "string" && v2 ? v2 : null;
   } catch {
     ownVersionCache = null;
   }
   return ownVersionCache;
 }
-var MAX_UNIX_SOCKET_PATH_BYTES = 103;
-function injectSocketPathIn(indexDir, version2) {
-  const legacy = path6.join(indexDir, "inject-daemon.sock");
-  if (!version2 || !/^[0-9A-Za-z.+-]{1,32}$/.test(version2)) return legacy;
-  const versioned = path6.join(indexDir, `inject-daemon-${version2}.sock`);
-  return Buffer.byteLength(versioned) <= MAX_UNIX_SOCKET_PATH_BYTES ? versioned : legacy;
+function maxUnixSocketPathBytes(platform = process.platform) {
+  return platform === "linux" ? 107 : 103;
+}
+var MAX_UNIX_SOCKET_PATH_BYTES = maxUnixSocketPathBytes();
+function injectSocketPathIn(indexDir, version2, maxBytes = MAX_UNIX_SOCKET_PATH_BYTES) {
+  const fits = (p) => Buffer.byteLength(p) <= maxBytes;
+  if (version2 && /^[0-9A-Za-z.+-]{1,32}$/.test(version2)) {
+    const versioned = path8.join(indexDir, `inject-daemon-${version2}.sock`);
+    if (fits(versioned)) return versioned;
+  }
+  const legacy = path8.join(indexDir, "inject-daemon.sock");
+  return fits(legacy) ? legacy : null;
 }
 
 // src/inject-daemon.ts
@@ -53701,11 +54609,99 @@ function requestIdleMs(raw) {
   return Number.isFinite(n) && n > 0 ? n : 1e4;
 }
 var REQUEST_IDLE_MS = requestIdleMs(process.env.MEMORY_BANK_INJECT_IDLE_MS);
+function reclaimIntervalMs(raw) {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 45e3;
+}
+var RECLAIM_MS = reclaimIntervalMs(process.env.MEMORY_BANK_INJECT_RECLAIM_MS);
+var OWN_SOCKET_MIN_AGE_MS = 2e3;
+var OTHER_SOCKET_MIN_AGE_MS = 6e4;
+var PROBE_TIMEOUT_MS = 500;
+var DEAD_CONFIRM_MS = 1e3;
+function socketIdentity(p) {
+  try {
+    const st = fs11.lstatSync(p);
+    return st.isSocket() ? { ino: st.ino, ctimeMs: st.ctimeMs, mtimeMs: st.mtimeMs } : null;
+  } catch {
+    return null;
+  }
+}
+function probeSocket(p) {
+  return new Promise((resolve2) => {
+    let settled = false;
+    const done = (v2) => {
+      if (settled) return;
+      settled = true;
+      probe.destroy();
+      resolve2(v2);
+    };
+    const probe = net.connect(p);
+    probe.setTimeout(PROBE_TIMEOUT_MS, () => done("unknown"));
+    probe.on("connect", () => done("alive"));
+    probe.on("error", (err) => done(err.code === "ECONNREFUSED" ? "dead" : err.code === "ENOENT" ? "absent" : "unknown"));
+  });
+}
+async function removeIfDead(p, minAgeMs) {
+  const before = socketIdentity(p);
+  if (!before || Date.now() - before.mtimeMs < minAgeMs) return false;
+  if (await probeSocket(p) !== "dead") return false;
+  await new Promise((resolve2) => {
+    setTimeout(resolve2, DEAD_CONFIRM_MS).unref();
+  });
+  if (await probeSocket(p) !== "dead") return false;
+  const now = socketIdentity(p);
+  if (!now || now.ino !== before.ino || now.ctimeMs !== before.ctimeMs) return false;
+  try {
+    fs11.unlinkSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+var sweeping = /* @__PURE__ */ new Set();
+async function removeDeadSockets(indexDir, ownSock) {
+  if (sweeping.has(indexDir)) return;
+  sweeping.add(indexDir);
+  try {
+    let names;
+    try {
+      names = fs11.readdirSync(indexDir);
+    } catch {
+      return;
+    }
+    let removed = 0;
+    for (const name of names) {
+      if (!/^inject-daemon(?:-[0-9A-Za-z.+-]{1,32})?\.sock$/.test(name)) continue;
+      const p = path9.join(indexDir, name);
+      if (p === ownSock) continue;
+      if (await removeIfDead(p, OTHER_SOCKET_MIN_AGE_MS)) removed++;
+    }
+    if (removed > 0) console.error(`[memory-bank] removed ${removed} dead inject-daemon socket file(s)`);
+  } finally {
+    sweeping.delete(indexDir);
+  }
+}
 function injectSocketPath() {
   return injectSocketPathIn(getIndexDir(), ownPackageVersion());
 }
+function nameExists(p) {
+  try {
+    fs11.lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
 function startInjectDaemon() {
   const sockPath = injectSocketPath();
+  if (sockPath === null) {
+    console.error(`[memory-bank] inject daemon off: the socket path under ${getIndexDir()} is longer than a unix socket allows (${MAX_UNIX_SOCKET_PATH_BYTES} bytes) \u2014 prompts are answered by the hook's own, slower computation. A shorter MEMORY_BANK_CONFIG_DIR / XDG_CONFIG_HOME turns the fast path back on.`);
+    return { owning: () => false, listening: () => false, close: () => Promise.resolve() };
+  }
+  let stopped = false;
+  let immediateRetries = 0;
+  let attempting = false;
+  let own2 = null;
   const server2 = net.createServer((conn) => {
     let buf = "";
     let handled = false;
@@ -53758,32 +54754,88 @@ function startInjectDaemon() {
       })();
     });
   });
-  server2.on("error", (err) => {
-    if (err.code !== "EADDRINUSE") return;
-    const probe = net.connect(sockPath);
-    probe.setTimeout(500, () => probe.destroy());
-    probe.on("connect", () => probe.destroy());
-    probe.on("error", () => {
+  const onListen = () => {
+    attempting = false;
+    immediateRetries = 0;
+    if (stopped) {
       try {
-        fs9.unlinkSync(sockPath);
-        server2.listen(sockPath, onListen);
+        server2.close();
       } catch {
       }
-    });
-  });
-  const onListen = () => {
+      return;
+    }
     try {
-      fs9.chmodSync(sockPath, 384);
+      fs11.chmodSync(sockPath, 384);
     } catch {
     }
+    const id = socketIdentity(sockPath);
+    own2 = id ? { ino: id.ino, ctimeMs: id.ctimeMs } : null;
     void initEmbeddings().catch(() => {
     });
+    void removeDeadSockets(path9.dirname(sockPath), sockPath);
   };
-  try {
-    server2.listen(sockPath, onListen);
-    server2.unref();
-  } catch {
-  }
+  server2.on("listening", onListen);
+  const tryListen = () => {
+    if (stopped || attempting || server2.listening) return;
+    attempting = true;
+    try {
+      server2.listen(sockPath);
+    } catch {
+      attempting = false;
+    }
+  };
+  server2.on("error", (err) => {
+    if (err.code !== "EADDRINUSE") {
+      attempting = false;
+      return;
+    }
+    void (async () => {
+      let retry = false;
+      try {
+        if (await removeIfDead(sockPath, OWN_SOCKET_MIN_AGE_MS)) retry = true;
+        else if (!nameExists(sockPath)) retry = true;
+      } finally {
+        attempting = false;
+      }
+      if (retry && immediateRetries < 1) {
+        immediateRetries++;
+        tryListen();
+      }
+    })();
+  });
+  const tick = () => {
+    if (stopped) return;
+    immediateRetries = 0;
+    if (!server2.listening) return tryListen();
+    if (!fs11.existsSync(sockPath)) {
+      own2 = null;
+      try {
+        server2.close();
+      } catch {
+      }
+      tryListen();
+    }
+  };
+  const timer = setInterval(tick, RECLAIM_MS);
+  timer.unref();
+  server2.unref();
+  tryListen();
+  const owning = () => {
+    if (!server2.listening || !own2) return false;
+    const now = socketIdentity(sockPath);
+    return now !== null && now.ino === own2.ino && now.ctimeMs === own2.ctimeMs;
+  };
+  return {
+    owning,
+    listening: () => server2.listening,
+    close: () => new Promise((resolve2) => {
+      stopped = true;
+      clearInterval(timer);
+      own2 = null;
+      if (!server2.listening) return resolve2();
+      server2.close(() => resolve2());
+    })
+  };
 }
 
 // node_modules/marked/lib/marked.esm.js
@@ -54944,40 +55996,27 @@ var Ut = b.parse;
 var Kt = x.lex;
 
 // src/show.ts
-function parseJsonlMessages(lines) {
-  const messages = [];
-  for (const line of lines) {
-    try {
-      messages.push(JSON.parse(line));
-    } catch {
-    }
+function isRenderableMessage(msg) {
+  if (!msg || msg.type !== "user" && msg.type !== "assistant") return false;
+  if (!msg.timestamp) return false;
+  if (!msg.message || !msg.message.content) {
+    if (msg.type === "assistant" && msg.message?.usage) return true;
+    return false;
   }
-  return messages;
+  if (Array.isArray(msg.message.content) && msg.message.content.length === 0) {
+    if (msg.type === "assistant" && msg.message?.usage) return true;
+    return false;
+  }
+  return true;
 }
-function formatConversationAsMarkdown(jsonl, startLine, endLine) {
-  const allLines = jsonl.trim().split("\n").filter((line) => line.trim());
-  const lines = startLine !== void 0 || endLine !== void 0 ? allLines.slice(
-    startLine !== void 0 ? startLine - 1 : 0,
-    endLine !== void 0 ? endLine : void 0
-  ) : allLines;
-  const allMessages = parseJsonlMessages(lines);
-  const messages = allMessages.filter((msg) => {
-    if (msg.type !== "user" && msg.type !== "assistant") return false;
-    if (!msg.timestamp) return false;
-    if (!msg.message || !msg.message.content) {
-      if (msg.type === "assistant" && msg.message?.usage) return true;
-      return false;
-    }
-    if (Array.isArray(msg.message.content) && msg.message.content.length === 0) {
-      if (msg.type === "assistant" && msg.message?.usage) return true;
-      return false;
-    }
-    return true;
-  });
-  if (messages.length === 0) {
-    return "";
-  }
-  const firstMessage = messages[0];
+function clipText(text, max) {
+  if (text.length <= max) return text;
+  let cut = text.slice(0, max);
+  if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+  return `${cut}
+\u2026[+${text.length - cut.length} chars not shown \u2014 read again with full: true]`;
+}
+function markdownHeader(firstMessage) {
   let output2 = "# Conversation\n\n";
   output2 += "## Metadata\n\n";
   if (firstMessage.sessionId) {
@@ -55002,130 +56041,121 @@ function formatConversationAsMarkdown(jsonl, startLine, endLine) {
   }
   output2 += "---\n\n";
   output2 += "## Messages\n\n";
-  let inSidechain = false;
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-    const timestamp = new Date(msg.timestamp).toLocaleString();
-    const messageId = msg.uuid || `msg-${i}`;
-    if (msg.type === "user" && Array.isArray(msg.message.content)) {
-      const hasOnlyToolResults = msg.message.content.every((block) => block.type === "tool_result");
-      if (hasOnlyToolResults) {
-        continue;
-      }
+  return output2;
+}
+var SIDECHAIN_START = "\n---\n**\u{1F500} SIDECHAIN START**\n---\n\n";
+var SIDECHAIN_END = "\n---\n**\u{1F500} SIDECHAIN END**\n---\n\n";
+function renderMarkdownMessage(messages, i, caps) {
+  const msg = messages[i];
+  const timestamp = new Date(msg.timestamp).toLocaleString();
+  const messageId = msg.uuid || `msg-${i}`;
+  if (msg.type === "user" && Array.isArray(msg.message.content)) {
+    const hasOnlyToolResults = msg.message.content.every((block) => block.type === "tool_result");
+    if (hasOnlyToolResults) {
+      return null;
     }
-    if (msg.isSidechain && !inSidechain) {
-      output2 += "\n---\n";
-      output2 += "**\u{1F500} SIDECHAIN START**\n";
-      output2 += "---\n\n";
-      inSidechain = true;
-    } else if (!msg.isSidechain && inSidechain) {
-      output2 += "\n---\n";
-      output2 += "**\u{1F500} SIDECHAIN END**\n";
-      output2 += "---\n\n";
-      inSidechain = false;
-    }
-    let roleLabel;
-    if (msg.isSidechain) {
-      roleLabel = msg.type === "user" ? "Agent" : "Subagent";
-    } else {
-      roleLabel = msg.type === "user" ? "User" : "Agent";
-    }
-    output2 += `### **${roleLabel}** (${timestamp}) {#${messageId}}
+  }
+  let roleLabel;
+  if (msg.isSidechain) {
+    roleLabel = msg.type === "user" ? "Agent" : "Subagent";
+  } else {
+    roleLabel = msg.type === "user" ? "User" : "Agent";
+  }
+  let output2 = `### **${roleLabel}** (${timestamp}) {#${messageId}}
 
 `;
-    if (msg.type === "user") {
-      if (msg.toolUseResult) {
-        output2 += "**Tool Result:**\n\n";
-        if (typeof msg.toolUseResult === "string") {
-          output2 += `${msg.toolUseResult}
+  if (msg.type === "user") {
+    if (msg.toolUseResult) {
+      output2 += "**Tool Result:**\n\n";
+      if (typeof msg.toolUseResult === "string") {
+        output2 += `${clipText(msg.toolUseResult, caps.blockChars)}
 
 `;
-        } else if (Array.isArray(msg.toolUseResult)) {
-          for (const result of msg.toolUseResult) {
-            output2 += `${result.text || String(result)}
+      } else if (Array.isArray(msg.toolUseResult)) {
+        for (const result of msg.toolUseResult) {
+          output2 += `${clipText(result.text || String(result), caps.blockChars)}
 
 `;
-          }
-        }
-      } else if (typeof msg.message.content === "string") {
-        output2 += `${msg.message.content}
-
-`;
-      } else if (Array.isArray(msg.message.content)) {
-        for (const block of msg.message.content) {
-          if (block.type === "text" && block.text) {
-            output2 += `${block.text}
-
-`;
-          }
         }
       }
-    } else if (msg.type === "assistant") {
-      const content = msg.message.content;
-      if (typeof content === "string") {
-        output2 += `${content}
+    } else if (typeof msg.message.content === "string") {
+      output2 += `${msg.message.content}
 
 `;
-      } else if (Array.isArray(content)) {
-        for (const block of content) {
-          if (block.type === "text" && block.text) {
-            output2 += `${block.text}
+    } else if (Array.isArray(msg.message.content)) {
+      for (const block of msg.message.content) {
+        if (block.type === "text" && block.text) {
+          output2 += `${block.text}
 
 `;
-          } else if (block.type === "tool_use") {
-            output2 += `**Tool Use:** \`${block.name}\`
+        }
+      }
+    }
+  } else if (msg.type === "assistant") {
+    const content = msg.message.content;
+    if (typeof content === "string") {
+      output2 += `${content}
 
 `;
-            const input2 = block.input;
-            if (input2 && typeof input2 === "object") {
-              for (const [key, value] of Object.entries(input2)) {
-                if (typeof value === "string" && value.includes("\n")) {
-                  output2 += `- **${key}:**
+    } else if (Array.isArray(content)) {
+      for (const block of content) {
+        if (block.type === "text" && block.text) {
+          output2 += `${block.text}
+
+`;
+        } else if (block.type === "tool_use") {
+          output2 += `**Tool Use:** \`${block.name}\`
+
+`;
+          const input2 = block.input;
+          if (input2 && typeof input2 === "object") {
+            for (const [key, value] of Object.entries(input2)) {
+              if (typeof value === "string" && value.includes("\n")) {
+                output2 += `- **${key}:**
 \`\`\`
-${value}
+${clipText(value, caps.blockChars)}
 \`\`\`
 `;
-                } else if (typeof value === "string") {
-                  output2 += `- **${key}:** ${value}
+              } else if (typeof value === "string") {
+                output2 += `- **${key}:** ${clipText(value, caps.blockChars)}
 `;
-                } else {
-                  output2 += `- **${key}:**
+              } else {
+                output2 += `- **${key}:**
 \`\`\`json
-${JSON.stringify(value, null, 2)}
+${clipText(JSON.stringify(value, null, 2), caps.blockChars)}
 \`\`\`
 `;
-                }
               }
-              output2 += "\n";
             }
-            const toolUseId = block.id;
-            if (toolUseId) {
-              let foundResult = false;
-              for (let j2 = i + 1; j2 < Math.min(i + 6, messages.length) && !foundResult; j2++) {
-                const laterMsg = messages[j2];
-                if (laterMsg.type === "user" && Array.isArray(laterMsg.message.content)) {
-                  for (const resultBlock of laterMsg.message.content) {
-                    if (resultBlock.type === "tool_result" && resultBlock.tool_use_id === toolUseId) {
-                      const content2 = resultBlock.content;
-                      output2 += "**Result:**\n";
-                      if (typeof content2 === "string") {
-                        if (content2.includes("\n") || content2.length > 100) {
-                          output2 += "```\n";
-                          output2 += content2;
-                          output2 += "\n```\n\n";
-                        } else {
-                          output2 += `${content2}
+            output2 += "\n";
+          }
+          const toolUseId = block.id;
+          if (toolUseId) {
+            let foundResult = false;
+            for (let j2 = i + 1; j2 < Math.min(i + 6, messages.length) && !foundResult; j2++) {
+              const laterMsg = messages[j2];
+              if (laterMsg.type === "user" && Array.isArray(laterMsg.message.content)) {
+                for (const resultBlock of laterMsg.message.content) {
+                  if (resultBlock.type === "tool_result" && resultBlock.tool_use_id === toolUseId) {
+                    const content2 = resultBlock.content;
+                    output2 += "**Result:**\n";
+                    if (typeof content2 === "string") {
+                      if (content2.includes("\n") || content2.length > 100) {
+                        output2 += "```\n";
+                        output2 += clipText(content2, caps.blockChars);
+                        output2 += "\n```\n\n";
+                      } else {
+                        output2 += `${content2}
 
 `;
-                        }
-                      } else if (Array.isArray(content2)) {
-                        output2 += "```json\n";
-                        output2 += JSON.stringify(content2, null, 2);
-                        output2 += "\n```\n\n";
                       }
-                      foundResult = true;
-                      break;
+                    } else if (Array.isArray(content2)) {
+                      output2 += "```json\n";
+                      output2 += clipText(JSON.stringify(content2, null, 2), caps.blockChars);
+                      output2 += "\n```\n\n";
                     }
+                    foundResult = true;
+                    break;
                   }
                 }
               }
@@ -55133,34 +56163,642 @@ ${JSON.stringify(value, null, 2)}
           }
         }
       }
-      if (msg.message.usage) {
-        const usage = msg.message.usage;
-        output2 += `_in: ${(usage.input_tokens || 0).toLocaleString()}`;
-        if (usage.cache_read_input_tokens) {
-          output2 += ` | cache read: ${usage.cache_read_input_tokens.toLocaleString()}`;
-        }
-        if (usage.cache_creation_input_tokens) {
-          output2 += ` | cache create: ${usage.cache_creation_input_tokens.toLocaleString()}`;
-        }
-        output2 += ` | out: ${(usage.output_tokens || 0).toLocaleString()}_
+    }
+    if (msg.message.usage) {
+      const usage = msg.message.usage;
+      output2 += `_in: ${(usage.input_tokens || 0).toLocaleString()}`;
+      if (usage.cache_read_input_tokens) {
+        output2 += ` | cache read: ${usage.cache_read_input_tokens.toLocaleString()}`;
+      }
+      if (usage.cache_creation_input_tokens) {
+        output2 += ` | cache create: ${usage.cache_creation_input_tokens.toLocaleString()}`;
+      }
+      output2 += ` | out: ${(usage.output_tokens || 0).toLocaleString()}_
 
 `;
+    }
+  }
+  return output2;
+}
+var READ_MAX_OUTPUT_CHARS = 4e4;
+var READ_MAX_BLOCK_CHARS = 2e3;
+var READ_MAX_RAW_CHARS = 8e6;
+var TOOL_RESULT_LOOKAHEAD_LINES = 8;
+async function readConversationRange(filePath, opts = {}) {
+  const { startLine, endLine } = opts;
+  const maxChars = opts.maxChars ?? READ_MAX_OUTPUT_CHARS;
+  const startChar = opts.startChar ?? 0;
+  if (startLine !== void 0 && endLine !== void 0 && startLine > endLine) {
+    throw new Error(`Invalid line range: startLine ${startLine} is after endLine ${endLine}`);
+  }
+  const range = await readArchiveLineRange(filePath, {
+    startLine,
+    endLine,
+    lookahead: TOOL_RESULT_LOOKAHEAD_LINES,
+    maxChars: READ_MAX_RAW_CHARS
+  });
+  const firstLine = startLine ?? 1;
+  const inRangeLines = range.lines.filter((l3) => endLine === void 0 || l3.line <= endLine);
+  if (inRangeLines.length === 0) {
+    throw new Error(
+      `Line range ${firstLine}-${endLine ?? "end"} is outside the file: it has ${range.totalLines} lines`
+    );
+  }
+  const lastLineRead = inRangeLines[inRangeLines.length - 1].line;
+  const entries = [];
+  for (const { line, text } of range.lines) {
+    let msg;
+    try {
+      msg = JSON.parse(text);
+    } catch {
+      continue;
+    }
+    if (isRenderableMessage(msg)) entries.push({ line, msg });
+  }
+  const messages = entries.map((e) => e.msg);
+  const shown = entries.filter((e) => e.line <= lastLineRead);
+  if (shown.length === 0) {
+    return `_No user or assistant messages in lines ${firstLine}-${lastLineRead}._
+`;
+  }
+  const caps = { blockChars: opts.full ? Infinity : READ_MAX_BLOCK_CHARS };
+  let output2 = markdownHeader(shown[0].msg);
+  let inSidechain = false;
+  let rendered = 0;
+  let next = null;
+  let startCharPending = startChar > 0;
+  for (let i = 0; i < shown.length; i++) {
+    const { line, msg } = shown[i];
+    const body = renderMarkdownMessage(messages, i, caps);
+    if (body === null) continue;
+    let from = 0;
+    if (startCharPending) {
+      startCharPending = false;
+      if (startChar >= body.length) {
+        throw new Error(
+          `startChar ${startChar} is past the end of the message at line ${line}: it has ${body.length} characters` + (opts.full ? "" : " (tool inputs/results clipped \u2014 an offset from a full: true answer needs full: true)")
+        );
+      }
+      from = startChar;
+      if (/[\uDC00-\uDFFF]/.test(body[from]) && /[\uD800-\uDBFF]/.test(body[from - 1] ?? "")) from--;
+    }
+    let marker = "";
+    if (msg.isSidechain && !inSidechain) marker = SIDECHAIN_START;
+    else if (!msg.isSidechain && inSidechain) marker = SIDECHAIN_END;
+    const lead = marker + (from > 0 ? `\u2026[message at line ${line} continues from character ${from} of ${body.length}]
+
+` : "");
+    const rest = from > 0 ? body.slice(from) : body;
+    const room = maxChars - output2.length - lead.length;
+    if (rest.length > room) {
+      if (rendered > 0) {
+        next = { line, char: 0 };
+        break;
+      }
+      let cut = rest.slice(0, Math.max(1, room));
+      if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.length > 1 ? cut.slice(0, -1) : rest.slice(0, 2);
+      const upTo = from + cut.length;
+      if (upTo < body.length) {
+        output2 += `${lead}${cut}
+
+\u2026[message clipped: characters ${from}-${upTo - 1} of ${body.length} shown]
+
+`;
+        if (marker) inSidechain = !inSidechain;
+        next = { line, char: upTo };
+        break;
+      }
+    }
+    output2 += lead + rest;
+    if (marker) inSidechain = !inSidechain;
+    rendered++;
+  }
+  if (startCharPending) {
+    throw new Error(`startChar ${startChar} was given, but lines ${firstLine}-${lastLineRead} show no message of their own to apply it to`);
+  }
+  if (inSidechain) {
+    output2 += SIDECHAIN_END;
+  }
+  const lastCollected = range.lines[range.lines.length - 1].line;
+  const lineFollows = async (line) => {
+    if (endLine !== void 0 && line + 1 > endLine) return false;
+    if (range.totalLines !== null) return line + 1 <= range.totalLines;
+    return line + 1 <= lastCollected || archiveHasLine(filePath, line + 1);
+  };
+  let stoppedAtRawCeiling = false;
+  if (next === null && range.stoppedEarly && await lineFollows(lastLineRead)) {
+    next = { line: lastLineRead + 1, char: 0 };
+    stoppedAtRawCeiling = true;
+  }
+  const moreToRead = next !== null && (next.char > 0 || (endLine === void 0 || next.line <= endLine) && (range.totalLines === null || next.line <= range.totalLines));
+  if (next !== null && moreToRead) {
+    const total = range.totalLines === null ? "" : ` of ${range.totalLines}`;
+    let shownSoFar;
+    if (next.char > 0) {
+      shownSoFar = `lines ${firstLine}-${next.line}${total} shown, the message at line ${next.line} up to character ${next.char}. Without startChar the message starts over from its first character` + (await lineFollows(next.line) ? ` \u2014 to skip the rest of it instead, start at line ${next.line + 1}` : " (nothing follows it in the requested range)");
+    } else if (stoppedAtRawCeiling) {
+      shownSoFar = `lines ${firstLine}-${next.line - 1} shown (the limit is on the file text one call reads, not on this output)`;
+    } else {
+      shownSoFar = `lines ${firstLine}-${next.line - 1}${total} shown`;
+    }
+    const args = [`startLine=${next.line}`];
+    if (next.char > 0) args.push(`startChar=${next.char}`);
+    if (endLine !== void 0) args.push(`endLine=${endLine}`);
+    if (opts.full) args.push("full=true");
+    const limitChars = stoppedAtRawCeiling ? READ_MAX_RAW_CHARS : maxChars;
+    output2 += `
+---
+_Output truncated at the ${limitChars}-char limit: ${shownSoFar}. Continue with ${args.join(", ")}._
+`;
+  }
+  return output2;
+}
+async function archiveHasLine(filePath, line) {
+  try {
+    const probe = await readArchiveLineRange(filePath, { startLine: line, endLine: line, maxChars: 1 });
+    return probe.lines.length > 0;
+  } catch {
+    return true;
+  }
+}
+function escapeHtml(text) {
+  const map2 = {
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;"
+  };
+  return text.replace(/[&<>"']/g, (m2) => map2[m2]);
+}
+var SAFE_LINK = /^(?:https?:|mailto:|#)/i;
+var conversationMarkdown = new B({
+  renderer: {
+    html({ text }) {
+      return escapeHtml(text);
+    },
+    link({ href, tokens }) {
+      const label = this.parser.parseInline(tokens);
+      if (!SAFE_LINK.test(href.trim())) return label;
+      return `<a href="${escapeHtml(href)}" rel="noopener noreferrer">${label}</a>`;
+    },
+    image({ href, text }) {
+      return escapeHtml(`![${text}](${href})`);
+    }
+  }
+});
+
+// src/ontology-browse.ts
+var ONTOLOGY_MAX_OUTPUT_CHARS = 2e4;
+var CLOSING_RESERVE_CHARS = 600;
+var BODY_MAX_CHARS = ONTOLOGY_MAX_OUTPUT_CHARS - CLOSING_RESERVE_CHARS;
+var ONTOLOGY_FACT_CHARS = 300;
+var ONTOLOGY_DEFAULT_FACTS_PER_CATEGORY = 5;
+var ONTOLOGY_DEFAULT_CATEGORIES_OVERVIEW = 8;
+var ONTOLOGY_DEFAULT_CATEGORIES_DOMAIN = 200;
+var ONTOLOGY_DEFAULT_CATEGORIES_WITH_FACTS = 20;
+var ONTOLOGY_MAX_CATEGORIES = 200;
+var CATEGORY_BLOCK_MIN_CHARS = 16;
+var FACT_LINES_MIN_CHARS = 40;
+var plural2 = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+var sum = (entries) => entries.reduce((total, entry) => total + entry.factCount, 0);
+function formatOntologyBrowse(db, params) {
+  const factsPerCategory = params.facts_per_category ?? (params.category ? ONTOLOGY_DEFAULT_FACTS_PER_CATEGORY : 0);
+  const withFacts = factsPerCategory > 0;
+  const maxCategories = params.max_categories ?? (withFacts ? ONTOLOGY_DEFAULT_CATEGORIES_WITH_FACTS : params.domain ? ONTOLOGY_DEFAULT_CATEGORIES_DOMAIN : ONTOLOGY_DEFAULT_CATEGORIES_OVERVIEW);
+  const offset = params.category_offset ?? 0;
+  const tree = getOntologyTree(db, { domain: params.domain, category: params.category, factsPerCategory: 0 });
+  let output2 = "# Ontology Tree\n\n";
+  if (tree.length === 0) {
+    const filtered = params.domain || params.category;
+    return output2 + (filtered ? "_No domain or category matches the filter._\n" : "_No ontology data found. Facts are classified automatically as they are extracted._\n");
+  }
+  const domains = tree.map(({ domain: domain2, categories }) => {
+    const nonEmpty = categories.filter((entry) => entry.factCount > 0).sort((a, b2) => b2.factCount - a.factCount || a.category.name.localeCompare(b2.category.name));
+    return {
+      domain: domain2,
+      listed: nonEmpty.slice(offset, offset + maxCategories),
+      rest: nonEmpty.slice(offset + maxCategories),
+      categoryCount: nonEmpty.length,
+      emptyCount: categories.length - nonEmpty.length,
+      factCount: sum(nonEmpty)
+    };
+  }).sort((a, b2) => b2.factCount - a.factCount || a.domain.name.localeCompare(b2.domain.name));
+  const totalCategories = domains.reduce((n, d2) => n + d2.categoryCount, 0);
+  const totalFacts = domains.reduce((n, d2) => n + d2.factCount, 0);
+  output2 += `${plural2(domains.length, "domain", "domains")} \xB7 ${plural2(totalCategories, "category", "categories")} \xB7 ${plural2(totalFacts, "active fact", "active facts")}`;
+  if (params.domain || params.category) output2 += " match the filter";
+  output2 += "\n\n";
+  const factsByCategory = /* @__PURE__ */ new Map();
+  if (withFacts) {
+    const ids = [];
+    let lowerBound = 0;
+    for (const entry of domains.flatMap((d2) => d2.listed)) {
+      if (lowerBound > ONTOLOGY_MAX_OUTPUT_CHARS) break;
+      ids.push(entry.category.id);
+      lowerBound += CATEGORY_BLOCK_MIN_CHARS + FACT_LINES_MIN_CHARS * Math.min(entry.factCount, factsPerCategory);
+    }
+    if (ids.length > 0) {
+      for (const { categories } of getOntologyTree(db, { categoryIds: ids, factsPerCategory })) {
+        for (const entry of categories) factsByCategory.set(entry.category.id, entry.facts);
       }
     }
   }
-  if (inSidechain) {
-    output2 += "\n---\n";
-    output2 += "**\u{1F500} SIDECHAIN END**\n";
-    output2 += "---\n\n";
+  const BLOCK_FRAME_CHARS = 200;
+  const categoryBlock = (entry, room) => {
+    if (!withFacts) {
+      const line = `- ${entry.category.name} (${entry.factCount})
+`;
+      return line.length <= room ? { text: line, cutShort: false } : null;
+    }
+    let heading = `### ${entry.category.name}`;
+    if (entry.category.description) heading += ` \u2014 ${clipLine(entry.category.description, ONTOLOGY_FACT_CHARS)}`;
+    const facts = factsByCategory.get(entry.category.id) ?? [];
+    let body = "";
+    let shown = 0;
+    for (const fact of facts) {
+      let lines = `- **[${fact.category}]** ${clipLine(fact.fact, ONTOLOGY_FACT_CHARS)}
+`;
+      lines += `  - ID: ${fact.id} | Confirmed: ${fact.consolidated_count}x | ${fact.created_at.slice(0, 10)}
+`;
+      if (params.include_relations) {
+        const related = summarizeRelated(getRelatedFacts(db, fact.id, 1));
+        for (const rel of related.shown) lines += `  - \u2194 [${rel.relationType}] "${rel.text}"
+`;
+        if (related.omitted > 0) lines += `  - _\u2026and ${related.omitted} more related facts (explore_graph lists them)._
+`;
+      }
+      if (heading.length + BLOCK_FRAME_CHARS + body.length + lines.length > room) break;
+      body += lines;
+      shown++;
+    }
+    if (shown === 0) return null;
+    const cutShort = shown < facts.length;
+    let block = `${heading}
+(${plural2(entry.factCount, "fact", "facts")}${shown < entry.factCount ? `, top ${shown} shown` : ""})
+
+${body}`;
+    if (shown < entry.factCount) {
+      block += cutShort ? `- _\u2026and ${entry.factCount - shown} more facts not shown (output limit) \u2014 narrow the filter or use search_facts._
+` : `- _\u2026and ${entry.factCount - shown} more facts \u2014 raise \`facts_per_category\` or use search_facts._
+`;
+    }
+    return { text: block + "\n", cutShort };
+  };
+  let cutCategories = 0;
+  let cutFacts = 0;
+  let cutDomains = 0;
+  let full = false;
+  for (const d2 of domains) {
+    if (full) {
+      cutDomains++;
+      cutCategories += d2.categoryCount;
+      cutFacts += d2.factCount;
+      continue;
+    }
+    let header = `## ${d2.domain.name} \u2014 ${plural2(d2.factCount, "fact", "facts")} in ${plural2(d2.categoryCount, "category", "categories")}
+`;
+    if (d2.domain.description) header += `> ${clipLine(d2.domain.description, ONTOLOGY_FACT_CHARS)}
+`;
+    if (offset > 0) {
+      header += d2.listed.length > 0 ? `_Largest first: categories ${offset + 1}-${offset + d2.listed.length} of ${d2.categoryCount}._
+` : `_category_offset ${offset} is past the last of this domain's ${plural2(d2.categoryCount, "category", "categories")}._
+`;
+    }
+    header += "\n";
+    if (output2.length + header.length > BODY_MAX_CHARS) {
+      full = true;
+      cutDomains++;
+      cutCategories += d2.categoryCount;
+      cutFacts += d2.factCount;
+      continue;
+    }
+    output2 += header;
+    let listedHere = 0;
+    for (const entry of d2.listed) {
+      const block = full ? null : categoryBlock(entry, BODY_MAX_CHARS - output2.length);
+      if (!block) {
+        full = true;
+        cutCategories++;
+        cutFacts += entry.factCount;
+        continue;
+      }
+      output2 += block.text;
+      listedHere++;
+      if (block.cutShort) full = true;
+    }
+    if (full) {
+      cutCategories += d2.rest.length;
+      cutFacts += sum(d2.rest);
+      if (listedHere < d2.categoryCount) cutDomains++;
+      continue;
+    }
+    const tail = [];
+    if (d2.rest.length > 0) {
+      const raise = maxCategories < ONTOLOGY_MAX_CATEGORIES ? ", raise `max_categories`" : "";
+      tail.push(`- _\u2026and ${plural2(d2.rest.length, "more category", "more categories")} (${plural2(sum(d2.rest), "fact", "facts")}) \u2014 narrow with \`category\`${raise}, or list the next ones with \`category_offset: ${offset + maxCategories}\`._`);
+    }
+    if (d2.emptyCount > 0) {
+      tail.push(`- _${plural2(d2.emptyCount, "empty category", "empty categories")} not listed._`);
+    }
+    if (tail.length > 0) output2 += tail.join("\n") + "\n";
+    if (!withFacts || tail.length > 0) output2 += "\n";
   }
+  if (full && cutCategories === 0) {
+    output2 += `---
+_Output limit (${ONTOLOGY_MAX_OUTPUT_CHARS} chars) reached inside the last category shown \u2014 narrow the \`category\` filter or lower \`facts_per_category\`._
+`;
+  } else if (full) {
+    output2 += `---
+_Output limit (${ONTOLOGY_MAX_OUTPUT_CHARS} chars) reached: ${plural2(cutCategories, "category", "categories")} (${plural2(cutFacts, "fact", "facts")}) in ${plural2(cutDomains, "domain", "domains")} not shown \u2014 narrow the \`domain\` / \`category\` filter._
+`;
+  } else if (!withFacts) {
+    output2 += "---\n_Names and counts only. Pass `domain` to list more of one domain's categories, `category` to read the top facts of the matching categories (`facts_per_category` sets how many)._\n";
+  }
+  return output2;
+}
+
+// src/facts-tool.ts
+var TRACE_MAX_SOURCES = 5;
+var EXPLORE_MAX_CONNECTED = 20;
+var EXPLORE_FACT_CHARS = 300;
+var RELATED_DECAY = 0.6;
+var RELATED_MIN_RELEVANCE = 0.2;
+var similarityOf = (distance) => l2DistanceToSimilarity(distance).toFixed(3);
+function formatFactSearch(db, queryEmbedding, params) {
+  const wantedTags = (params.tags ?? []).map((t) => t.trim().replace(/\s+/g, "-").toLowerCase()).filter(Boolean);
+  const filter = (fact) => {
+    if (params.category && fact.category !== params.category) return false;
+    if (params.coding_agent && (fact.coding_agent || "claude-code") !== params.coding_agent) return false;
+    if (wantedTags.length) {
+      const have = new Set(fact.tags ?? []);
+      if (!wantedTags.every((t) => have.has(t))) return false;
+    }
+    return true;
+  };
+  const { results, truncated, examined } = searchFactsFiltered(db, queryEmbedding, {
+    project: params.project,
+    limit: params.limit,
+    filter,
+    foldSameText: true
+  });
+  const agentLabel = params.coding_agent ? ` | Agent: ${params.coding_agent}` : "";
+  let output2 = `# Facts Search Results
+
+Query: "${params.query}"
+Project: ${params.project}${agentLabel}
+Results: ${results.length}
+
+`;
+  if (results.length === 0) {
+    output2 += "_No matching facts found._\n";
+  }
+  const domainMap = new Map(listDomains(db).map((d2) => [d2.id, d2.name]));
+  const catMap = new Map(listCategories(db).map((c) => [c.id, { name: c.name, domainId: c.domain_id }]));
+  for (const { fact, distance, duplicateIds } of results) {
+    const catInfo = fact.ontology_category_id ? catMap.get(fact.ontology_category_id) : void 0;
+    const domainName = catInfo ? domainMap.get(catInfo.domainId) ?? "" : "";
+    const catName = catInfo ? catInfo.name : "";
+    output2 += `## [${fact.category}] ${fact.fact}
+`;
+    output2 += `- ID: ${fact.id}
+`;
+    if (duplicateIds.length) output2 += `- Same sentence also stored as: ${duplicateIds.join(", ")}
+`;
+    if (fact.tags && fact.tags.length) output2 += `- Tags: ${fact.tags.join(", ")}
+`;
+    const factAgent = fact.coding_agent || "claude-code";
+    output2 += `- Scope: ${fact.scope_type}${fact.scope_project ? ` (${fact.scope_project})` : ""} | Agent: ${factAgent}
+`;
+    output2 += `- Confirmed: ${fact.consolidated_count}x | Similarity: ${similarityOf(distance)}
+`;
+    if (domainName) output2 += `- Ontology: ${domainName}/${catName}
+`;
+    output2 += `- Created: ${fact.created_at}
+`;
+    if (params.include_revisions) {
+      const revisions = getRevisions(db, fact.id);
+      if (revisions.length > 0) {
+        output2 += "- Revisions:\n";
+        for (const rev of revisions) {
+          output2 += `  - ${rev.created_at}: "${rev.previous_fact}" \u2192 "${rev.new_fact}" (${rev.reason})
+`;
+        }
+      }
+    }
+    const related = summarizeRelated(getRelatedFacts(db, fact.id, 1, RELATED_DECAY, RELATED_MIN_RELEVANCE, params.project));
+    if (related.shown.length > 0) {
+      output2 += `- Related:
+`;
+      for (const rel of related.shown) output2 += `  - [${rel.relationType}] ${rel.text}
+`;
+      if (related.omitted > 0) output2 += `  - _\u2026and ${related.omitted} more related facts (explore_graph lists them)._
+`;
+    }
+    output2 += "\n";
+  }
+  if (truncated) {
+    output2 += `_Note: only the nearest ${examined} facts could be examined (vector ceiling ${FACT_KNN_MAX}) and ${results.length} passed the project/category/agent/tag conditions \u2014 more may exist; narrow the query._
+`;
+  }
+  return output2;
+}
+function formatFactTrace(db, queryEmbedding, params) {
+  const { results } = searchFactsFiltered(db, queryEmbedding, { project: params.project, limit: params.limit, threshold: 0.5 });
+  if (results.length === 0) {
+    return "No matching facts found to trace.";
+  }
+  let output2 = `# Fact Provenance Trace
+
+Query: "${params.query}"
+
+`;
+  const sourceCount = db.prepare(
+    `SELECT COUNT(*) AS n FROM exchanges WHERE id IN (SELECT value FROM json_each(?))`
+  );
+  const sourceRows = db.prepare(`
+    SELECT project, timestamp, substr(user_message, 1, 200) AS user_head, archive_path, line_start, line_end
+    FROM exchanges
+    WHERE id IN (SELECT value FROM json_each(?))
+    ORDER BY timestamp DESC, id
+    LIMIT ?
+  `);
+  for (const { fact, distance } of results) {
+    output2 += `## ${fact.fact}
+`;
+    output2 += `- Category: ${fact.category} | Scope: ${fact.scope_type}
+`;
+    output2 += `- Similarity: ${similarityOf(distance)} | Confirmed: ${fact.consolidated_count}x
+`;
+    output2 += `- Created: ${fact.created_at}
+`;
+    const sourceIds = [...new Set(fact.source_exchange_ids ?? [])];
+    if (sourceIds.length > 0) {
+      const idsJson = JSON.stringify(sourceIds);
+      const indexed = sourceCount.get(idsJson).n;
+      const shown = sourceRows.all(idsJson, TRACE_MAX_SOURCES);
+      output2 += `
+### Source Conversations
+
+`;
+      for (const exchange of shown) {
+        output2 += `- **[${exchange.project}, ${exchange.timestamp.slice(0, 10)}]**
+`;
+        output2 += `  "${exchange.user_head.replace(/\s+/g, " ")}..."
+`;
+        output2 += `  Lines ${exchange.line_start}-${exchange.line_end} in ${exchange.archive_path}
+
+`;
+      }
+      if (indexed > shown.length) {
+        output2 += `_\u2026and ${indexed - shown.length} more source exchanges (the newest ${shown.length} are shown)._
+
+`;
+      }
+      if (indexed < sourceIds.length) {
+        output2 += `_${sourceIds.length - indexed} recorded source ids are no longer in the index._
+
+`;
+      }
+    } else {
+      output2 += `
+_Source exchanges not available._
+
+`;
+    }
+    const revisions = getRevisions(db, fact.id);
+    if (revisions.length > 0) {
+      output2 += `### Revision History
+
+`;
+      for (const rev of revisions) {
+        output2 += `- ${rev.created_at.slice(0, 10)}: "${rev.previous_fact}" \u2192 "${rev.new_fact}" (${rev.reason})
+`;
+      }
+      output2 += "\n";
+    }
+    const related = summarizeRelated(getRelatedFacts(db, fact.id, 1, RELATED_DECAY, RELATED_MIN_RELEVANCE, params.project));
+    if (related.shown.length > 0) {
+      output2 += `### Related Facts (1-hop)
+
+`;
+      for (const rel of related.shown) output2 += `- **[${rel.relationType}]** ${rel.text}
+`;
+      if (related.omitted > 0) output2 += `- _\u2026and ${related.omitted} more related facts (explore_graph lists them)._
+`;
+      output2 += "\n";
+    }
+  }
+  return output2;
+}
+function formatCrossProjectInsights(db, queryEmbedding, params) {
+  const { results } = searchFactsFiltered(db, queryEmbedding, {
+    project: params.currentProject,
+    scope: "other-projects",
+    limit: params.limit,
+    threshold: 0.5
+  });
+  if (results.length === 0) {
+    return `No cross-project insights found for "${params.query}". Similar decisions may not exist in other projects yet.`;
+  }
+  const byProject = /* @__PURE__ */ new Map();
+  for (const { fact, distance } of results) {
+    const proj = fact.scope_project || "global";
+    if (!byProject.has(proj)) byProject.set(proj, []);
+    byProject.get(proj).push({ fact, distance });
+  }
+  let output2 = `# Cross-Project Insights
+
+Query: "${params.query}"
+Excluding: ${params.currentProject}
+
+`;
+  for (const [project, facts] of byProject) {
+    output2 += `## Project: ${project}
+
+`;
+    for (const { fact, distance } of facts) {
+      const similarity = Math.round(l2DistanceToSimilarity(distance) * 100);
+      output2 += `- **[${fact.category}]** ${fact.fact} _(${similarity}% relevant, ${fact.created_at.slice(0, 10)})_
+`;
+    }
+    output2 += "\n";
+  }
+  return output2;
+}
+function formatGraphExploration(db, queryEmbedding, params) {
+  const { results: seedFacts } = searchFactsFiltered(db, queryEmbedding, { project: params.project ?? null, limit: 3, threshold: 0.5 });
+  if (seedFacts.length === 0) {
+    return `No facts found related to "${params.query}" to start graph exploration.`;
+  }
+  const domainMap = new Map(listDomains(db).map((d2) => [d2.id, d2.name]));
+  const categoryMap = new Map(listCategories(db).map((c) => [c.id, { name: c.name, domainId: c.domain_id }]));
+  let output2 = `# Knowledge Graph Exploration
+
+Seed: "${params.query}" | Depth: ${params.hops} hops
+
+`;
+  const allDiscovered = /* @__PURE__ */ new Set();
+  for (const { fact: seedFact, distance } of seedFacts) {
+    const similarity = Math.round(l2DistanceToSimilarity(distance) * 100);
+    const catInfo = seedFact.ontology_category_id ? categoryMap.get(seedFact.ontology_category_id) : void 0;
+    const domainName = catInfo ? domainMap.get(catInfo.domainId) ?? "?" : "?";
+    const catName = catInfo ? catInfo.name : "?";
+    output2 += `## Seed: ${seedFact.fact}
+`;
+    output2 += `- [${domainName}/${catName}] ${seedFact.category} | ${similarity}% relevant
+
+`;
+    allDiscovered.add(seedFact.id);
+    const related = getRelatedFacts(db, seedFact.id, params.hops);
+    if (related.length === 0) {
+      output2 += `_No connected facts found._
+
+`;
+      continue;
+    }
+    output2 += `### Connected Facts (${related.length} found, up to ${params.hops} hops)
+
+`;
+    let listed = 0;
+    let unlisted = 0;
+    for (const { fact: relFact, relation } of related) {
+      if (allDiscovered.has(relFact.id)) continue;
+      allDiscovered.add(relFact.id);
+      if (listed >= EXPLORE_MAX_CONNECTED) {
+        unlisted++;
+        continue;
+      }
+      listed++;
+      const relCatInfo = relFact.ontology_category_id ? categoryMap.get(relFact.ontology_category_id) : void 0;
+      const relDomain = relCatInfo ? domainMap.get(relCatInfo.domainId) ?? "?" : "?";
+      const relCat = relCatInfo ? relCatInfo.name : "?";
+      output2 += `- **[${relation.relation_type}]** ${clipLine(relFact.fact, EXPLORE_FACT_CHARS)}
+`;
+      output2 += `  [${relDomain}/${relCat}] ${relFact.category} | ${relFact.created_at.slice(0, 10)}
+`;
+      if (relation.reasoning) {
+        output2 += `  _${clipLine(relation.reasoning, EXPLORE_FACT_CHARS)}_
+`;
+      }
+    }
+    if (unlisted > 0) {
+      output2 += `- _\u2026and ${unlisted} more connected facts (search_facts finds them by meaning)._
+`;
+    }
+    output2 += "\n";
+  }
+  output2 += `
+_Total unique facts discovered: ${allDiscovered.size}_
+`;
   return output2;
 }
 
 // src/llm.ts
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import fs15 from "node:fs";
-import path11 from "node:path";
-import os4 from "node:os";
+import fs17 from "node:fs";
+import path14 from "node:path";
+import os5 from "node:os";
 
 // src/llm-error-class.ts
 function extractStatus(x2) {
@@ -55224,17 +56862,17 @@ function classifyLlmError(err) {
 }
 
 // src/deps-heal.ts
-import fs10 from "node:fs";
-import path7 from "node:path";
+import fs12 from "node:fs";
+import path10 from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 function pluginRoot() {
-  return path7.resolve(path7.dirname(fileURLToPath2(import.meta.url)), "..");
+  return path10.resolve(path10.dirname(fileURLToPath2(import.meta.url)), "..");
 }
 function selfHealDeps(root, label) {
-  const marker = path7.join(root, ".deps-heal-attempted");
+  const marker = path10.join(root, ".deps-heal-attempted");
   try {
-    fs10.writeFileSync(marker, (/* @__PURE__ */ new Date()).toISOString(), { flag: "wx" });
+    fs12.writeFileSync(marker, (/* @__PURE__ */ new Date()).toISOString(), { flag: "wx" });
   } catch {
     return false;
   }
@@ -55270,7 +56908,7 @@ function noteSdkFailure(err, label, root = pluginRoot()) {
 }
 
 // src/llm.ts
-var LLM_WORKDIR = path11.join(os4.tmpdir(), LLM_WORKDIR_BASENAME);
+var LLM_WORKDIR = path14.join(os5.tmpdir(), LLM_WORKDIR_BASENAME);
 var DEFAULT_LLM_MODEL = "claude-haiku-5-5";
 var ISOLATED_QUERY_OPTIONS = {
   settingSources: [],
@@ -55279,13 +56917,13 @@ var ISOLATED_QUERY_OPTIONS = {
 };
 function llmWorkdir() {
   try {
-    fs15.mkdirSync(LLM_WORKDIR, { recursive: true });
+    fs17.mkdirSync(LLM_WORKDIR, { recursive: true });
   } catch {
   }
   pruneLlmTranscripts();
   return LLM_WORKDIR;
 }
-var PRUNE_MARKER = path11.join(LLM_WORKDIR, ".last-transcript-prune");
+var PRUNE_MARKER = path14.join(LLM_WORKDIR, ".last-transcript-prune");
 var PRUNE_THROTTLE_MS = 60 * 60 * 1e3;
 function transcriptTtlMs() {
   const raw = process.env.MEMORY_BANK_LLM_TRANSCRIPT_TTL_HOURS;
@@ -55295,49 +56933,49 @@ function transcriptTtlMs() {
 function pruneLlmTranscripts(now = Date.now()) {
   try {
     try {
-      const markerAge = now - fs15.statSync(PRUNE_MARKER).mtimeMs;
+      const markerAge = now - fs17.statSync(PRUNE_MARKER).mtimeMs;
       if (markerAge >= 0 && markerAge < PRUNE_THROTTLE_MS) return;
     } catch {
     }
     try {
-      fs15.writeFileSync(PRUNE_MARKER, new Date(now).toISOString());
+      fs17.writeFileSync(PRUNE_MARKER, new Date(now).toISOString());
     } catch {
     }
     const projectsDir = getProjectsDir();
     const ttl = transcriptTtlMs();
     let entries;
     try {
-      entries = fs15.readdirSync(projectsDir);
+      entries = fs17.readdirSync(projectsDir);
     } catch {
       return;
     }
     for (const entry of entries) {
       if (entry !== LLM_WORKDIR_BASENAME && !entry.endsWith(`-${LLM_WORKDIR_BASENAME}`)) continue;
-      const dir = path11.join(projectsDir, entry);
+      const dir = path14.join(projectsDir, entry);
       let stat3;
       try {
-        stat3 = fs15.lstatSync(dir);
+        stat3 = fs17.lstatSync(dir);
       } catch {
         continue;
       }
       if (!stat3.isDirectory()) continue;
       let files;
       try {
-        files = fs15.readdirSync(dir);
+        files = fs17.readdirSync(dir);
       } catch {
         continue;
       }
       for (const file2 of files) {
         if (!file2.endsWith(".jsonl") && !file2.endsWith("-summary.txt")) continue;
-        const filePath = path11.join(dir, file2);
+        const filePath = path14.join(dir, file2);
         try {
-          const fstat = fs15.lstatSync(filePath);
-          if (fstat.isFile() && now - fstat.mtimeMs > ttl) fs15.unlinkSync(filePath);
+          const fstat = fs17.lstatSync(filePath);
+          if (fstat.isFile() && now - fstat.mtimeMs > ttl) fs17.unlinkSync(filePath);
         } catch {
         }
       }
       try {
-        fs15.rmdirSync(dir);
+        fs17.rmdirSync(dir);
       } catch {
       }
     }
@@ -55513,6 +57151,13 @@ You represent their past engineering decisions, preferences, and patterns.
 - 0.7-0.9: inferred from related decisions
 - 0.5-0.7: weak inference, needs verification
 - below 0.5: not enough information`;
+var RELATED_PROMPT_CHARS = 400;
+function isLoginFailure(error62) {
+  const reason = error62 instanceof LlmCallError ? error62.reason : error62;
+  if (extractStatus(reason) === 401) return true;
+  const message = (reason instanceof Error ? reason.message : String(reason)).toLowerCase();
+  return /not logged in|please run \/login|invalid (x-)?api[- ]?key|authentication_error/.test(message);
+}
 async function askAvatar(db, question, project) {
   await initEmbeddings();
   const questionEmbedding = await generateEmbedding(question, "query");
@@ -55535,7 +57180,7 @@ async function askAvatar(db, question, project) {
   const relatedDecisions = [];
   const expandedFactIds = new Set(vectorResults.map((r) => r.fact.id));
   for (const { fact } of vectorResults.slice(0, 5)) {
-    const related = getRelatedFacts(db, fact.id, 1);
+    const related = pickRelated(getRelatedFacts(db, fact.id, 1)).picked;
     for (const { fact: relFact, relation } of related) {
       if (!expandedFactIds.has(relFact.id)) {
         expandedFactIds.add(relFact.id);
@@ -55558,7 +57203,7 @@ async function askAvatar(db, question, project) {
     const domainName = catInfo ? domainMap.get(catInfo.domainId) ?? "Unknown" : "Unknown";
     const catName = catInfo ? catInfo.name : "Unknown";
     factContextLines.push(
-      `[ID:${fact.id}] [${domainName}/${catName}] [${fact.category}] [relation:${relation}] "${fact.fact}" (date: ${fact.created_at.slice(0, 10)})`
+      `[ID:${fact.id}] [${domainName}/${catName}] [${fact.category}] [relation:${relation}] "${clipLine(fact.fact, RELATED_PROMPT_CHARS)}" (date: ${fact.created_at.slice(0, 10)})`
     );
   }
   const prompt = [
@@ -55574,12 +57219,16 @@ async function askAvatar(db, question, project) {
     console.error("ask_avatar: LLM call failed after retries:", error62);
     const cls = classifyLlmError(error62);
     const retriable = cls !== "deterministic";
-    const advice = error62 instanceof LlmRefusalError ? "\uBAA8\uB378\uC774 \uC774 \uC694\uCCAD\uC5D0 \uB2F5\uD558\uAE30\uB97C \uAC70\uC808\uD588\uC2B5\uB2C8\uB2E4. \uAC19\uC740 \uC9C8\uBB38\uC740 \uB2E4\uC2DC \uD574\uB3C4 \uAC19\uC740 \uACB0\uACFC\uC77C \uAC00\uB2A5\uC131\uC774 \uD07D\uB2C8\uB2E4." : retriable ? "\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694." : "\uC774 \uC694\uCCAD\uC740 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uB3C4 \uAC19\uC740 \uC774\uC720\uB85C \uC2E4\uD328\uD569\uB2C8\uB2E4.";
+    const refusal = error62 instanceof LlmRefusalError;
+    const login = !refusal && isLoginFailure(error62);
+    const advice = refusal ? "\uBAA8\uB378\uC774 \uC774 \uC694\uCCAD\uC5D0 \uB2F5\uD558\uAE30\uB97C \uAC70\uC808\uD588\uC2B5\uB2C8\uB2E4. \uAC19\uC740 \uC9C8\uBB38\uC740 \uB2E4\uC2DC \uD574\uB3C4 \uAC19\uC740 \uACB0\uACFC\uC77C \uAC00\uB2A5\uC131\uC774 \uD07D\uB2C8\uB2E4." : login ? "Claude \uC5D0 \uB85C\uADF8\uC778\uB418\uC5B4 \uC788\uC9C0 \uC54A\uAC70\uB098 API \uD0A4\uAC00 \uBC1B\uC544\uB4E4\uC5EC\uC9C0\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4. `/login` \uC73C\uB85C \uB85C\uADF8\uC778(\uB610\uB294 API \uD0A4\uB97C \uC124\uC815)\uD55C \uB4A4 \uB2E4\uC2DC \uBB3C\uC5B4 \uC8FC\uC138\uC694 \u2014 \uAE30\uB2E4\uB824\uC11C\uB294 \uD574\uACB0\uB418\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4." : retriable ? "\uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC8FC\uC138\uC694." : "\uC774 \uC694\uCCAD\uC740 \uB2E4\uC2DC \uC2DC\uB3C4\uD574\uB3C4 \uAC19\uC740 \uC774\uC720\uB85C \uC2E4\uD328\uD569\uB2C8\uB2E4.";
+    const failure2 = refusal ? "refusal" : login ? "login" : cls;
     return {
-      answer: `\u26A0\uFE0F LLM \uD638\uCD9C\uC774 ${retriable ? "\uC7AC\uC2DC\uB3C4 \uD6C4\uC5D0\uB3C4 " : ""}\uC2E4\uD328\uD574 \uB2F5\uBCC0\uC744 \uC0DD\uC131\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4 (${cls}). ${advice}`,
+      answer: `\u26A0\uFE0F LLM \uD638\uCD9C\uC774 ${retriable ? "\uC7AC\uC2DC\uB3C4 \uD6C4\uC5D0\uB3C4 " : ""}\uC2E4\uD328\uD574 \uB2F5\uBCC0\uC744 \uC0DD\uC131\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4 (${login ? "login" : cls}). ${advice}`,
       sources: [],
       confidence: 0,
-      relatedDecisions
+      relatedDecisions,
+      failure: failure2
     };
   }
   const parsed = parseJsonResponse(response);
@@ -55613,9 +57262,52 @@ async function askAvatar(db, question, project) {
 }
 
 // src/mcp-server.ts
-import path12 from "path";
-import fs16 from "fs";
-import os5 from "os";
+import path16 from "path";
+import os6 from "os";
+
+// src/read-guard.ts
+import fs18 from "fs";
+import path15 from "path";
+var ACCESS_DENIED_MESSAGE = "Access denied: path is outside the conversation archive";
+function realpathOfExisting(p) {
+  let current = path15.resolve(p);
+  const rest = [];
+  for (; ; ) {
+    try {
+      return path15.join(fs18.realpathSync(current), ...rest);
+    } catch {
+      const parent = path15.dirname(current);
+      if (parent === current) return path15.join(current, ...rest);
+      rest.unshift(path15.basename(current));
+      current = parent;
+    }
+  }
+}
+function isInside2(candidate, root) {
+  return candidate === root || candidate.startsWith(root + path15.sep);
+}
+function resolveReadableConversation(requestedPath, allowedRoots) {
+  const resolvedPath = path15.resolve(requestedPath);
+  if (!resolvedPath.endsWith(".jsonl") && !resolvedPath.endsWith(".jsonl.zst")) {
+    throw new Error("Invalid file type: only .jsonl files are supported");
+  }
+  const roots = allowedRoots.map(realpathOfExisting);
+  const realDir = realpathOfExisting(path15.dirname(resolvedPath));
+  if (!roots.some((root) => isInside2(realDir, root))) {
+    throw new Error(ACCESS_DENIED_MESSAGE);
+  }
+  const resolvedFile = resolveArchiveFile(resolvedPath);
+  if (!resolvedFile) {
+    throw new Error(`File not found: ${resolvedPath}`);
+  }
+  const realFile = fs18.realpathSync(resolvedFile);
+  if (!roots.some((root) => isInside2(realFile, root))) {
+    throw new Error(ACCESS_DENIED_MESSAGE);
+  }
+  return realFile;
+}
+
+// src/mcp-server.ts
 var SearchModeEnum = external_exports.enum(["vector", "text", "both"]);
 var ResponseFormatEnum = external_exports.enum(["markdown", "json"]);
 var SearchInputSchema = external_exports.object({
@@ -55632,14 +57324,17 @@ var SearchInputSchema = external_exports.object({
   after: external_exports.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format").optional().describe("Only return conversations after this date (YYYY-MM-DD format)"),
   before: external_exports.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format").optional().describe("Only return conversations before this date (YYYY-MM-DD format)"),
   coding_agent: external_exports.string().optional().describe('Filter by coding agent (e.g., "claude-code", "codex", "opencode"). Omit to search all agents.'),
+  include_noise: external_exports.boolean().default(false).describe(`Also return machine-generated turns (sub-agent "Warmup" turns, other plugins' observer prompts). Default false.`),
   response_format: ResponseFormatEnum.default("markdown").describe(
     'Output format: "markdown" for human-readable or "json" for machine-readable (default: "markdown")'
   )
 }).strict();
 var ShowConversationInputSchema = external_exports.object({
   path: external_exports.string().min(1, "Path is required").describe("Absolute path to the JSONL conversation file to display"),
-  startLine: external_exports.number().int().min(1).optional().describe("Starting line number (1-indexed, inclusive). Omit to start from beginning."),
-  endLine: external_exports.number().int().min(1).optional().describe("Ending line number (1-indexed, inclusive). Omit to read to end.")
+  startLine: external_exports.number().int().min(1).optional().describe("Starting line number (1-indexed, inclusive). Omit to start from beginning. Must not be after endLine."),
+  endLine: external_exports.number().int().min(1).optional().describe("Ending line number (1-indexed, inclusive). Omit to read to the end (or to the output limit)."),
+  startChar: external_exports.number().int().min(0).optional().describe("Characters to skip of the first message shown \u2014 the value a truncated answer names when it stopped inside one long message."),
+  full: external_exports.boolean().default(false).describe("Show tool inputs and results whole instead of clipping each. Default false.")
 }).strict();
 var SearchFactsInputSchema = external_exports.object({
   query: external_exports.string().min(2, "Query must be at least 2 characters").max(1e4, "Query too long (max 10000 chars)"),
@@ -55665,12 +57360,25 @@ var ListTagsInputSchema = external_exports.object({
 var SearchOntologyInputSchema = external_exports.object({
   domain: external_exports.string().optional().describe("Filter by domain name (case-insensitive partial match)"),
   category: external_exports.string().optional().describe("Filter by category name (case-insensitive partial match)"),
-  include_relations: external_exports.boolean().default(false).describe("Include 1-hop fact relations")
+  include_relations: external_exports.boolean().default(false).describe("Include 1-hop fact relations (at most 5 per fact)"),
+  facts_per_category: external_exports.number().int().min(0).max(50).optional().describe("Facts shown per category, most confirmed first (0 = names and counts only). Default: 5 with a category filter, otherwise 0"),
+  max_categories: external_exports.number().int().min(1).max(ONTOLOGY_MAX_CATEGORIES).optional().describe("Categories listed per domain, largest first. Default: 8 (200 with a domain filter) without facts, 20 with"),
+  category_offset: external_exports.number().int().min(0).optional().describe("Categories to skip per domain (largest first) \u2014 lists the ones behind max_categories. Default 0")
 }).strict();
 var AskAvatarInputSchema = external_exports.object({
   question: external_exports.string().min(2, "Question must be at least 2 characters").max(1e4, "Question too long (max 10000 chars)").describe("Question to ask"),
   project: external_exports.string().max(500).optional().describe("Project path to scope the search")
 }).strict();
+var AVATAR_MAX_RELATED_LISTED = 10;
+function resolveReadTarget(requestedPath, roots) {
+  let file2 = resolveReadableConversation(requestedPath, roots);
+  for (let hop = 0; hop < 8; hop++) {
+    const again = resolveReadableConversation(file2, roots);
+    if (again === file2) return file2;
+    file2 = again;
+  }
+  throw new Error(ACCESS_DENIED_MESSAGE);
+}
 function handleError(error62) {
   if (error62 instanceof Error) {
     return `Error: ${error62.message}`;
@@ -55680,7 +57388,9 @@ function handleError(error62) {
 var server = new Server(
   {
     name: "memory-bank",
-    version: "1.0.0"
+    // The version of the code that is running (package.json next to dist/), so a client can tell which
+    // release answered. 'unknown' when the file cannot be read — never a made-up number.
+    version: pluginVersion() ?? "unknown"
   },
   {
     capabilities: {
@@ -55693,7 +57403,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "search",
-        description: `Gives you memory across sessions. You don't automatically remember past conversations - this tool restores context by searching them. Use BEFORE every task to recover decisions, solutions, and avoid reinventing work. Single string for semantic search or array of 2-5 concepts for precise AND matching. Returns ranked results with project, date, snippets, and file paths.`,
+        description: `Gives you memory across sessions. You don't automatically remember past conversations - this tool restores context by searching them. Use BEFORE every task to recover decisions, solutions, and avoid reinventing work. Single string for semantic + keyword search or array of 2-5 concepts for AND matching. Returns at most \`limit\` ranked results with project, date, snippet and "Lines A-B in <path>" \u2014 pass those to the read tool for the full exchange. "N% match" is a semantic hit, "keyword match" a keyword-only hit. The percentage is the cosine similarity of the embeddings: with this model even unrelated text scores 85-89% and a strong hit about 90% \u2014 use it to compare the hits of one answer, not as a confidence. Machine-generated turns (sub-agent warm-ups, other plugins' observer prompts) are left out unless include_noise is true. A closing "Note:" line means the search was cut short, not that nothing exists.`,
         inputSchema: {
           type: "object",
           properties: {
@@ -55708,6 +57418,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             after: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
             before: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
             coding_agent: { type: "string", description: 'Filter by coding agent (e.g., "claude-code", "codex", "opencode")' },
+            include_noise: { type: "boolean", default: false, description: `Also return machine-generated turns (sub-agent "Warmup" turns, other plugins' observer prompts)` },
             response_format: { type: "string", enum: ["markdown", "json"], default: "markdown" }
           },
           required: ["query"],
@@ -55723,13 +57434,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "read",
-        description: `Read full conversations to extract detailed context after finding relevant results with search. Essential for understanding the complete rationale, evolution, and gotchas behind past decisions. Use startLine/endLine pagination for large conversations to avoid context bloat (line numbers are 1-indexed).`,
+        description: `Read a conversation (or a line range of it) after finding relevant results with search. Essential for understanding the complete rationale, evolution, and gotchas behind past decisions. Pass the "Lines A-B" range a search result reports as startLine/endLine (1-indexed, inclusive). One call returns at most ${READ_MAX_OUTPUT_CHARS} characters: a longer range ends with "Output truncated \u2026 Continue with startLine=N" \u2014 call again with every value that line names. When the answer stopped inside one message longer than the limit, the line also names startChar=M (without it the message starts over), so a message of any length can be read to its end. Tool inputs/results longer than ${READ_MAX_BLOCK_CHARS} characters are clipped ("\u2026[+N chars not shown \u2026]") unless full is true. A range outside the file is an error that names the file's line count.`,
         inputSchema: {
           type: "object",
           properties: {
             path: { type: "string", minLength: 1 },
             startLine: { type: "number", minimum: 1 },
-            endLine: { type: "number", minimum: 1 }
+            endLine: { type: "number", minimum: 1 },
+            startChar: { type: "number", minimum: 0, description: "Characters to skip of the first message shown \u2014 the value a truncated answer names when it stopped inside one long message" },
+            full: { type: "boolean", default: false, description: "Show tool inputs and results whole instead of clipping each" }
           },
           required: ["path"],
           additionalProperties: false
@@ -55820,13 +57533,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "search_ontology",
-        description: "Browse the ontology hierarchy (Domain > Category > Facts). Use to understand how past decisions are organized, or to find all facts in a specific domain/category.",
+        description: `Browse the ontology hierarchy (Domain > Category > Facts) level by level. Without a filter: every domain with its largest categories and their fact counts (no fact text). With \`domain\`: up to ${ONTOLOGY_MAX_CATEGORIES} of that domain's categories (\`category_offset\` lists the ones after them). With \`category\` (or facts_per_category > 0): the top facts of each matching category. One answer is at most ${ONTOLOGY_MAX_OUTPUT_CHARS} characters and states what it left out \u2014 narrow the domain/category filter to reach it; use search_facts to find facts by meaning.`,
         inputSchema: {
           type: "object",
           properties: {
             domain: { type: "string", description: "Filter by domain name (partial, case-insensitive)" },
             category: { type: "string", description: "Filter by category name (partial, case-insensitive)" },
-            include_relations: { type: "boolean", default: false, description: "Include 1-hop relations for each fact" }
+            include_relations: { type: "boolean", default: false, description: "Include 1-hop relations for each fact shown (at most 5 per fact)" },
+            facts_per_category: { type: "number", minimum: 0, maximum: 50, description: "Facts shown per category, most confirmed first (0 = names and counts only). Default: 5 with a category filter, otherwise 0" },
+            max_categories: { type: "number", minimum: 1, maximum: ONTOLOGY_MAX_CATEGORIES, description: "Categories listed per domain, largest first. Default: 8 (200 with a domain filter) without facts, 20 with" },
+            category_offset: { type: "number", minimum: 0, description: "Categories to skip per domain (largest first) \u2014 lists the ones behind max_categories. Default 0" }
           },
           additionalProperties: false
         },
@@ -55881,11 +57597,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "graph_stats",
-        description: "Get knowledge graph statistics: total facts, domains, categories, relations, and top domains by fact count. Useful for understanding what knowledge has been accumulated.",
+        description: "Get knowledge graph statistics: total facts, domains, categories, relations, and top domains by fact count. Useful for understanding what knowledge has been accumulated. The totals are always of the whole graph (every project).",
         inputSchema: {
           type: "object",
           properties: {
-            project: { type: "string", description: "Project path to scope stats (optional, default: all)" }
+            project: { type: "string", description: "Accepted for compatibility and not applied: the totals always cover the whole graph" }
           },
           additionalProperties: false
         },
@@ -55944,7 +57660,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 });
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
-    const { name, arguments: args } = request.params;
+    const { name } = request.params;
+    const args = request.params.arguments ?? {};
     if (name === "search") {
       const params = SearchInputSchema.parse(args);
       let resultText;
@@ -55953,19 +57670,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           limit: params.limit,
           after: params.after,
           before: params.before,
-          coding_agent: params.coding_agent
+          coding_agent: params.coding_agent,
+          include_noise: params.include_noise
         };
         const results = await searchMultipleConcepts(params.query, options);
         if (params.response_format === "json") {
-          resultText = JSON.stringify(
-            {
-              results,
-              count: results.length,
-              concepts: params.query
-            },
-            null,
-            2
-          );
+          resultText = multiConceptResultsToJson(results, params.query);
         } else {
           resultText = await formatMultiConceptResults(results, params.query);
         }
@@ -55975,25 +57685,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           limit: params.limit,
           after: params.after,
           before: params.before,
-          coding_agent: params.coding_agent
+          coding_agent: params.coding_agent,
+          include_noise: params.include_noise
         };
-        const results = await searchConversations(params.query, options);
+        const { results, meta: meta3 } = await searchConversationsDetailed(params.query, options);
         if (params.response_format === "json") {
-          resultText = JSON.stringify(
-            {
-              results: results.map((r) => ({
-                exchange: r.exchange,
-                similarity: r.similarity,
-                snippet: r.snippet
-              })),
-              count: results.length,
-              mode: params.mode
-            },
-            null,
-            2
-          );
+          resultText = searchResultsToJson(results, meta3, params.mode);
         } else {
-          resultText = await formatResults(results);
+          resultText = await formatResults(results, meta3);
           try {
             const knowledgeCtx = await getKnowledgeContext(params.query, null, 3);
             resultText += formatKnowledgeContext(knowledgeCtx);
@@ -56018,37 +57717,16 @@ _Related knowledge unavailable: ${message}_
     }
     if (name === "read") {
       const params = ShowConversationInputSchema.parse(args);
-      const resolvedPath = path12.resolve(params.path);
-      if (!resolvedPath.endsWith(".jsonl") && !resolvedPath.endsWith(".jsonl.zst")) {
-        throw new Error(`Invalid file type: only .jsonl files are supported`);
-      }
-      const resolvedFile = resolveArchiveFile(resolvedPath);
-      if (!resolvedFile) {
-        throw new Error(`File not found: ${resolvedPath}`);
-      }
-      const realFile = fs16.realpathSync(resolvedFile);
-      const allowedRoots = [
+      const realFile = resolveReadTarget(params.path, [
         getArchiveDir(),
-        path12.join(os5.homedir(), ".claude", "projects")
-      ].map((root) => {
-        try {
-          return fs16.realpathSync(root);
-        } catch {
-          return path12.resolve(root);
-        }
+        path16.join(os6.homedir(), ".claude", "projects")
+      ]);
+      const markdownContent = await readConversationRange(realFile, {
+        startLine: params.startLine,
+        endLine: params.endLine,
+        startChar: params.startChar,
+        full: params.full
       });
-      const isAllowed = allowedRoots.some(
-        (root) => realFile === root || realFile.startsWith(root + path12.sep)
-      );
-      if (!isAllowed) {
-        throw new Error("Access denied: path is outside the conversation archive");
-      }
-      const jsonlContent = readArchiveFile(realFile);
-      const markdownContent = formatConversationAsMarkdown(
-        jsonlContent,
-        params.startLine,
-        params.endLine
-      );
       return {
         content: [
           {
@@ -56065,77 +57743,15 @@ _Related knowledge unavailable: ${message}_
       const db = initDatabase();
       try {
         const queryEmbedding = await generateEmbedding(params.query, "query");
-        const results = searchSimilarFacts(db, queryEmbedding, currentProject, params.limit);
-        let filtered = results;
-        if (params.category) {
-          filtered = filtered.filter((r) => r.fact.category === params.category);
-        }
-        if (params.coding_agent) {
-          filtered = filtered.filter((r) => (r.fact.coding_agent || "claude-code") === params.coding_agent);
-        }
-        if (params.tags && params.tags.length) {
-          const wanted = params.tags.map((t) => t.trim().replace(/\s+/g, "-").toLowerCase()).filter(Boolean);
-          filtered = filtered.filter((r) => {
-            const have = new Set(r.fact.tags ?? []);
-            return wanted.every((t) => have.has(t));
-          });
-        }
-        const agentLabel = params.coding_agent ? ` | Agent: ${params.coding_agent}` : "";
-        let output2 = `# Facts Search Results
-
-Query: "${params.query}"
-Project: ${currentProject}${agentLabel}
-Results: ${filtered.length}
-
-`;
-        if (filtered.length === 0) {
-          output2 += "_No matching facts found._\n";
-        }
-        const allDomains = listDomains(db);
-        const allCategories = listCategories(db);
-        const domainMap = new Map(allDomains.map((d2) => [d2.id, d2.name]));
-        const catMap = new Map(allCategories.map((c) => [c.id, { name: c.name, domainId: c.domain_id }]));
-        for (const { fact, distance } of filtered) {
-          const similarity = (1 - distance * distance / 2).toFixed(3);
-          const catInfo = fact.ontology_category_id ? catMap.get(fact.ontology_category_id) : void 0;
-          const domainName = catInfo ? domainMap.get(catInfo.domainId) ?? "" : "";
-          const catName = catInfo ? catInfo.name : "";
-          output2 += `## [${fact.category}] ${fact.fact}
-`;
-          output2 += `- ID: ${fact.id}
-`;
-          if (fact.tags && fact.tags.length) output2 += `- Tags: ${fact.tags.join(", ")}
-`;
-          const factAgent = fact.coding_agent || "claude-code";
-          output2 += `- Scope: ${fact.scope_type}${fact.scope_project ? ` (${fact.scope_project})` : ""} | Agent: ${factAgent}
-`;
-          output2 += `- Confirmed: ${fact.consolidated_count}x | Similarity: ${similarity}
-`;
-          if (domainName) output2 += `- Ontology: ${domainName}/${catName}
-`;
-          output2 += `- Created: ${fact.created_at}
-`;
-          if (params.include_revisions) {
-            const revisions = getRevisions(db, fact.id);
-            if (revisions.length > 0) {
-              output2 += "- Revisions:\n";
-              for (const rev of revisions) {
-                output2 += `  - ${rev.created_at}: "${rev.previous_fact}" \u2192 "${rev.new_fact}" (${rev.reason})
-`;
-              }
-            }
-          }
-          const related = getRelatedFacts(db, fact.id, 1);
-          if (related.length > 0) {
-            output2 += `- Related:
-`;
-            for (const { fact: relFact, relation } of related) {
-              output2 += `  - [${relation.relation_type}] ${relFact.fact}
-`;
-            }
-          }
-          output2 += "\n";
-        }
+        const output2 = formatFactSearch(db, queryEmbedding, {
+          query: params.query,
+          project: currentProject,
+          category: params.category,
+          coding_agent: params.coding_agent,
+          tags: params.tags,
+          include_revisions: params.include_revisions,
+          limit: params.limit
+        });
         return {
           content: [{ type: "text", text: output2 }]
         };
@@ -56242,76 +57858,24 @@ Distinct tags: ${tagIndex.length}
     }
     if (name === "search_ontology") {
       const params = SearchOntologyInputSchema.parse(args);
+      const db = initDatabase();
       try {
-        const db = initDatabase();
-        const tree = getOntologyTree(db);
-        const domainFilter = params.domain?.toLowerCase();
-        const categoryFilter = params.category?.toLowerCase();
-        const filtered = tree.filter((entry) => {
-          if (domainFilter && !entry.domain.name.toLowerCase().includes(domainFilter)) return false;
-          return true;
-        });
-        let output2 = `# Ontology Tree
-
-`;
-        if (filtered.length === 0) {
-          output2 += "_No ontology data found. Facts are classified automatically as they are extracted._\n";
-        }
-        for (const { domain: domain2, categories } of filtered) {
-          output2 += `## ${domain2.name}
-`;
-          if (domain2.description) output2 += `> ${domain2.description}
-`;
-          output2 += "\n";
-          const filteredCategories = categories.filter(({ category }) => {
-            if (categoryFilter && !category.name.toLowerCase().includes(categoryFilter)) return false;
-            return true;
-          });
-          if (filteredCategories.length === 0) {
-            output2 += "_No matching categories._\n\n";
-            continue;
-          }
-          for (const { category, facts } of filteredCategories) {
-            output2 += `### ${category.name}`;
-            if (category.description) output2 += ` \u2014 ${category.description}`;
-            output2 += `
-(${facts.length} facts)
-
-`;
-            for (const fact of facts) {
-              output2 += `- **[${fact.category}]** ${fact.fact}
-`;
-              output2 += `  - ID: ${fact.id} | Confirmed: ${fact.consolidated_count}x | ${fact.created_at.slice(0, 10)}
-`;
-              if (params.include_relations) {
-                const related = getRelatedFacts(db, fact.id, 1);
-                if (related.length > 0) {
-                  for (const { fact: relFact, relation } of related) {
-                    output2 += `  - \u2194 [${relation.relation_type}] "${relFact.fact}"
-`;
-                  }
-                }
-              }
-            }
-            output2 += "\n";
-          }
-        }
-        db.close();
-        return { content: [{ type: "text", text: output2 }] };
+        return { content: [{ type: "text", text: formatOntologyBrowse(db, params) }] };
       } catch (error62) {
         return {
           content: [{ type: "text", text: handleError(error62) }],
           isError: true
         };
+      } finally {
+        db.close();
       }
     }
     if (name === "ask_avatar") {
       const params = AskAvatarInputSchema.parse(args);
       const project = params.project || process.cwd();
+      const db = initDatabase();
       try {
-        const db = initDatabase();
         const result = await askAvatar(db, params.question, project);
-        db.close();
         const confidenceLabel = result.confidence >= 0.9 ? "HIGH" : result.confidence >= 0.7 ? "MEDIUM" : result.confidence >= 0.5 ? "LOW" : "INSUFFICIENT";
         let output2 = `# Avatar Response
 
@@ -56341,17 +57905,24 @@ Distinct tags: ${tagIndex.length}
           output2 += `## Related Decisions
 
 `;
-          for (const { fact, relation } of result.relatedDecisions) {
-            output2 += `- **[${relation}]** ${fact.fact} _(${fact.created_at.slice(0, 10)})_
+          const listed = result.relatedDecisions.slice(0, AVATAR_MAX_RELATED_LISTED);
+          for (const { fact, relation } of listed) {
+            output2 += `- **[${relation}]** ${clipLine(fact.fact, RELATED_MAX_CHARS)} _(${fact.created_at.slice(0, 10)})_
+`;
+          }
+          if (result.relatedDecisions.length > listed.length) {
+            output2 += `- _\u2026and ${result.relatedDecisions.length - listed.length} more related decisions._
 `;
           }
         }
-        return { content: [{ type: "text", text: output2 }] };
+        return result.failure ? { content: [{ type: "text", text: output2 }], isError: true } : { content: [{ type: "text", text: output2 }] };
       } catch (error62) {
         return {
           content: [{ type: "text", text: handleError(error62) }],
           isError: true
         };
+      } finally {
+        db.close();
       }
     }
     if (name === "trace_fact") {
@@ -56365,74 +57936,7 @@ Distinct tags: ${tagIndex.length}
       const db = initDatabase();
       try {
         const queryEmbedding = await generateEmbedding(params.query, "query");
-        const results = searchSimilarFacts(db, queryEmbedding, currentProject, params.limit, 0.5);
-        if (results.length === 0) {
-          return { content: [{ type: "text", text: "No matching facts found to trace." }] };
-        }
-        let output2 = `# Fact Provenance Trace
-
-Query: "${params.query}"
-
-`;
-        for (const { fact, distance } of results) {
-          const similarity = (1 - distance * distance / 2).toFixed(3);
-          output2 += `## ${fact.fact}
-`;
-          output2 += `- Category: ${fact.category} | Scope: ${fact.scope_type}
-`;
-          output2 += `- Similarity: ${similarity} | Confirmed: ${fact.consolidated_count}x
-`;
-          output2 += `- Created: ${fact.created_at}
-`;
-          if (fact.source_exchange_ids && fact.source_exchange_ids.length > 0) {
-            output2 += `
-### Source Conversations
-
-`;
-            for (const exchangeId of fact.source_exchange_ids) {
-              const exchange = db.prepare(
-                "SELECT id, project, timestamp, user_message, archive_path, line_start, line_end FROM exchanges WHERE id = ?"
-              ).get(exchangeId);
-              if (exchange) {
-                const userMsg = exchange["user_message"].substring(0, 200).replace(/\s+/g, " ");
-                output2 += `- **[${exchange["project"]}, ${exchange["timestamp"].slice(0, 10)}]**
-`;
-                output2 += `  "${userMsg}..."
-`;
-                output2 += `  Lines ${exchange["line_start"]}-${exchange["line_end"]} in ${exchange["archive_path"]}
-
-`;
-              }
-            }
-          } else {
-            output2 += `
-_Source exchanges not available._
-
-`;
-          }
-          const revisions = getRevisions(db, fact.id);
-          if (revisions.length > 0) {
-            output2 += `### Revision History
-
-`;
-            for (const rev of revisions) {
-              output2 += `- ${rev.created_at.slice(0, 10)}: "${rev.previous_fact}" \u2192 "${rev.new_fact}" (${rev.reason})
-`;
-            }
-            output2 += "\n";
-          }
-          const related = getRelatedFacts(db, fact.id, 1);
-          if (related.length > 0) {
-            output2 += `### Related Facts (1-hop)
-
-`;
-            for (const { fact: relFact, relation } of related) {
-              output2 += `- **[${relation.relation_type}]** ${relFact.fact}
-`;
-            }
-            output2 += "\n";
-          }
-        }
+        const output2 = formatFactTrace(db, queryEmbedding, { query: params.query, project: currentProject, limit: params.limit });
         return { content: [{ type: "text", text: output2 }] };
       } catch (error62) {
         return {
@@ -56444,7 +57948,7 @@ _Source exchanges not available._
       }
     }
     if (name === "graph_stats") {
-      external_exports.object({
+      const params = external_exports.object({
         project: external_exports.string().max(500).optional()
       }).strict().parse(args);
       const db = initDatabase();
@@ -56508,6 +58012,9 @@ _Source exchanges not available._
 `;
           output2 += "\n";
         }
+        if (params.project !== void 0) {
+          output2 += "_Note: `project` is not applied: these totals cover the whole graph (every project)._\n";
+        }
         return { content: [{ type: "text", text: output2 }] };
       } catch (error62) {
         return { content: [{ type: "text", text: handleError(error62) }], isError: true };
@@ -56525,37 +58032,11 @@ _Source exchanges not available._
       const db = initDatabase();
       try {
         const queryEmbedding = await generateEmbedding(params.query, "query");
-        const allResults = searchAllFacts(db, queryEmbedding, params.limit * 3, 0.5);
-        const currentProject = params.current_project || process.cwd();
-        const crossProjectResults = allResults.filter(
-          (r) => r.fact.scope_type === "project" && r.fact.scope_project !== currentProject
-        ).slice(0, params.limit);
-        if (crossProjectResults.length === 0) {
-          return { content: [{ type: "text", text: `No cross-project insights found for "${params.query}". Similar decisions may not exist in other projects yet.` }] };
-        }
-        const byProject = /* @__PURE__ */ new Map();
-        for (const { fact, distance } of crossProjectResults) {
-          const proj = fact.scope_project || "global";
-          if (!byProject.has(proj)) byProject.set(proj, []);
-          byProject.get(proj).push({ fact, distance });
-        }
-        let output2 = `# Cross-Project Insights
-
-Query: "${params.query}"
-Excluding: ${currentProject}
-
-`;
-        for (const [project, facts] of byProject) {
-          output2 += `## Project: ${project}
-
-`;
-          for (const { fact, distance } of facts) {
-            const similarity = Math.round((1 - distance * distance / 2) * 100);
-            output2 += `- **[${fact.category}]** ${fact.fact} _(${similarity}% relevant, ${fact.created_at.slice(0, 10)})_
-`;
-          }
-          output2 += "\n";
-        }
+        const output2 = formatCrossProjectInsights(db, queryEmbedding, {
+          query: params.query,
+          currentProject: params.current_project || process.cwd(),
+          limit: params.limit
+        });
         return { content: [{ type: "text", text: output2 }] };
       } catch (error62) {
         return { content: [{ type: "text", text: handleError(error62) }], isError: true };
@@ -56573,61 +58054,7 @@ Excluding: ${currentProject}
       const db = initDatabase();
       try {
         const queryEmbedding = await generateEmbedding(params.query, "query");
-        const seedFacts = searchSimilarFacts(db, queryEmbedding, params.project ?? null, 3, 0.5);
-        if (seedFacts.length === 0) {
-          return { content: [{ type: "text", text: `No facts found related to "${params.query}" to start graph exploration.` }] };
-        }
-        const domains = listDomains(db);
-        const categories = listCategories(db);
-        const domainMap = new Map(domains.map((d2) => [d2.id, d2.name]));
-        const categoryMap = new Map(categories.map((c) => [c.id, { name: c.name, domainId: c.domain_id }]));
-        let output2 = `# Knowledge Graph Exploration
-
-Seed: "${params.query}" | Depth: ${params.hops} hops
-
-`;
-        const allDiscovered = /* @__PURE__ */ new Set();
-        for (const { fact: seedFact, distance } of seedFacts) {
-          const similarity = Math.round((1 - distance * distance / 2) * 100);
-          const catInfo = seedFact.ontology_category_id ? categoryMap.get(seedFact.ontology_category_id) : void 0;
-          const domainName = catInfo ? domainMap.get(catInfo.domainId) ?? "?" : "?";
-          const catName = catInfo ? catInfo.name : "?";
-          output2 += `## Seed: ${seedFact.fact}
-`;
-          output2 += `- [${domainName}/${catName}] ${seedFact.category} | ${similarity}% relevant
-
-`;
-          allDiscovered.add(seedFact.id);
-          const related = getRelatedFacts(db, seedFact.id, params.hops);
-          if (related.length === 0) {
-            output2 += `_No connected facts found._
-
-`;
-            continue;
-          }
-          output2 += `### Connected Facts (${related.length} found, up to ${params.hops} hops)
-
-`;
-          for (const { fact: relFact, relation } of related) {
-            if (allDiscovered.has(relFact.id)) continue;
-            allDiscovered.add(relFact.id);
-            const relCatInfo = relFact.ontology_category_id ? categoryMap.get(relFact.ontology_category_id) : void 0;
-            const relDomain = relCatInfo ? domainMap.get(relCatInfo.domainId) ?? "?" : "?";
-            const relCat = relCatInfo ? relCatInfo.name : "?";
-            output2 += `- **[${relation.relation_type}]** ${relFact.fact}
-`;
-            output2 += `  [${relDomain}/${relCat}] ${relFact.category} | ${relFact.created_at.slice(0, 10)}
-`;
-            if (relation.reasoning) {
-              output2 += `  _${relation.reasoning}_
-`;
-            }
-          }
-          output2 += "\n";
-        }
-        output2 += `
-_Total unique facts discovered: ${allDiscovered.size}_
-`;
+        const output2 = formatGraphExploration(db, queryEmbedding, { query: params.query, hops: params.hops, project: params.project });
         return { content: [{ type: "text", text: output2 }] };
       } catch (error62) {
         return { content: [{ type: "text", text: handleError(error62) }], isError: true };
@@ -56658,3 +58085,4 @@ main().catch((error62) => {
   console.error("Server error:", error62);
   process.exit(1);
 });
+// memory-bank-bundle-stamp v1 inputs=b2a747b246d083d7460be80043919d12d0b3c768631d573572a31aa1e2f49ec7 body=6c29b700366aff995a89c4ddd541bcc569e7082c47f5be0feff435c92838ba8d

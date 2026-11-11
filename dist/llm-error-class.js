@@ -83,12 +83,18 @@ export class LlmRefusalError extends Error {
  *   - 'deterministic' recognized per-request rejection (400/413/422, too-long,
  *                     max_tokens, bad request...). Only THIS fact is at fault, so
  *                     the caller burns an attempt and advances after MAX.
- *   - 'unknown'       neither recognized. Treated like 'deterministic' by the
- *                     caller (bounded retry → advance) so an UNRECOGNIZED error
- *                     can never wedge the whole backlog forever. This is safe:
- *                     "skipping" a fact only means it isn't consolidated/deduped
- *                     — the fact stays active and searchable, it is never deleted
- *                     — whereas an unbounded hold halts ALL future consolidation.
+ *   - 'unknown'       neither recognized. Callers treat it like 'transient',
+ *                     never like 'deterministic': the consolidation drain HOLDS
+ *                     the cursor on it, the extractor defers the session, and
+ *                     llm.ts retries it. An unrecognized provider error
+ *                     ("API Error: 500", "Error code: 503") is far more often an
+ *                     unusual outage shape than a fault of this one request, and
+ *                     skipping on it drained the backlog during outages. Only a
+ *                     RECOGNIZED per-request rejection is ever skipped. (An
+ *                     earlier revision of this comment said unknown is bounded
+ *                     and advanced past; the drain stopped doing that the same
+ *                     day — bbaa312, "skip only on recognized deterministic" —
+ *                     and test/consolidate-all-pending.test.ts pins the hold.)
  *
  * Numbers are read from the STRUCTURED status, or from a status number that is
  * explicitly LABELLED in the message ("status code 400"). A bare incidental
@@ -152,13 +158,13 @@ export function classifyLlmError(err) {
     if (/unauthor|forbidden|invalid.*(api.?key|access.?token|credential)|timeout|etimedout|econnreset|econnrefused|enotfound|epipe|socket hang up|network|fetch failed|stream (disconnect|closed|ended|aborted)|premature close|overloaded|temporarily|rate.?limit|too many requests|internal server error|server error|service unavailable|bad gateway|gateway timeout/.test(m)) {
         return 'transient';
     }
-    return 'unknown'; // unrecognized → caller bounds it (retry MAX then advance)
+    return 'unknown'; // unrecognized → callers hold/defer/retry it like a transient (see above)
 }
 /**
  * Back-compat boolean: true only for a RECOGNIZED transient (outage/auth). An
  * 'unknown' error is NOT a recognized transient, so this returns false for it —
- * the drain loop uses classifyLlmError directly and bounds 'unknown' rather than
- * holding on it.
+ * the drain loop uses classifyLlmError directly, which lets it hold on
+ * 'unknown' as well (only 'deterministic' is skipped).
  */
 export function isTransientLlmError(err) {
     return classifyLlmError(err) === 'transient';

@@ -10,12 +10,35 @@
  * never clear, so the hook spawned the worker (model load + LLM setup) on EVERY
  * session start forever, for nothing.
  */
+/**
+ * 마지막 교환 뒤 이만큼(분) 조용해야 backfill 대상이다 (BACKFILL_QUIET_MINUTES, 0 = 끔).
+ *
+ * 이 조건이 없을 때 backfill 은 가장 최근 세션부터 집으므로 **진행 중인** 세션을 교환
+ * 2~4개 시점에 추출하고 완료 마커를 썼다(실측 2026-11-10: 8월 이후 backfill 저장
+ * 423세션 중 355개는 마지막 교환이 저장 10분 이내, 296개는 저장 뒤 30분 안에 다음
+ * 교환). 대가는 SessionEnd 훅이 돌지 못한 세션(강제 종료)의 추출이 그만큼 늦어지는 것.
+ */
+export declare const DEFAULT_QUIET_MINUTES = 60;
 export interface ExtractionConfig {
     minExchanges: number;
     excludeProjects: string[];
+    /** 생략·비정상 값이면 DEFAULT_QUIET_MINUTES — 설정을 손으로 만든 호출자도 같은 술어를 쓴다. */
+    quietMinutes?: number;
 }
 /** Env-derived config, identical for the worker and the hook. */
 export declare function getExtractionConfig(): ExtractionConfig;
+/**
+ * 추출기가 이 project 를 제외 대상으로 보는가 — 제외 목록의 경로이거나 그 하위 경로.
+ *
+ * 🚨 경로 **경계**로 비교한다. raw prefix 면 형제 프로젝트가 함께 배제된다 —
+ * '/…/memory-bank' 가 '/…/memory-bank-x' 같은 별개 프로젝트를 삼켜, 그 세션이
+ * 영구 0/0 마커를 받고 fact 가 영원히 추출되지 않았다(실측: 적격 8세션 전건 손실).
+ * pending SQL 필터는 exact 매칭이라 선정은 되고 추출기에서만 걸러져 무음이었다.
+ *
+ * 추출기(runFactExtraction)와 0건 마커 되돌리기 스크립트(requeue-zero-markers.mjs)가
+ * 같은 판정을 쓴다 — 추출기가 곧바로 제외 마커를 다시 쓸 세션을 되돌리지 않게.
+ */
+export declare function isExcludedProjectPath(project: string | null | undefined, cfg?: Pick<ExtractionConfig, 'excludeProjects'>): boolean;
 /**
  * extraction_log.extracted 의 상태 코드 (음수는 전부 "fact 0건"의 사유 구분).
  *
@@ -93,13 +116,48 @@ export declare function renewClaimSql(): string;
  */
 export declare function failureMarkerUpsertSql(): string;
 /**
+ * extraction_log.seen_exchanges — 완료 마커를 쓴 추출이 읽은 그 세션의 교환 수.
+ *
+ * 훅 변형의 선점은 확정 마커 위에서도 성공한다(--resume 으로 교환이 늘어난 세션의
+ * 재추출). 그런데 SessionEnd 는 같은 세션에 60초 안에 두 번 오는 일이 잦아(실측 840쌍),
+ * 교환이 그대로인데도 세션을 통째로 다시 추출해 사실이 두 벌이 된다. 마커가 교환 수를
+ * 기억하면 "그 뒤로 늘었는가"를 물을 수 있다.
+ *
+ * db.ts 의 스키마 마이그레이션이 아니라 추출 시점에 보장한다(멱등). 컬럼을 만들 수
+ * 없으면 false — 호출자는 교환 수 없이 예전 동작(매번 재추출)으로 돈다.
+ */
+export declare function ensureSeenExchangesColumn(db: {
+    prepare: (sql: string) => {
+        all: () => unknown[];
+        run: () => unknown;
+    };
+}): boolean;
+/**
  * Core SELECT over pending-extraction sessions, through GROUP BY / HAVING but
  * WITHOUT any ORDER BY / LIMIT — callers wrap it:
  *   worker: `${sql} ORDER BY ts DESC LIMIT ?`   (params + limit)
  *   hook:   `SELECT 1 FROM (${sql}) LIMIT 1`     (params)
  * Columns: sid, ts, n.
+ *
+ * A session qualifies only once its last main-chain exchange is `quietMinutes`
+ * old (see DEFAULT_QUIET_MINUTES) — a session still in use is left to its own
+ * SessionEnd.
+ *
+ * `opts.sessionId` asks the same question about ONE session ("would backfill
+ * pick it?"): the same predicate, reading only that session's exchanges. The
+ * result has that session's row or none; `params` then carries the session id
+ * too (twice, ahead of the excluded projects). Filtering the whole list from
+ * outside (`SELECT 1 FROM (…) WHERE sid = ?`) does not get there: the
+ * condition is not pushed below the GROUP BY, and the planner reaches the
+ * exchanges through the two-valued is_sidechain index either way — measured on
+ * a copy of a live DB (73,498 sessions, 341,840 exchanges): 14-22s a question,
+ * of which the excluded-project list alone is 11.7s. So the session form names
+ * the session in both places it is read and keeps `is_sidechain` out of index
+ * selection (unary plus): 0.1-2ms on the same copy.
  */
-export declare function pendingExtractionCoreQuery(cfg: ExtractionConfig): {
+export declare function pendingExtractionCoreQuery(cfg: ExtractionConfig, opts?: {
+    sessionId?: string;
+}): {
     sql: string;
     params: string[];
 };

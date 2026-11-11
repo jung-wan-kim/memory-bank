@@ -2,8 +2,9 @@ import { randomUUID } from 'crypto';
 import { canonicalizeProject } from './project-canon.js';
 import { EMBEDDING_VERSION } from './embedding-version.js';
 import { getVecQuant, embeddingToVecBlob, vecParamSql, normalizeVecDistance, l2DistanceToSimilarity } from './db.js';
-import { factRejectReason, factTextRejectReason } from './fact-validity.js';
+import { factRejectReason, factTextRejectReason, factKrRejectReason } from './fact-validity.js';
 import { scopeMatcher } from './project-family.js';
+import { VEC0_KNN_K_MAX } from './vec-limits.js';
 /** dtype/scale-aware MATCH/INSERT param for a fact-side vec table: the SQL
  * placeholder (vec_int8(?) wrap for int8), the correctly-encoded blob and the
  * table's VecQuant (to normalize distances). float32 tables (pre-migration
@@ -79,6 +80,11 @@ export function getActiveFacts(db) {
         .all()
         .map(rowToFact);
 }
+/** The fact as it is stored now, or null when it is gone or inactive. */
+export function getActiveFact(db, id) {
+    const row = db.prepare('SELECT * FROM facts WHERE id = ? AND is_active = 1').get(id);
+    return row ? rowToFact(row) : null;
+}
 export function getFactsByProject(db, project) {
     const canon = canonicalizeProject(db, project);
     return db.prepare(`
@@ -94,6 +100,11 @@ export function updateFact(db, id, params) {
         if (reason)
             throw new Error(`updateFact refused (${reason}): ${JSON.stringify(String(params.fact)).slice(0, 80)}`);
     }
+    if (params.fact_kr !== undefined && params.fact_kr !== null) {
+        const reason = factKrRejectReason(params.fact_kr);
+        if (reason)
+            throw new Error(`updateFact refused (fact_kr: ${reason}): ${JSON.stringify(String(params.fact_kr)).slice(0, 80)}`);
+    }
     const now = new Date().toISOString();
     const updates = ['updated_at = ?'];
     const values = [now];
@@ -108,14 +119,152 @@ export function updateFact(db, id, params) {
     if (params.consolidated_count_increment) {
         updates.push('consolidated_count = consolidated_count + 1');
     }
-    values.push(id);
+    if (params.consolidated_count_add !== undefined) {
+        if (!Number.isInteger(params.consolidated_count_add) || params.consolidated_count_add < 1) {
+            throw new Error(`updateFact refused (consolidated_count_add must be a positive integer): ${params.consolidated_count_add}`);
+        }
+        updates.push('consolidated_count = consolidated_count + ?');
+        values.push(params.consolidated_count_add);
+    }
     // Row + vector together (see insertFact): the stored embedding and the
     // index must not disagree after a failed vector write.
     db.transaction(() => {
-        db.prepare(`UPDATE facts SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+        // Read inside the write transaction: the comparison and the union below
+        // must see the row this UPDATE is about to change.
+        const current = db.prepare('SELECT fact, fact_kr, source_exchange_ids FROM facts WHERE id = ?')
+            .get(id);
+        const rowUpdates = [...updates];
+        const rowValues = [...values];
+        const sentenceChanges = current !== undefined && params.fact !== undefined && params.fact !== current.fact;
+        // The Korean sentence translates the stored one; after a rewrite the old
+        // one would describe a sentence the row no longer holds — it is replaced
+        // by the one given, or cleared.
+        const nextKr = params.fact_kr !== undefined ? params.fact_kr : sentenceChanges ? null : undefined;
+        const krChanges = current !== undefined && nextKr !== undefined && nextKr !== (current.fact_kr ?? null);
+        if (krChanges) {
+            rowUpdates.push('fact_kr = ?');
+            rowValues.push(nextKr);
+        }
+        if (current && params.add_source_exchange_ids?.length) {
+            const merged = [...new Set([...JSON.parse(current.source_exchange_ids || '[]'), ...params.add_source_exchange_ids])];
+            rowUpdates.push('source_exchange_ids = ?');
+            rowValues.push(JSON.stringify(merged));
+        }
+        db.prepare(`UPDATE facts SET ${rowUpdates.join(', ')} WHERE id = ?`).run(...rowValues, id);
         if (params.embedding)
             upsertFactVector(db, 'vec_facts', id, params.embedding);
+        // The Korean vector follows the Korean sentence: gone with the old one
+        // (and never left behind a sentence that has none), written when the new
+        // one came with its vector.
+        if (krChanges || (sentenceChanges && !nextKr))
+            db.prepare('DELETE FROM vec_facts_kr WHERE id = ?').run(id);
+        if (current && nextKr && params.embedding_kr)
+            upsertFactVector(db, 'vec_facts_kr', id, params.embedding_kr);
     }).immediate();
+}
+/**
+ * A fact's Korean sentence with its stored Korean vector (decoded, see
+ * storedFactVector), or null when the fact has no Korean sentence. `vector` is
+ * null when the sentence has no vec_facts_kr row — always the case for an
+ * inactive fact (deactivateFact removes it).
+ */
+export function getFactKorean(db, id) {
+    const row = db.prepare('SELECT fact_kr FROM facts WHERE id = ?').get(id);
+    const text = row?.fact_kr;
+    if (!text || text.trim() === '')
+        return null;
+    return { text, vector: storedFactVector(db, 'vec_facts_kr', id) };
+}
+/**
+ * Write a fact's Korean sentence and its vector, leaving the fact itself as it
+ * is — `updated_at` included (a translation filled in later is not a change of
+ * the fact; getTopFacts ranks by how recently a fact changed).
+ */
+export function setFactKorean(db, id, text, vector) {
+    const reason = factKrRejectReason(text);
+    if (reason)
+        throw new Error(`setFactKorean refused (${reason}): ${JSON.stringify(String(text)).slice(0, 80)}`);
+    db.transaction(() => {
+        const changed = db.prepare('UPDATE facts SET fact_kr = ? WHERE id = ?').run(text, id).changes;
+        if (changed === 0)
+            throw new Error(`setFactKorean: fact not found: ${id}`);
+        upsertFactVector(db, 'vec_facts_kr', id, vector);
+    }).immediate();
+}
+// ── Content time ────────────────────────────────────────────────────────────
+//
+// facts.content_at — when the fact's CURRENT content was last stated: the
+// latest creation time among the facts merged into it. NULL means the row was
+// never merged into, and its content is as old as the row (created_at).
+//
+// A merge keeps the older row. After EVOLUTION that row holds the later fact's
+// sentence, after DUPLICATE a statement the later fact confirmed — but its
+// created_at stays the old one, so ordering a pair by created_at alone
+// presented the latest content as the "existing" fact (consolidator.ts).
+//
+// The column is ensured here, on first use by the consolidator (idempotent),
+// not in db.ts's schema block — like extraction_log.seen_exchanges. It is
+// local bookkeeping: sync does not carry it, and a store without it (or a
+// handle that cannot add it) reads every content time as created_at.
+const contentAtColumn = new WeakMap();
+/**
+ * Make sure facts.content_at exists. false when it does not and cannot be
+ * added: a read-only handle or an old DB (remembered for the handle), or
+ * another process holding the write lock right now (not remembered).
+ */
+export function ensureFactContentAtColumn(db) {
+    const known = contentAtColumn.get(db);
+    if (known !== undefined)
+        return known;
+    let present;
+    // An answer read inside a caller's transaction is not remembered (the next
+    // call looks again): the column may have been added in that transaction —
+    // by this call or an earlier one — and its rollback takes the column along.
+    let remember = !db.inTransaction;
+    try {
+        const cols = db.prepare(`SELECT name FROM pragma_table_info('facts')`).all();
+        present = cols.some((c) => c.name === 'content_at');
+        if (!present && cols.length > 0) {
+            db.prepare('ALTER TABLE facts ADD COLUMN content_at TEXT').run();
+            present = true;
+        }
+    }
+    catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        // Another process added it between the check and the ALTER — the goal is met.
+        present = /duplicate column name/i.test(message);
+        // A write lock held by another process is about this moment, not about the
+        // handle. Remembered, it made every merge of the run order its pair by
+        // creation time and record no content time — the handle that met the lock
+        // on its first look never looked again.
+        if (!present && /database is locked|database table is locked|SQLITE_BUSY/i.test(message))
+            remember = false;
+    }
+    if (remember)
+        contentAtColumn.set(db, present);
+    return present;
+}
+/**
+ * Content time of each given fact that exists: content_at, else created_at.
+ * `hasColumn` is the answer ensureFactContentAtColumn just gave the caller
+ * (so a caller that needs the answer itself does not ask twice).
+ */
+export function factContentTimes(db, ids, hasColumn) {
+    const times = new Map();
+    if (ids.length === 0)
+        return times;
+    const expr = (hasColumn ?? ensureFactContentAtColumn(db)) ? 'COALESCE(content_at, created_at)' : 'created_at';
+    const rows = db.prepare(`SELECT id, ${expr} AS t FROM facts WHERE id IN (${ids.map(() => '?').join(', ')})`)
+        .all(...ids);
+    for (const r of rows)
+        times.set(r.id, r.t);
+    return times;
+}
+/** Move a fact's content time forward to `time` (never back). A no-op on a store without the column. */
+export function raiseFactContentTime(db, id, time) {
+    if (!ensureFactContentAtColumn(db))
+        return;
+    db.prepare('UPDATE facts SET content_at = ? WHERE id = ? AND COALESCE(content_at, created_at) < ?').run(time, id, time);
 }
 export function deactivateFact(db, id) {
     db.prepare('UPDATE facts SET is_active = 0, updated_at = ? WHERE id = ?').run(new Date().toISOString(), id);
@@ -140,7 +289,9 @@ export function insertRevision(db, params) {
 export function getRevisions(db, factId) {
     return db.prepare('SELECT * FROM fact_revisions WHERE fact_id = ? ORDER BY created_at DESC').all(factId);
 }
-const VISIBLE_FETCH_CAP = 6400;
+// vec0 refuses a larger k (vec-limits.ts) — at 6400 the replay bench threw once
+// fewer than candidateFetch of the nearest 3,200 rows were visible.
+const VISIBLE_FETCH_CAP = VEC0_KNN_K_MAX;
 export function searchSimilarFacts(db, embedding, project, limit = 5, threshold = 0.85, opts = {}) {
     const canonProject = project ? canonicalizeProject(db, project) : project;
     const inScope = scopeMatcher(canonProject, opts.scopeFamily === true);
@@ -173,7 +324,7 @@ export function searchSimilarFacts(db, embedding, project, limit = 5, threshold 
         if (!visibleId)
             return knn(table, candidateFetch);
         // Grow the fetch until candidateFetch visible rows are in hand (or the index runs out).
-        for (let n = candidateFetch * 4;; n = Math.min(n * 4, VISIBLE_FETCH_CAP)) {
+        for (let n = Math.min(candidateFetch * 4, VISIBLE_FETCH_CAP);; n = Math.min(n * 4, VISIBLE_FETCH_CAP)) {
             const rows = knn(table, n);
             const visible = rows.filter((r) => visibleId(r.id));
             if (visible.length >= candidateFetch || rows.length < n || n >= VISIBLE_FETCH_CAP)
@@ -235,6 +386,23 @@ export function factVectorDistance(db, factId, embedding) {
     return best;
 }
 /**
+ * One fact's stored vector in a fact-side vec table, decoded to float32 scale
+ * (int8 rows are divided by the table's scale; re-encoding the result for the
+ * same table gives the stored bytes back). null when the fact has no row there.
+ */
+function storedFactVector(db, table, id) {
+    return factKnn(table, () => {
+        const q = getVecQuant(db, table);
+        const row = db.prepare(`SELECT embedding FROM ${table} WHERE id = ?`).get(id);
+        if (!row)
+            return null;
+        const bytes = row.embedding.buffer.slice(row.embedding.byteOffset, row.embedding.byteOffset + row.embedding.byteLength);
+        return q.dtype === 'int8'
+            ? Array.from(new Int8Array(bytes), (x) => x / q.scale)
+            : Array.from(new Float32Array(bytes));
+    }, null);
+}
+/**
  * Nearest active facts restricted to EXACTLY one scope — used by consolidation
  * so a project-private fact and a global fact can never be compared/merged
  * across the boundary (which would leak private text into global memory or let
@@ -245,13 +413,25 @@ export function factVectorDistance(db, factId, embedding) {
  *
  * scope: { type:'global' } → global facts only.
  *        { type:'project', project } → that project's own facts only (no global).
+ *
+ * Paging ends as soon as nothing further can pass: a KNN returns rows nearest
+ * first, so once a table's last returned row is below `threshold` every row
+ * behind it is too. k never exceeds VEC0_KNN_K_MAX — when more rows than that
+ * pass the threshold and fewer than `limit` of the nearest ones are in scope,
+ * the search returns what those nearest rows held (not a throw, not []) and
+ * reports it through `opts.onCapReached`.
  */
-export function searchSimilarFactsSameScope(db, embedding, scope, limit = 5, threshold = 0.85) {
+export function searchSimilarFactsSameScope(db, embedding, scope, limit = 5, threshold = 0.85, opts = {}) {
     const canonProject = scope.type === 'project' ? canonicalizeProject(db, scope.project) : null;
     // Early out only if the scope is genuinely empty (nothing to match against).
+    // `+is_active` keeps the count on idx_facts_scope when an older process has
+    // re-created idx_facts_active (db.ts, FACTS_ACTIVE_INDEX_REDROP_MS): without
+    // it the planner reads every active fact for each driver (measured at 30,584
+    // active facts: 30-47ms a call against 0.4-2.1ms for a project scope, 24-29ms
+    // against 14-16ms for the global one). The rows counted are the same.
     const scopeCount = scope.type === 'global'
-        ? db.prepare("SELECT COUNT(*) AS n FROM facts WHERE is_active = 1 AND scope_type = 'global' AND embedding_version = ?").get(EMBEDDING_VERSION).n
-        : db.prepare("SELECT COUNT(*) AS n FROM facts WHERE is_active = 1 AND scope_type = 'project' AND scope_project = ? AND embedding_version = ?").get(canonProject, EMBEDDING_VERSION).n;
+        ? db.prepare("SELECT COUNT(*) AS n FROM facts WHERE +is_active = 1 AND scope_type = 'global' AND embedding_version = ?").get(EMBEDDING_VERSION).n
+        : db.prepare("SELECT COUNT(*) AS n FROM facts WHERE +is_active = 1 AND scope_type = 'project' AND scope_project = ? AND embedding_version = ?").get(canonProject, EMBEDDING_VERSION).n;
     if (scopeCount === 0)
         return [];
     // fetchN returns rows AND whether the index returned fewer than requested
@@ -260,8 +440,10 @@ export function searchSimilarFactsSameScope(db, embedding, scope, limit = 5, thr
     // ahead of a valid in-scope row and are only rejected later by the
     // embedding_version filter, so bounding by active facts could stop before
     // reaching the match. `exhausted` is the correct, index-size-independent stop.
-    const fetchN = (table, n) => factKnn(table, () => {
-        const p = vecParamFor(db, table, embedding);
+    // `done` adds the distance-order stop: the table ran out, OR its farthest
+    // returned row is already below the threshold (nothing behind it can pass).
+    const fetchN = (table, query, n) => factKnn(table, () => {
+        const p = vecParamFor(db, table, query);
         const rows = db.prepare(`
         SELECT id, distance FROM ${table}
         WHERE embedding MATCH ${p.sql} ORDER BY distance LIMIT ?
@@ -269,16 +451,23 @@ export function searchSimilarFactsSameScope(db, embedding, scope, limit = 5, thr
         // Normalize ×scale int8 distances BEFORE the cross-table merge.
         for (const r of rows)
             r.distance = normalizeVecDistance(r.distance, p.q);
-        return { rows, exhausted: rows.length < n };
-    }, { rows: [], exhausted: true });
-    const HARD_CAP = 100_000; // safety ceiling so a pathological index can't loop unbounded
-    let fetchCount = Math.max(limit * 20, 200);
+        const exhausted = rows.length < n;
+        return { rows, done: exhausted || l2DistanceToSimilarity(rows[rows.length - 1].distance) < threshold };
+    }, { rows: [], done: true });
+    // vec0 refuses k > VEC0_KNN_K_MAX. The old ceiling (100,000) let k grow
+    // 200 → 800 → 3,200 → 12,800 and the fourth page threw on every driver with
+    // fewer than `limit` matches in an index of more than 3,200 rows.
+    // Query vectors: the given one, plus the driver's own Korean vector when asked for.
+    const queries = [embedding];
+    const krVector = opts.krVectorOfFactId ? storedFactVector(db, 'vec_facts_kr', opts.krVectorOfFactId) : null;
+    if (krVector)
+        queries.push(krVector);
+    let fetchCount = Math.min(Math.max(limit * 20, 200), VEC0_KNN_K_MAX);
     let results = [];
     for (;;) {
-        const a = fetchN('vec_facts', fetchCount);
-        const b = fetchN('vec_facts_kr', fetchCount);
+        const lookups = queries.flatMap((q) => [fetchN('vec_facts', q, fetchCount), fetchN('vec_facts_kr', q, fetchCount)]);
         const best = new Map();
-        for (const vr of [...a.rows, ...b.rows]) {
+        for (const vr of lookups.flatMap((l) => l.rows)) {
             const cur = best.get(vr.id);
             if (cur === undefined || vr.distance < cur)
                 best.set(vr.id, vr.distance);
@@ -304,29 +493,57 @@ export function searchSimilarFactsSameScope(db, embedding, scope, limit = 5, thr
             if (results.length >= limit)
                 break;
         }
-        // Stop when we have enough, both indexes are exhausted, or we hit the cap.
-        const bothExhausted = a.exhausted && b.exhausted;
-        if (results.length >= limit || bothExhausted || fetchCount >= HARD_CAP)
+        // Stop when we have enough or no lookup can yield another passing row.
+        if (results.length >= limit || lookups.every((l) => l.done))
             break;
-        fetchCount = Math.min(fetchCount * 4, HARD_CAP);
+        // At the k limit with rows above the threshold still unread: return what
+        // the nearest rows held and say so — a partial answer the caller can count,
+        // instead of failing the search (and with it the whole drain).
+        if (fetchCount >= VEC0_KNN_K_MAX) {
+            opts.onCapReached?.({ k: fetchCount, found: results.length });
+            break;
+        }
+        fetchCount = Math.min(fetchCount * 4, VEC0_KNN_K_MAX);
     }
     return results;
 }
+/** Global facts in the session-start block: at most this many of `limit`; the other slots are the project's. */
+export const TOP_FACTS_GLOBAL_MAX = 3;
 /**
- * Get top facts using a relevance score that combines:
- * - Confirmation count (consolidated_count) — how established is this fact
- * - Recency (updated_at) — how recent is this fact
- * - Scope priority — project-specific facts rank higher than global for that project
- *
- * Score = (log2(consolidated_count + 1) * 3) + recency_bonus + scope_bonus
- *   recency_bonus: 5 if updated in last 7 days, 3 if last 30 days, 1 if last 90 days, 0 otherwise
- *   scope_bonus: 2 for project-scoped facts, 0 for global
- *
- * Project facts are guaranteed up to half of the result slots: heavily-confirmed
- * global facts otherwise outscore any newly extracted project fact (count=1)
- * forever, so project context would never surface in injection.
+ * consolidated_count stops adding to the score here. It counts DUPLICATE/EVOLUTION
+ * merges, not independent confirmations, so it grows fastest for text that every
+ * session re-states (memory-file facts: 20 merges in two days from one source
+ * conversation, measured 2026-11-10) — uncapped, its log outweighed everything else.
  */
-export function getTopFacts(db, rawProject, limit = 10) {
+const TOP_FACTS_COUNT_CAP = 4;
+/** MEMORY_BANK_KEY_FACTS_GLOBAL_MAX: a non-negative integer; anything else is the default. */
+export function topFactsGlobalMax(raw) {
+    const t = (raw ?? '').trim();
+    return /^\d+$/.test(t) ? Number(t) : TOP_FACTS_GLOBAL_MAX;
+}
+/**
+ * The facts of the session-start "Project Key Facts" block: the project's first,
+ * then at most `globalMax` global ones.
+ *
+ * - Project = the repository family of `rawProject` (scopeMatcher, the predicate
+ *   the per-prompt injection uses): a session in a sub-folder or a linked worktree
+ *   gets the repository's facts, the repository gets its worktrees'. A path
+ *   outside any repository sees its exact scope only, as before.
+ * - Slots: global facts take min(globalMax, limit) slots at most, project facts
+ *   the rest. A slot the global side cannot fill goes to the project; a slot the
+ *   project cannot fill stays empty — the cap on global facts is a cap. (Before,
+ *   the two sides competed on one score and the final order was by score: every
+ *   project opened with the same heavily-merged global facts.)
+ * - Score, within each side: count term 3 × (1 + log2(min(consolidated_count,
+ *   TOP_FACTS_COUNT_CAP) + 1)), recency 5 / 3 / 1 / 0 for updated within 7 / 30 /
+ *   90 days / older, and +2 for a fact scoped to exactly this cwd (ahead of the
+ *   rest of its family).
+ * - Ties: most recently updated first, then id — a total order, so the same rows
+ *   give the same block. 96.6% of project facts have count 1 (measured), so most
+ *   of the project side is decided here; without it the cut among equals was
+ *   whatever order SQLite happened to return.
+ */
+export function getTopFacts(db, rawProject, limit = 10, opts = {}) {
     const project = canonicalizeProject(db, rawProject);
     const now = new Date();
     const d7 = new Date(now.getTime() - 7 * 86400000).toISOString();
@@ -334,32 +551,41 @@ export function getTopFacts(db, rawProject, limit = 10) {
     const d90 = new Date(now.getTime() - 90 * 86400000).toISOString();
     const scoreExpr = `
       (
-        CASE WHEN consolidated_count > 0 THEN (3.0 * (1.0 + LOG(consolidated_count + 1) / LOG(2))) ELSE 3.0 END
+        CASE WHEN consolidated_count > 0 THEN (3.0 * (1.0 + LOG(MIN(consolidated_count, ${TOP_FACTS_COUNT_CAP}) + 1) / LOG(2))) ELSE 3.0 END
         + CASE WHEN updated_at >= ? THEN 5 WHEN updated_at >= ? THEN 3 WHEN updated_at >= ? THEN 1 ELSE 0 END
         + CASE WHEN scope_type = 'project' AND scope_project = ? THEN 2 ELSE 0 END
       ) as relevance_score`;
-    const projectRows = db.prepare(`
+    const order = 'ORDER BY relevance_score DESC, updated_at DESC, id ASC';
+    // `+is_active` keeps the planner off the two-valued is_active index (it walks every
+    // active fact) and on idx_facts_scope, which holds only the rows of the scopes asked for.
+    const wanted = opts.globalMax ?? TOP_FACTS_GLOBAL_MAX;
+    const globalSlots = Math.max(0, Math.min(Number.isFinite(wanted) ? Math.floor(wanted) : TOP_FACTS_GLOBAL_MAX, limit));
+    const globalRows = globalSlots === 0 ? [] : db.prepare(`
     SELECT *, ${scoreExpr}
     FROM facts
-    WHERE is_active = 1 AND scope_type = 'project' AND scope_project = ?
-    ORDER BY relevance_score DESC
+    WHERE +is_active = 1 AND scope_type = 'global'
+    ${order}
     LIMIT ?
-  `).all(d7, d30, d90, project, project, limit);
-    const globalRows = db.prepare(`
+  `).all(d7, d30, d90, project, globalSlots);
+    // The family predicate reads the filesystem, so it runs over the distinct project
+    // scopes (an index-only read, a few hundred values), not over fact rows.
+    // No project (empty cwd) = no project facts: scopeMatcher reads a missing project as "every
+    // scope is visible" (its meaning for searches), which here would put every project's facts
+    // into one session's block.
+    const inScope = project ? scopeMatcher(project, true) : () => false;
+    const scopes = db.prepare("SELECT DISTINCT scope_project AS s FROM facts WHERE scope_type = 'project'")
+        .all()
+        .map((r) => r.s)
+        .filter((s) => s !== null && inScope(s));
+    const projectSlots = limit - globalRows.length;
+    const projectRows = scopes.length === 0 || projectSlots <= 0 ? [] : db.prepare(`
     SELECT *, ${scoreExpr}
     FROM facts
-    WHERE is_active = 1 AND scope_type = 'global'
-    ORDER BY relevance_score DESC
+    WHERE +is_active = 1 AND scope_type = 'project' AND scope_project IN (${scopes.map(() => '?').join(', ')})
+    ${order}
     LIMIT ?
-  `).all(d7, d30, d90, project, limit);
-    const reserved = Math.ceil(limit / 2);
-    const guaranteed = projectRows.slice(0, reserved);
-    const rest = [...projectRows.slice(reserved), ...globalRows]
-        .sort((a, b) => b.relevance_score - a.relevance_score)
-        .slice(0, Math.max(0, limit - guaranteed.length));
-    return [...guaranteed, ...rest]
-        .sort((a, b) => b.relevance_score - a.relevance_score)
-        .map(rowToFact);
+  `).all(d7, d30, d90, project, ...scopes, projectSlots);
+    return [...projectRows, ...globalRows].map(rowToFact);
 }
 /**
  * Legacy: get facts by pure confirmation count (for backward compatibility).
@@ -392,6 +618,12 @@ export function getNewFactsSince(db, project, since) {
  *
  * cursor null → from the beginning (all active facts).
  *
+ * `notAfter` (an ISO time, the drain passes "now") leaves out facts dated
+ * later than it. A fact stamped while the clock was ahead sorts after every
+ * fact created since: driving it moved the cursor ahead of the clock, and from
+ * then on nothing created at the real time was pending. Such a fact waits
+ * until its time comes; it stays a similarity candidate meanwhile.
+ *
  * KNOWN LIMITATION (best-effort dedup): a fact IMPORTED mid-drain with an old
  * `created_at` that sorts before the current cursor is not re-driven by this
  * pass (it's still a similarity CANDIDATE for future facts, so a duplicate is
@@ -399,24 +631,31 @@ export function getNewFactsSince(db, project, since) {
  * not an exhaustive guarantee, so this is accepted rather than adding a
  * full re-scan on every import.
  */
-export function getAllNewFactsSince(db, cursor, limit = 2000) {
+export function getAllNewFactsSince(db, cursor, limit = 2000, notAfter) {
     // Bounded page (keyset) — NEVER materialize the whole table: seeding from the
     // beginning could otherwise pull tens of thousands of rows into memory in one
     // query. The keyset cursor makes each run resume exactly where the last ended,
     // so the backlog drains page-by-page. The idx_facts_active_created_id index
     // (is_active, created_at, id) serves both the filter and the ORDER BY without
     // a temp sort.
+    const bound = notAfter === undefined ? '' : 'AND created_at <= ?';
+    const boundParams = notAfter === undefined ? [] : [notAfter];
     if (!cursor) {
         return db.prepare(`
-      SELECT * FROM facts WHERE is_active = 1 ORDER BY created_at ASC, id ASC LIMIT ?
-    `).all(limit).map(rowToFact);
+      SELECT * FROM facts WHERE is_active = 1 ${bound} ORDER BY created_at ASC, id ASC LIMIT ?
+    `).all(...boundParams, limit).map(rowToFact);
     }
     return db.prepare(`
     SELECT * FROM facts
     WHERE is_active = 1
       AND (created_at > ? OR (created_at = ? AND id > ?))
+      ${bound}
     ORDER BY created_at ASC, id ASC LIMIT ?
-  `).all(cursor.createdAt, cursor.createdAt, cursor.id, limit).map(rowToFact);
+  `).all(cursor.createdAt, cursor.createdAt, cursor.id, ...boundParams, limit).map(rowToFact);
+}
+/** Active facts dated later than `after` (an ISO time) — the ones a drain bounded at that time leaves alone. */
+export function countFactsDatedAfter(db, after) {
+    return db.prepare('SELECT COUNT(*) AS n FROM facts WHERE is_active = 1 AND created_at > ?').get(after).n;
 }
 /**
  * Search facts across ALL projects (no scope filter).
@@ -449,6 +688,97 @@ export function searchAllFacts(db, embedding, limit = 10, threshold = 0.6) {
             break;
     }
     return results;
+}
+/** sqlite-vec's ceiling for one KNN (`LIMIT`/k above it is refused). */
+export const FACT_KNN_MAX = 4096;
+/**
+ * Nearest facts under conditions that are applied BEFORE the cut to `limit`.
+ *
+ * searchSimilarFacts takes a fixed number of candidates (max(limit×2, 50) per table) and filters after
+ * it; the MCP tools then filtered once more after ITS cut. A project whose facts sat behind other
+ * projects' facts, or a category filter, came back with a few rows or none while matching facts existed
+ * (measured: 3 returned of 14 in scope; `category=decision` → 0 with 2 in the top 50). Here the candidate
+ * list grows ×4 until `limit` facts pass every condition, the indexes run out, the similarity threshold is
+ * crossed, or the sqlite-vec ceiling is reached — and `truncated` says when it was the ceiling.
+ * Both language indexes are searched (the best distance per fact wins), like searchSimilarFacts.
+ */
+export function searchFactsFiltered(db, embedding, opts) {
+    const limit = opts.limit ?? 5;
+    const threshold = opts.threshold ?? 0.85;
+    const canonProject = opts.project ? canonicalizeProject(db, opts.project) : opts.project;
+    const inScope = scopeMatcher(canonProject, false);
+    const scopeOk = opts.scope === 'other-projects'
+        ? (fact) => fact.scope_type === 'project' && fact.scope_project !== canonProject
+        : (fact) => fact.scope_type !== 'project' || inScope(fact.scope_project);
+    const knn = (table, n) => factKnn(table, () => {
+        const p = vecParamFor(db, table, embedding);
+        const rows = db.prepare(`
+      SELECT id, distance FROM ${table}
+      WHERE embedding MATCH ${p.sql}
+      ORDER BY distance
+      LIMIT ?
+    `).all(p.blob, n);
+        // Normalize ×scale int8 distances BEFORE the cross-table merge.
+        for (const r of rows)
+            r.distance = normalizeVecDistance(r.distance, p.q);
+        return rows;
+    }, []);
+    const rowStmt = db.prepare('SELECT * FROM facts WHERE id = ? AND is_active = 1 AND embedding_version = ?');
+    for (let fetchCount = Math.min(FACT_KNN_MAX, Math.max(limit * 4, 50));; fetchCount = Math.min(fetchCount * 4, FACT_KNN_MAX)) {
+        const a = knn('vec_facts', fetchCount);
+        const b = knn('vec_facts_kr', fetchCount);
+        const best = new Map();
+        for (const vr of [...a, ...b]) {
+            const cur = best.get(vr.id);
+            if (cur === undefined || vr.distance < cur)
+                best.set(vr.id, vr.distance);
+        }
+        const merged = [...best.entries()].map(([id, distance]) => ({ id, distance })).sort((x, y) => x.distance - y.distance);
+        const results = [];
+        const bySentence = new Map();
+        let crossedThreshold = false;
+        for (const vr of merged) {
+            if (l2DistanceToSimilarity(vr.distance) < threshold) {
+                crossedThreshold = true; // sorted by distance: nothing further can pass
+                break;
+            }
+            // Once the limit is filled the rest of this list is read only to find copies of what is shown.
+            if (results.length >= limit && !opts.foldSameText)
+                break;
+            const row = rowStmt.get(vr.id, EMBEDDING_VERSION);
+            if (!row)
+                continue; // inactive, or a vector the re-embed worker has not upgraded yet
+            const fact = rowToFact(row);
+            if (!scopeOk(fact))
+                continue;
+            if (opts.filter && !opts.filter(fact))
+                continue;
+            if (opts.foldSameText) {
+                const key = fact.fact.replace(/\s+/g, ' ').trim().toLowerCase();
+                const shown = bySentence.get(key);
+                if (shown) {
+                    shown.duplicateIds.push(fact.id);
+                    continue;
+                }
+                if (results.length >= limit)
+                    continue;
+                const hit = { fact, distance: vr.distance, duplicateIds: [] };
+                bySentence.set(key, hit);
+                results.push(hit);
+            }
+            else {
+                results.push({ fact, distance: vr.distance, duplicateIds: [] });
+            }
+        }
+        const exhausted = a.length < fetchCount && b.length < fetchCount;
+        if (results.length >= limit || exhausted || crossedThreshold || fetchCount >= FACT_KNN_MAX) {
+            return {
+                results,
+                examined: merged.length,
+                truncated: results.length < limit && !exhausted && !crossedThreshold,
+            };
+        }
+    }
 }
 function rowToFact(row) {
     const embeddingRaw = row['embedding'];

@@ -1,9 +1,10 @@
 import { l2DistanceToSimilarity } from './db.js';
 import { callHaiku, parseJsonResponse } from './llm.js';
-import { classifyLlmError, LlmRefusalError } from './llm-error-class.js';
+import { classifyLlmError, extractStatus, LlmCallError, LlmRefusalError } from './llm-error-class.js';
 import { generateEmbedding, initEmbeddings } from './embeddings.js';
 import { searchSimilarFacts } from './fact-db.js';
 import { getRelatedFacts, listDomains, listCategories } from './ontology-db.js';
+import { pickRelated, clipLine } from './related-format.js';
 const AVATAR_SYSTEM_PROMPT = `You are acting as the user's technical alter ego.
 You represent their past engineering decisions, preferences, and patterns.
 
@@ -25,6 +26,22 @@ You represent their past engineering decisions, preferences, and patterns.
 - 0.7-0.9: inferred from related decisions
 - 0.5-0.7: weak inference, needs verification
 - below 0.5: not enough information`;
+/** Characters of a related (not directly retrieved) fact in the prompt. */
+const RELATED_PROMPT_CHARS = 400;
+/**
+ * A call that failed because nobody is logged in or the key is not accepted: "Not logged in · Please run
+ * /login" and "Invalid API key · Please run /login" (what the Claude CLI under the Agent SDK prints), a 401, an
+ * authentication_error. Waiting does not fix it. The shared classifier keeps these as 'unknown' / 'transient'
+ * on purpose (background workers hold their queue until the login is back) — this is only about what the
+ * person asking is told.
+ */
+function isLoginFailure(error) {
+    const reason = error instanceof LlmCallError ? error.reason : error;
+    if (extractStatus(reason) === 401)
+        return true;
+    const message = (reason instanceof Error ? reason.message : String(reason)).toLowerCase();
+    return /not logged in|please run \/login|invalid (x-)?api[- ]?key|authentication_error/.test(message);
+}
 export async function askAvatar(db, question, project) {
     await initEmbeddings();
     const questionEmbedding = await generateEmbedding(question, 'query');
@@ -48,7 +65,9 @@ export async function askAvatar(db, question, project) {
     const relatedDecisions = [];
     const expandedFactIds = new Set(vectorResults.map((r) => r.fact.id));
     for (const { fact } of vectorResults.slice(0, 5)) {
-        const related = getRelatedFacts(db, fact.id, 1);
+        // A few neighbours per fact, the ones that change its reading first: all of them used to go into the
+        // prompt in full (one fact has had 106 neighbours, 76K characters).
+        const related = pickRelated(getRelatedFacts(db, fact.id, 1)).picked;
         for (const { fact: relFact, relation } of related) {
             if (!expandedFactIds.has(relFact.id)) {
                 expandedFactIds.add(relFact.id);
@@ -73,7 +92,7 @@ export async function askAvatar(db, question, project) {
             : undefined;
         const domainName = catInfo ? (domainMap.get(catInfo.domainId) ?? 'Unknown') : 'Unknown';
         const catName = catInfo ? catInfo.name : 'Unknown';
-        factContextLines.push(`[ID:${fact.id}] [${domainName}/${catName}] [${fact.category}] [relation:${relation}] "${fact.fact}" (date: ${fact.created_at.slice(0, 10)})`);
+        factContextLines.push(`[ID:${fact.id}] [${domainName}/${catName}] [${fact.category}] [relation:${relation}] "${clipLine(fact.fact, RELATED_PROMPT_CHARS)}" (date: ${fact.created_at.slice(0, 10)})`);
     }
     const prompt = [
         `Question: ${question}`,
@@ -96,19 +115,26 @@ export async function askAvatar(db, question, project) {
         console.error('ask_avatar: LLM call failed after retries:', error);
         const cls = classifyLlmError(error);
         // A refusal or a rejected request is not retried and fails the same way
-        // again — "try again later" would be wrong advice for it.
+        // again — "try again later" would be wrong advice for it. So would it be for a
+        // missing login: the same question fails the same way until someone logs in.
         const retriable = cls !== 'deterministic';
-        const advice = error instanceof LlmRefusalError
+        const refusal = error instanceof LlmRefusalError;
+        const login = !refusal && isLoginFailure(error);
+        const advice = refusal
             ? '모델이 이 요청에 답하기를 거절했습니다. 같은 질문은 다시 해도 같은 결과일 가능성이 큽니다.'
-            : retriable
-                ? '잠시 후 다시 시도해 주세요.'
-                : '이 요청은 다시 시도해도 같은 이유로 실패합니다.';
+            : login
+                ? 'Claude 에 로그인되어 있지 않거나 API 키가 받아들여지지 않았습니다. `/login` 으로 로그인(또는 API 키를 설정)한 뒤 다시 물어 주세요 — 기다려서는 해결되지 않습니다.'
+                : retriable
+                    ? '잠시 후 다시 시도해 주세요.'
+                    : '이 요청은 다시 시도해도 같은 이유로 실패합니다.';
+        const failure = refusal ? 'refusal' : login ? 'login' : cls;
         // Only retriable failures were retried (callHaiku throws the rest at once).
         return {
-            answer: `⚠️ LLM 호출이 ${retriable ? '재시도 후에도 ' : ''}실패해 답변을 생성하지 못했습니다 (${cls}). ${advice}`,
+            answer: `⚠️ LLM 호출이 ${retriable ? '재시도 후에도 ' : ''}실패해 답변을 생성하지 못했습니다 (${login ? 'login' : cls}). ${advice}`,
             sources: [],
             confidence: 0,
             relatedDecisions,
+            failure,
         };
     }
     const parsed = parseJsonResponse(response);

@@ -1,10 +1,11 @@
 import fs from 'fs';
 import path from 'path';
-import { initDatabase, insertExchange } from './db.js';
-import { parseConversation } from './parser.js';
-import { initEmbeddings, generateExchangeEmbedding } from './embeddings.js';
+import { initDatabase } from './db.js';
+import { parseGuarded } from './conversation-guard.js';
+import { indexExchanges } from './index-exchanges.js';
+import { initEmbeddings } from './embeddings.js';
 import { summarizeConversation } from './summarizer.js';
-import { getArchiveDir, getExcludedProjects, isExcludedProject, isWorkerPromptMessage, getProjectsDir } from './paths.js';
+import { getArchiveDir, getExcludedProjects, isExcludedProject, getProjectsDir } from './paths.js';
 import { archiveFileExists, statArchiveFile } from './archive-io.js';
 /**
  * Copy source → archive unless a current copy (plain or .zst) already exists.
@@ -79,8 +80,12 @@ export async function indexConversations(limitToProject, maxConversations, concu
             if (archiveIfStale(sourcePath, archivePath)) {
                 console.log(`  Archived: ${file}`);
             }
-            // Parse conversation
-            const exchanges = await parseConversation(sourcePath, project, archivePath);
+            // Parse conversation (and judge its exclusion markers in the same pass)
+            const { exchanges, excluded } = await parseGuarded(sourcePath, project, archivePath);
+            if (excluded) {
+                console.log(`  Skipped ${file} (exclusion marker)`);
+                continue;
+            }
             if (exchanges.length === 0) {
                 console.log(`  Skipped ${file} (no exchanges)`);
                 continue;
@@ -118,16 +123,11 @@ export async function indexConversations(limitToProject, maxConversations, concu
         }
         // Now process embeddings and DB inserts (fast, sequential is fine)
         for (const conv of toProcess) {
-            for (const exchange of conv.exchanges) {
-                // The plugin's own worker-prompt sessions are ephemeral state, not
-                // knowledge — never index them (legacy transcripts sit under REAL
-                // project slugs, so the slug exclusion can't catch them).
-                if (isWorkerPromptMessage(exchange.userMessage))
-                    continue;
-                const toolNames = exchange.toolCalls?.map(tc => tc.toolName);
-                const embedding = await generateExchangeEmbedding(exchange.userMessage, exchange.assistantMessage, toolNames);
-                insertExchange(db, exchange, embedding, toolNames);
-            }
+            // The plugin's own worker-prompt sessions are ephemeral state, not
+            // knowledge — never indexed (legacy transcripts sit under REAL project
+            // slugs, so the slug exclusion can't catch them). That guard, the
+            // machine-noise guard and the already-indexed check are in indexExchanges.
+            await indexExchanges(db, conv.exchanges);
             totalExchanges += conv.exchanges.length;
             conversationsProcessed++;
             // Check if we hit the limit
@@ -169,8 +169,11 @@ export async function indexSession(sessionId, concurrency = 1, noSummaries = fal
             // Archive
             archiveIfStale(sourcePath, archivePath);
             // Parse and summarize
-            const exchanges = await parseConversation(sourcePath, project, archivePath);
-            if (exchanges.length > 0) {
+            const { exchanges, excluded } = await parseGuarded(sourcePath, project, archivePath);
+            if (excluded) {
+                console.log(`Session ${sessionId} carries an exclusion marker — not indexed`);
+            }
+            else if (exchanges.length > 0) {
                 // Generate summary (unless --no-summaries)
                 const summaryPath = archivePath.replace('.jsonl', '-summary.txt');
                 if (!noSummaries && !archiveFileExists(summaryPath)) {
@@ -185,14 +188,8 @@ export async function indexSession(sessionId, concurrency = 1, noSummaries = fal
                         console.error(`Summary failed (indexing continues; next sync retries it): ${error instanceof Error ? error.message : String(error)}`);
                     }
                 }
-                // Index
-                for (const exchange of exchanges) {
-                    if (isWorkerPromptMessage(exchange.userMessage))
-                        continue; // worker prompt = ephemeral state, not knowledge
-                    const toolNames = exchange.toolCalls?.map(tc => tc.toolName);
-                    const embedding = await generateExchangeEmbedding(exchange.userMessage, exchange.assistantMessage, toolNames);
-                    insertExchange(db, exchange, embedding, toolNames);
-                }
+                // Index (guards + already-indexed check: indexExchanges)
+                await indexExchanges(db, exchanges);
                 console.log(`✅ Indexed session ${sessionId}: ${exchanges.length} exchanges`);
             }
             db.close();
@@ -238,8 +235,8 @@ export async function indexUnprocessed(concurrency = 1, noSummaries = false) {
             // Archive if needed (a current plain or compressed copy counts)
             archiveIfStale(sourcePath, archivePath);
             // Parse and check
-            const exchanges = await parseConversation(sourcePath, project, archivePath);
-            if (exchanges.length === 0)
+            const { exchanges, excluded } = await parseGuarded(sourcePath, project, archivePath);
+            if (excluded || exchanges.length === 0)
                 continue;
             unprocessed.push({ project, file, sourcePath, archivePath, summaryPath, exchanges });
         }
@@ -276,13 +273,7 @@ export async function indexUnprocessed(concurrency = 1, noSummaries = false) {
     // Now index embeddings
     console.log(`\nIndexing embeddings...`);
     for (const conv of unprocessed) {
-        for (const exchange of conv.exchanges) {
-            if (isWorkerPromptMessage(exchange.userMessage))
-                continue; // worker prompt = ephemeral state, not knowledge
-            const toolNames = exchange.toolCalls?.map(tc => tc.toolName);
-            const embedding = await generateExchangeEmbedding(exchange.userMessage, exchange.assistantMessage, toolNames);
-            insertExchange(db, exchange, embedding, toolNames);
-        }
+        await indexExchanges(db, conv.exchanges); // guards + already-indexed check
     }
     db.close();
     console.log(`\n✅ Processed ${unprocessed.length} conversations`);

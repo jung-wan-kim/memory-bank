@@ -6,6 +6,7 @@ import { loadLedger } from './inject-ledger.js';
 import { injectionQuery } from './prompt-gate.js';
 import { factTextKey } from './fact-text.js';
 import { formatInjectBlock, PRODUCTION_SELECT_OPTIONS, selectInjectFacts } from './inject-select.js';
+import { hostSkipReason } from './inject-host-skip.js';
 // detectRepeat 는 exchanges 전체(335k) 벡터검색이다. OS 페이지 캐시가 식은 상태에서
 // 583~844ms 가 걸려 주입 지연의 대부분을 차지했다(2026-10-03 실측: 데몬 웜 24ms).
 // 게다가 cwd 와 슬러그를 비교하던 버그로 2,686회 주입 동안 결과를 한 번도 내지
@@ -17,6 +18,9 @@ const REPEAT_ELAPSED_BUDGET_MS = 700;
 function repeatDetectEnabled() {
     return process.env.MEMORY_BANK_REPEAT_DETECT === '1';
 }
+// hostSkipReason lives in its own import-free module so the hook client can judge the host before it asks the
+// daemon (inject-host-skip.ts). Re-exported: this is where the block's own computation applies it.
+export { hostSkipReason };
 /**
  * Compute the UserPromptSubmit context block for a prompt, WITHOUT recording it
  * in the session ledger (see InjectResult): top-K similar
@@ -51,6 +55,12 @@ export async function computeInjectResult(userPrompt, project, via, sessionId, m
     const gate = injectionQuery(userPrompt);
     if (gate.reason !== null) {
         appendInjectLog({ ...base, status: 'skipped', reason: gate.reason });
+        return { context: '', ledgerKeys: [] };
+    }
+    // A host the user turned injection off for (off by default — hostSkipReason): no search, logged like any skip.
+    const hostSkip = hostSkipReason(meta);
+    if (hostSkip !== null) {
+        appendInjectLog({ ...base, status: 'skipped', reason: hostSkip });
         return { context: '', ledgerKeys: [] };
     }
     // Usually the prompt itself; the arguments of an expanded slash command or the

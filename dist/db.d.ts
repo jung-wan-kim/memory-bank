@@ -51,6 +51,55 @@ export declare function normalizeVecDistance(distance: number, quant: VecQuant):
  */
 export declare function l2DistanceToSimilarity(distance: number): number;
 export declare function migrateSchema(db: Database.Database): void;
+/** FTS sync on DELETE. Exported for the rebuild, which empties `exchanges` without it (see rebuild.ts). */
+export declare const EXCHANGES_FTS_AD_DDL = "\n    CREATE TRIGGER IF NOT EXISTS exchanges_fts_ad AFTER DELETE ON exchanges BEGIN\n      INSERT INTO exchanges_fts(exchanges_fts, rowid, user_message, assistant_message)\n      VALUES('delete', old.rowid, old.user_message, old.assistant_message);\n    END\n  ";
+/**
+ * How long after dropping idx_facts_active an index of that name is left alone.
+ *
+ * A 1.7.x process sharing the database re-creates the index on its own open
+ * (`CREATE INDEX IF NOT EXISTS`), reading the whole fact table under the write
+ * lock — measured 1.6-3.4s at 46,507 facts. Dropping it again on every open of
+ * this code made the two versions rebuild it for as long as both ran: every
+ * open of the older one paid those seconds (an older MCP server opens the
+ * database per tool call). So an index that is back within this time of the
+ * last drop stays. The queries that plan worse on it carry a `+is_active`
+ * hint and stay off it either way: the two the drop was measured on (key facts
+ * in fact-db.ts, the ontology tree in ontology-db.ts) and the per-category /
+ * per-scope fact counts added after 1.7.x (ontology-db.ts activeFactCounts,
+ * findCategoriesByNameKey, getFactsByCategory; fact-db.ts
+ * searchSimilarFactsSameScope) — without the hint those took one extraction
+ * from about 2s to over 9s while the index was back. Other `is_active = 1`
+ * queries plan as they did in 1.7.x. After that time — the older processes of an
+ * upgrade are long replaced — it is dropped again. 6 hours: chosen, not
+ * measured; the interval of the session-start maintenance, the other cleanup
+ * that is not done per open.
+ */
+export declare const FACTS_ACTIVE_INDEX_REDROP_MS: number;
+/** One turn of one file: what insertExchange looks up to remove older snapshots of a turn. */
+export declare const EXCHANGE_TURN_INDEX = "idx_exchanges_path_line";
+/**
+ * Create the (archive_path, line_start) index while the exchanges table is
+ * EMPTY — a fresh DB, or right after `index --rebuild` emptied it. On a
+ * populated table the build reads every row to the end (line_start sits behind
+ * both message columns), under the write lock: on the measured 10GB DB a scan
+ * of that table took 23s cold and up to 6 minutes, far past every other
+ * process's 5s busy_timeout — not something a DB open may do. Without the
+ * index the same lookup runs through idx_archive_path (it visits that file's
+ * rows; measured 0.07ms per lookup at 600 rows of 10KB, 23ms at 600 rows of
+ * 200KB). A populated DB gets the index from
+ * `scripts/dedupe-exchange-snapshots.mjs --create-index`, run on purpose.
+ */
+export declare function ensureExchangeTurnIndex(db: Database.Database): void;
+/** Build the (archive_path, line_start) index whatever the table size — see ensureExchangeTurnIndex for the cost. */
+export declare function createExchangeTurnIndex(db: Database.Database): void;
+/**
+ * Snapshots of a turn that insertExchange replaced, waiting for what names
+ * them as a source to be pointed at the row that replaced them
+ * (repointQueuedExchangeSources). A row is written in the transaction that
+ * deletes the snapshot, so a process that ends before the sources are moved
+ * leaves the pair for the next indexing run.
+ */
+export declare const EXCHANGE_REPOINT_TABLE = "exchange_repoints";
 /**
  * Read-only handle for a hot read path that must neither write nor wait on
  * writers — the synchronous SessionStart hook. initDatabase() runs migrations
@@ -62,10 +111,111 @@ export declare function migrateSchema(db: Database.Database): void;
  */
 export declare function openReadOnlyDatabase(): Database.Database | null;
 export declare function initDatabase(): Database.Database;
-export declare function insertExchange(db: Database.Database, exchange: ConversationExchange, embedding: number[], _toolNames?: string[]): void;
+/**
+ * Longest tool_input stored per tool call (UTF-16 code units). tool_calls was
+ * the largest table of one measured DB — 1.5GB, 35.9% of the file, 938MiB of
+ * it tool_input — while its only reader shows the first 300 characters
+ * (ui/server.cjs); nothing parses it back as JSON. The full input stays in the
+ * archived transcript, which the `read` tool serves. Applies to rows written
+ * from now on; existing rows are left as they are.
+ */
+export declare const TOOL_INPUT_MAX_CHARS = 1000;
+/**
+ * Write one exchange with its vector and tool calls. Returns false, with
+ * nothing written, when a fuller snapshot of the same turn is already indexed
+ * (see below) — true otherwise.
+ */
+export declare function insertExchange(db: Database.Database, exchange: ConversationExchange, embedding: number[], _toolNames?: string[]): boolean;
+/**
+ * True when a fuller snapshot of this exchange's turn is already indexed — the
+ * same file and start line, ending later. insertExchange refuses such a write;
+ * a caller asks first so it does not embed text that will not be stored.
+ */
+export declare function hasFullerSnapshot(db: Database.Database, exchange: Pick<ConversationExchange, 'archivePath' | 'lineStart' | 'lineEnd'>): boolean;
 export declare function getAllExchanges(db: Database.Database): Array<{
     id: string;
     archivePath: string;
 }>;
 export declare function getFileLastIndexed(db: Database.Database, archivePath: string): number | null;
+export interface RepointResult {
+    /** Replaced snapshots that were waiting. */
+    pairs: number;
+    /** Whether the fact table had to be read (false: no waiting snapshot could be named by a fact). */
+    scanned: boolean;
+    /** Facts whose source list was changed. */
+    facts: number;
+    /** Fact revisions whose source was changed. */
+    revisions: number;
+}
+/**
+ * Point what names a replaced snapshot as its source at the row that replaced
+ * it: the entries of facts.source_exchange_ids and
+ * fact_revisions.source_exchange_id. A fact extracted while only the shorter
+ * snapshot existed would otherwise name a row that is gone, and `trace_fact`
+ * skips sources it cannot find. (Facts carry every exchange id of their
+ * session: on one measured DB 13,573 facts named such a snapshot.) The fact
+ * itself is unchanged — updated_at is left alone.
+ *
+ * Works through the pairs insertExchange wrote down:
+ *  1. A pair whose session has no extraction_log row is dropped unread: every
+ *     extraction claims its session there before it saves a fact, so no fact
+ *     names an exchange of a session that was never extracted (measured on a
+ *     live DB: the 59,585 exchanges facts name belong to 1,810 sessions, all
+ *     1,810 with a row). This is the usual case — the last turn of a session
+ *     still in use — and costs two index lookups.
+ *  2. For the rest, ONE read of every fact's source list, without the write
+ *     lock, finds the facts and revisions that name a replaced snapshot.
+ *  3. A short write transaction changes those rows (each read again inside
+ *     it) and removes the pairs it worked through.
+ * Safe to run from several processes: a pair handled twice changes nothing the
+ * second time.
+ */
+export declare function repointQueuedExchangeSources(db: Database.Database): RepointResult;
+/** Delete one exchange with its tool calls and vector — all or nothing. */
 export declare function deleteExchange(db: Database.Database, id: string): void;
+/**
+ * How long one delete batch may hold the write lock before it commits. Every
+ * other process waits 5s for that lock and then fails ("database is locked" —
+ * a session-start hook, a worker, the MCP server opening the DB). A batch
+ * bounded only by row count (2,000) held it for over 5s on a large DB: each
+ * row is an FTS delete (its whole text tokenized again) and a vec0 delete.
+ */
+export declare const DELETE_BATCH_MAX_MS = 400;
+/**
+ * Pause between two delete batches. A process waiting for the lock retries at
+ * intervals of up to 100ms (SQLite's busy handler); batches that follow each
+ * other at once leave it microseconds to land in, and it starves until its 5s
+ * are over. The pause is longer than its longest sleep.
+ */
+export declare const DELETE_BATCH_PAUSE_MS = 120;
+export interface DeleteExchangesOptions {
+    /** Commit the batch once it has taken this long (default DELETE_BATCH_MAX_MS). 0 = one row per batch. */
+    maxBatchMs?: number;
+    /** Wait this long between batches (default DELETE_BATCH_PAUSE_MS). 0 = none. */
+    pauseMs?: number;
+    /** Called after each committed batch with the rows deleted so far; no transaction is open here. */
+    onBatch?: (deleted: number) => void;
+}
+/**
+ * Wait between two write transactions that follow each other, long enough for
+ * a process waiting on the write lock to take it (see DELETE_BATCH_PAUSE_MS).
+ * Call it with no transaction open.
+ */
+export declare function pauseForOtherWriters(ms?: number): void;
+/**
+ * Delete many exchanges in batches, each one transaction (see
+ * deleteExchangeRows for the order). A batch ends at `batchSize` rows or after
+ * DELETE_BATCH_MAX_MS, whichever comes first, and the next one starts after a
+ * pause — so other processes keep writing while a maintenance command deletes.
+ */
+export declare function deleteExchanges(db: Database.Database, ids: readonly string[], batchSize?: number, opts?: DeleteExchangesOptions): number;
+/**
+ * True when this exchange is already indexed as it stands: same id (the id is
+ * derived from the file and its line range, and transcripts are append-only,
+ * so the same id is the same text), embedded with the current model, and its
+ * vector row present. A caller that sees true may skip embedding it again —
+ * before this check every sync re-embedded and re-wrote every exchange of a
+ * file that had grown by one line (measured live: 1,657 rows rewritten in a
+ * day for 25 new exchanges; one 1.07GB conversation took 109s per sync).
+ */
+export declare function isExchangeCurrent(db: Database.Database, id: string): boolean;

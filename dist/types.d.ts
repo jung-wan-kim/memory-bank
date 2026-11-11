@@ -30,14 +30,23 @@ export interface ConversationExchange {
 }
 export interface SearchResult {
     exchange: ConversationExchange;
-    similarity: number;
+    /** Cosine similarity to the query — absent for a hit only the keyword pass found. */
+    similarity?: number;
+    /** Which pass found the hit ('both' = the vector and the keyword pass agree). */
+    matchedBy?: 'vector' | 'text' | 'both';
     snippet: string;
 }
 export interface MultiConceptResult {
     exchange: ConversationExchange;
     snippet: string;
+    /** Similarity of the conversation to each concept (NaN when unknown: a keyword match with no stored vector). */
     conceptSimilarities: number[];
     averageSimilarity: number;
+    /**
+     * 'keyword': one exchange contains every word of every concept (listed first).
+     * 'semantic': every concept has a semantically near exchange in the conversation.
+     */
+    matchedBy?: 'keyword' | 'semantic';
 }
 export type FactCategory = 'decision' | 'preference' | 'pattern' | 'knowledge' | 'constraint';
 export type FactScopeType = 'global' | 'project';
@@ -124,6 +133,9 @@ export interface DomainTree {
     domain: OntologyDomain;
     categories: Array<{
         category: OntologyCategory;
+        /** Active facts of the category, most confirmed first — at most the caller's per-category cap. */
         facts: Fact[];
+        /** Active facts in the category, whatever was loaded into `facts`. */
+        factCount: number;
     }>;
 }

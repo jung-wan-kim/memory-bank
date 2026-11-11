@@ -16,6 +16,8 @@
  *  - session_id 는 파일명이 되므로 화이트리스트 sanitize (path traversal 차단)
  *  - 모든 실패는 best-effort: 원장이 깨져도 주입 자체를 막지 않는다
  *    (dedup 은 최적화지 정합성 요건이 아님 — fail-open 이 옳다)
+ *  - 압축(compaction) 뒤에는 그 세션의 원장을 비운다 (resetLedger) — 요약으로 사라진 fact 는
+ *    더 이상 컨텍스트에 없다. 이 경로만 실패를 삼키지 않는다(아래 resetLedger 주석).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -70,6 +72,33 @@ export function appendLedger(sessionId, existing, newIds) {
         pruneOldLedgers(dir);
     }
     catch { /* best-effort */ }
+}
+/**
+ * 세션 원장을 비운다 — 컨텍스트 압축(compaction) 뒤에 부른다 (scripts/ledger-reset-hook.js).
+ *
+ * 원장의 전제는 「이미 주입한 fact 는 대화 컨텍스트에 있다」인데, 압축은 그 fact 를 요약으로
+ * 바꾸면서 세션 id 는 그대로 둔다. 원장이 남으면 사라진 fact 가 세션이 끝날 때까지
+ * 「이미 실음」으로 막힌다(실측 2026-11-10: 원장 94개 중 11세션이 압축을 겪었고 그 원장에 315건,
+ * 활동 중인 세션은 주입 때마다 mtime 이 갱신돼 7일 정리에도 걸리지 않는다).
+ *
+ * 그 세션의 파일 하나만 지운다. 반환: 지운 키 수(원장이 없었으면 0), 쓸 수 없는 세션 id 면 null.
+ * 다른 함수와 달리 실패를 삼키지 않는다 — 지우지 못했는데 조용히 돌아오면 호출자가
+ * 「초기화됨」으로 기록하고 그 세션은 계속 막힌다. 호출자가 로그에 남긴다.
+ */
+export function resetLedger(sessionId) {
+    const id = sanitizeSessionId(sessionId);
+    if (!id)
+        return null;
+    const had = loadLedger(id).size;
+    try {
+        fs.unlinkSync(ledgerPath(id));
+    }
+    catch (e) {
+        if (e.code === 'ENOENT')
+            return 0;
+        throw e;
+    }
+    return had;
 }
 /** 7일 넘은 원장 파일 정리 — 세션 원장은 세션과 함께 죽는 상태이지 지식이 아니다. */
 function pruneOldLedgers(dir) {

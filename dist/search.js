@@ -1,8 +1,10 @@
 import { initDatabase, getVecQuant, embeddingToVecBlob, vecParamSql, normalizeVecDistance, l2DistanceToSimilarity } from './db.js';
+import { OBSERVER_PROMPT_PREFIX, WARMUP_MESSAGE } from './noise.js';
 import { getDbPath } from './paths.js';
 import { initEmbeddings, generateEmbedding, EMBEDDING_VERSION } from './embeddings.js';
 import { searchSimilarFacts } from './fact-db.js';
 import { getRelatedFacts } from './ontology-db.js';
+import { clipLine, summarizeRelated } from './related-format.js';
 import fs from 'fs';
 import readline from 'readline';
 import { readArchiveFile, createArchiveReadStream, statArchiveFile } from './archive-io.js';
@@ -68,100 +70,157 @@ export function getSearchDb() {
     cachedSearchDbIdent = fileIdent(p);
     return cachedSearchDb;
 }
+/** First characters of the prompts another memory plugin's observer session sends — not a person asking. */
+export const NOISE_OBSERVER_PREFIX = OBSERVER_PROMPT_PREFIX;
+/**
+ * SQL condition over `exchanges AS e` that is TRUE for a machine-noise row — the one definition of what the
+ * conversation search leaves out unless SearchOptions.include_noise is set:
+ *  - a sub-agent warm-up turn: a sidechain row whose user message is exactly "Warmup";
+ *  - an observer prompt of another memory plugin: the user message starts with NOISE_OBSERVER_PREFIX.
+ * On the live index these are 150,715 + 131,638 of 341,817 rows (82.6%); a search for a real question
+ * returned 16 observer prompts and 2 warm-ups in its 18 results. Rows are only hidden here — nothing is
+ * deleted, and a person's own "Warmup" in the main chain stays.
+ * substr(), not LIKE: the `_` in the prefix is a LIKE wildcard.
+ * The two texts come from noise.ts — the rule that keeps such turns out of the index (isNoiseExchange) —
+ * so what the index refuses and what the search hides cannot drift apart (test/noise-search-parity.test.ts).
+ */
+export const NOISE_EXCHANGE_SQL = `((COALESCE(e.is_sidechain, 0) = 1 AND e.user_message = '${WARMUP_MESSAGE}')` +
+    ` OR substr(e.user_message, 1, ${NOISE_OBSERVER_PREFIX.length}) = '${NOISE_OBSERVER_PREFIX}')`;
+/** sqlite-vec refuses a KNN whose k is above this ("k value in knn query too large … the limit is 4096"). */
+export const VEC_KNN_K_MAX = 4096;
+/**
+ * From this k up a KNN costs what one at the ceiling costs: vec0 scans every vector whatever k is, and
+ * selects the nearest min(k, 1024) of each 1,024-vector chunk. Measured on 341,840 int8 vectors:
+ * k 10 → 45 ms, 50 → 60 ms, 400 → 145 ms, 1,600 → 300 ms, 4,096 → 300 ms. The vector pass therefore never
+ * asks for a k between this and the ceiling — it would pay the ceiling's price for fewer candidates, and
+ * then often for one more round at the ceiling.
+ */
+export const VEC_KNN_FLAT_K = 1024;
+/** `k` as the vector pass asks for it: within the sqlite-vec limit, and the ceiling once the cost is flat. */
+function knnK(k) {
+    return k >= VEC_KNN_FLAT_K ? VEC_KNN_K_MAX : Math.max(1, Math.ceil(k));
+}
+/** Reciprocal-rank-fusion constant for merging the vector and keyword passes in `both` mode. */
+const RRF_K = 60;
+/** Most keyword matches one look-ahead reads to find `limit` rows that are not machine noise. */
+const TEXT_LOOKAHEAD_MAX = 4096;
+/**
+ * A coding_agent filter on at most this many rows is applied in the keyword query from the agent's own row
+ * list (idx_coding_agent, read once per query) instead of from each matching exchange row.
+ *
+ * The keyword query always scans the keyword index first (see filteredSql). How the agent condition is then
+ * tested decides the cost, measured on a 341,840-row index (ms, first run, `limit` 10):
+ *   rows of the agent          0     457    5,017   20,133   316,233
+ *   test on the exchange row   1,500–4,800  48–1,600  4–64   1–79    1–18
+ *   test on the row list       4–55         4–51      2–21   8–24    21–61
+ * Testing the row opens every match of the query until `limit` rows pass, and the agent column sits behind
+ * the message text (overflow pages) — cheap when most rows pass, seconds when few do. The row list costs one
+ * index read of the agent's rows per query — cheap while the list is short.
+ */
+export const RARE_AGENT_ROWS = 20_000;
+/** Rows that carry `agent`, counted no further than RARE_AGENT_ROWS + 1 (index-only; under 6 ms measured). */
+function countAgentRows(db, agent) {
+    return db.prepare('SELECT count(*) AS c FROM (SELECT 1 FROM exchanges WHERE coding_agent = ? LIMIT ?)').get(agent, RARE_AGENT_ROWS + 1).c;
+}
+/**
+ * One query token as an FTS5 term. A Hangul word of two or more characters is a PREFIX term: unicode61
+ * splits on whitespace, so a word with a particle attached ("검색을") is a different token from the bare
+ * word ("검색") and an exact term misses it (measured: 6–22% of the matches of common words). Everything
+ * else stays an exact term (Latin words already go through the porter stemmer; a one-character Hangul
+ * prefix would match half the vocabulary). Prefix terms work under detail=column and detail=full alike,
+ * and the match-count guard below bounds their ranking cost the same way.
+ */
+function ftsTerm(token) {
+    return /^[\uAC00-\uD7A3]{2,}$/.test(token) ? `"${token}"*` : `"${token}"`;
+}
+/** The turn a row belongs to. A growing session is re-indexed with the same turn under a new id each time. */
+const turnKey = (row) => `${row.archive_path}\u0000${row.line_start}`;
+/**
+ * One entry per turn, in first-seen order (the best-ranked snapshot decides the position). `rep` is the
+ * snapshot with the largest line_end — the most complete copy of the turn; `first` is the best-ranked one.
+ */
+function foldTurns(rows) {
+    const turns = new Map();
+    for (const row of rows) {
+        const key = turnKey(row);
+        const turn = turns.get(key);
+        if (!turn) {
+            turns.set(key, { rep: row, first: row, members: 1 });
+        }
+        else {
+            turn.members++;
+            if (row.line_end > turn.rep.line_end)
+                turn.rep = row;
+        }
+    }
+    return [...turns.values()];
+}
+/**
+ * Whether a stored "summary" is not one: empty, an LLM/CLI failure message that was written out as the
+ * result ("Invalid API key · Please run /login", "API Error: Rate limit reached" — 1,907 of the 3,005 short
+ * summaries on the live disk), or a worker's JSON reply. Such a file is never shown as a conversation summary.
+ */
+export function isErrorSummary(text) {
+    const t = text.trim();
+    if (!t)
+        return true;
+    if (/^(Invalid API key|API Error\b|Your account does not have access to Claude Code)/i.test(t))
+        return true;
+    if (/^```(?:json)?\s*[{[]/.test(t) || /^[{[]\s*"/.test(t))
+        return true;
+    return false;
+}
 function validateISODate(dateStr, paramName) {
     const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
     if (!isoDateRegex.test(dateStr)) {
         throw new Error(`Invalid ${paramName} date: "${dateStr}". Expected YYYY-MM-DD format (e.g., 2025-10-01)`);
     }
-    // Verify it's actually a valid date
+    // Verify it's actually a valid date. A day the month does not have parses too (2026-02-30 becomes
+    // March 2nd), so the parsed date has to read back as the string that was given.
     const date = new Date(dateStr);
-    if (isNaN(date.getTime())) {
+    if (isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== dateStr) {
         throw new Error(`Invalid ${paramName} date: "${dateStr}". Not a valid calendar date.`);
     }
 }
-export async function searchConversations(query, options = {}) {
-    const { limit = 10, mode = 'both', after, before, coding_agent } = options;
-    // Validate date parameters
+/**
+ * The date filters of a search, checked before anything is searched. Both are compared as text with the
+ * row's timestamp ("2026-10-01T09:30:00.000Z"): `after` keeps that day and later, `before` keeps the days
+ * before it. So `after` later than `before` — or the same day — is a range no row can be in: the vector pass
+ * used to widen its KNN to the sqlite-vec ceiling looking for one, and the answer then said the search had
+ * been cut short.
+ */
+function validateDateRange(after, before) {
     if (after)
         validateISODate(after, '--after');
     if (before)
         validateISODate(before, '--before');
+    if (!after || !before)
+        return;
+    if (after > before) {
+        throw new Error(`Invalid date range: --after ${after} is later than --before ${before} — no conversation can be in it`);
+    }
+    if (after === before) {
+        throw new Error(`Invalid date range: --after and --before are both ${after} — --before keeps the days before it, `
+            + 'so no conversation can be in it (for one day, give the following day as --before)');
+    }
+}
+export async function searchConversations(query, options = {}) {
+    return (await searchConversationsDetailed(query, options)).results;
+}
+/** searchConversations plus how the search ran (SearchMeta) — pass both to formatResults. */
+export async function searchConversationsDetailed(query, options = {}) {
+    const { limit = 10, mode = 'both', after, before, coding_agent, include_noise = false, require_all_tokens = false, vector_first_k } = options;
+    // Validate date parameters
+    validateDateRange(after, before);
     const db = getSearchDb();
-    let results = [];
-    {
-        // Build filter clauses with parameterized queries
-        const filterParts = [];
-        const filterParams = [];
-        if (after) {
-            filterParts.push(`e.timestamp >= ?`);
-            filterParams.push(after);
-        }
-        if (before) {
-            filterParts.push(`e.timestamp <= ?`);
-            filterParams.push(before);
-        }
-        if (coding_agent) {
-            filterParts.push(`e.coding_agent = ?`);
-            filterParams.push(coding_agent);
-        }
-        const timeClause = filterParts.length > 0 ? `AND ${filterParts.join(' AND ')}` : '';
-        const timeParams = filterParams;
-        if (mode === 'vector' || mode === 'both') {
-            // Vector similarity search
-            await initEmbeddings();
-            const queryEmbedding = await generateEmbedding(query, 'query');
-            // dtype/scale-aware: int8 tables need vec_int8()-wrapped quantized query
-            // blobs, and their distances come back ×scale (normalized below).
-            const vecQuery = (vecQuant) => {
-                const stmt = db.prepare(`
-          SELECT
-            e.id,
-            e.project,
-            e.timestamp,
-            e.user_message,
-            e.assistant_message,
-            e.archive_path,
-            e.line_start,
-            e.line_end,
-            e.coding_agent,
-            vec.distance
-          FROM vec_exchanges AS vec
-          JOIN exchanges AS e ON vec.id = e.id
-          WHERE vec.embedding MATCH ${vecParamSql(vecQuant)}
-            AND k = ?
-            AND e.embedding_version = ?
-            ${timeClause}
-          ORDER BY vec.distance ASC
-        `);
-                // embedding_version filter: old-model vectors are incomparable with the
-                // current-model query embedding — exclude rows the re-embed worker has
-                // not upgraded yet (newest sessions are upgraded first).
-                const rows = stmt.all(embeddingToVecBlob(queryEmbedding, vecQuant), limit, EMBEDDING_VERSION, ...timeParams);
-                for (const r of rows)
-                    r.distance = normalizeVecDistance(r.distance, vecQuant);
-                return rows;
-            };
-            let vecQuant = getVecQuant(db, 'vec_exchanges');
-            try {
-                results = vecQuery(vecQuant);
-            }
-            catch (e) {
-                // The int8 migration may have swapped the table dtype between our
-                // dtype read and the query (read path is not serialized by the swap
-                // lock). Retry once with a fresh dtype; rethrow anything else.
-                const fresh = getVecQuant(db, 'vec_exchanges');
-                if (fresh.dtype === vecQuant.dtype && fresh.scale === vecQuant.scale)
-                    throw e;
-                vecQuant = fresh;
-                results = vecQuery(vecQuant);
-            }
-        }
-        // In 'both' mode always run the text pass and merge: vector (semantic) and
-        // text (literal/keyword) are complementary, so skipping text when vector is
-        // full would drop exact matches that vector ranks lower. The text pass is now
-        // cheap (FTS5), so there is no reason to skip it.
-        if (mode === 'text' || mode === 'both') {
-            const cols = `
+    const meta = { folded: 0 };
+    let folded = 0;
+    let vectorRows = [];
+    let textRows = [];
+    // null = no agent filter. 0 = no exchange carries the agent: nothing can pass, so neither pass runs
+    // (the vector pass would otherwise scan to the sqlite-vec ceiling and report "cut short").
+    const agentRows = coding_agent ? countAgentRows(db, coding_agent) : null;
+    const cols = `
           e.id,
           e.project,
           e.timestamp,
@@ -171,6 +230,153 @@ export async function searchConversations(query, options = {}) {
           e.line_start,
           e.line_end,
           e.coding_agent`;
+    {
+        // Build filter clauses with parameterized queries
+        const filterParts = [];
+        // The same filters as the keyword query writes them (same parameters, same order) — only the agent
+        // condition differs, see RARE_AGENT_ROWS.
+        const ftsFilterParts = [];
+        const filterParams = [];
+        if (after) {
+            filterParts.push(`e.timestamp >= ?`);
+            ftsFilterParts.push(`e.timestamp >= ?`);
+            filterParams.push(after);
+        }
+        if (before) {
+            filterParts.push(`e.timestamp <= ?`);
+            ftsFilterParts.push(`e.timestamp <= ?`);
+            filterParams.push(before);
+        }
+        if (coding_agent) {
+            filterParts.push(`e.coding_agent = ?`);
+            // Unary plus: the condition must stay a test on each keyword match. Without it SQLite may turn the
+            // list into the outer loop and probe the keyword index once per listed row.
+            ftsFilterParts.push((agentRows ?? 0) <= RARE_AGENT_ROWS
+                ? `+fts.rowid IN (SELECT a.rowid FROM exchanges AS a WHERE a.coding_agent = ?)`
+                : `e.coding_agent = ?`);
+            filterParams.push(coding_agent);
+        }
+        const timeClause = filterParts.length > 0 ? `AND ${filterParts.join(' AND ')}` : '';
+        const timeParams = filterParams;
+        // Machine-noise rows are left out unless asked for (NOISE_EXCHANGE_SQL carries no parameter).
+        const noiseClause = include_noise ? '' : `AND NOT ${NOISE_EXCHANGE_SQL}`;
+        // Every condition on the exchange row: the caller's filters plus the noise exclusion.
+        const rowClause = [timeClause, noiseClause].filter(Boolean).join(' ');
+        const ftsRowClause = [ftsFilterParts.length > 0 ? `AND ${ftsFilterParts.join(' AND ')}` : '', noiseClause].filter(Boolean).join(' ');
+        /** Display rows of the given ids (the full message text is read only here). */
+        const fetchRows = (ids) => {
+            const byId = new Map();
+            for (let at = 0; at < ids.length; at += 500) {
+                const chunk = ids.slice(at, at + 500);
+                const rows = db.prepare(`SELECT ${cols}, 0 as distance FROM exchanges AS e WHERE e.id IN (${chunk.map(() => '?').join(',')})`).all(...chunk);
+                for (const row of rows)
+                    byId.set(row.id, row);
+            }
+            return byId;
+        };
+        if (agentRows === 0) {
+            if (mode !== 'text')
+                meta.vector = { k: 0, candidates: 0, matched: 0, truncated: false };
+        }
+        else if (mode === 'vector' || mode === 'both') {
+            // Vector similarity search
+            await initEmbeddings();
+            const queryEmbedding = await generateEmbedding(query, 'query');
+            // dtype/scale-aware: int8 tables need vec_int8()-wrapped quantized query
+            // blobs, and their distances come back ×scale (normalized below).
+            //
+            // The KNN applies k BEFORE any condition on the joined exchange row, so
+            // those conditions cannot simply sit in WHERE: with k = limit, a date or
+            // agent filter discarded most (often all) of the top-k and the passing
+            // rows behind them never came back — the vector pass silently returned
+            // nothing and only keyword hits were left. Every candidate is returned
+            // with a `pass` flag instead (LEFT JOIN: a vector whose exchange row is
+            // gone still counts toward "did the index run out"), and k grows until
+            // `limit` rows pass, the index is exhausted, or the sqlite-vec ceiling is
+            // reached — in which case the result says so (meta.vector.truncated).
+            // Snapshot copies of one turn count once (foldTurns), so they cannot use
+            // up the limit. The heavy text columns are read only for the winners.
+            const vecQuery = (vecQuant) => {
+                const stmt = db.prepare(`
+          SELECT
+            vec.id AS id,
+            vec.distance AS distance,
+            e.archive_path AS archive_path,
+            e.line_start AS line_start,
+            e.line_end AS line_end,
+            (e.id IS NOT NULL AND e.embedding_version = ? ${rowClause}) AS pass
+          FROM vec_exchanges AS vec
+          LEFT JOIN exchanges AS e ON e.id = vec.id
+          WHERE vec.embedding MATCH ${vecParamSql(vecQuant)}
+            AND k = ?
+          ORDER BY vec.distance ASC
+        `);
+                // embedding_version condition: old-model vectors are incomparable with
+                // the current-model query embedding — exclude rows the re-embed worker
+                // has not upgraded yet (newest sessions are upgraded first).
+                const blob = embeddingToVecBlob(queryEmbedding, vecQuant);
+                const want = Math.min(limit, VEC_KNN_K_MAX);
+                let k = vector_first_k !== undefined
+                    ? knnK(Math.max(want, vector_first_k))
+                    : rowClause ? knnK(Math.max(want * 8, 64)) : want;
+                for (;;) {
+                    const candidates = stmt.all(EMBEDDING_VERSION, ...timeParams, blob, k);
+                    const passing = candidates.filter((c) => c.pass);
+                    const turns = foldTurns(passing);
+                    const exhausted = candidates.length < k;
+                    if (turns.length >= want || exhausted || k >= VEC_KNN_K_MAX) {
+                        const winners = turns.slice(0, want);
+                        const full = fetchRows(winners.map((w) => w.rep.id));
+                        const rows = [];
+                        let foldedHere = 0;
+                        for (const w of winners) {
+                            const row = full.get(w.rep.id);
+                            // The turn's row is its most complete snapshot; its distance is the best snapshot's.
+                            if (row)
+                                rows.push({ ...row, distance: normalizeVecDistance(w.first.distance, vecQuant) });
+                            foldedHere += w.members - 1;
+                        }
+                        return {
+                            rows,
+                            folded: foldedHere,
+                            stats: {
+                                k,
+                                candidates: candidates.length,
+                                matched: passing.length,
+                                truncated: !exhausted && (turns.length < want || limit > want),
+                            },
+                        };
+                    }
+                    // Each round is a full scan of the index, so take as few as possible: at least ×4, and when the
+                    // pass rate seen so far says that cannot fill `want` either, twice what the rate implies (the
+                    // ceiling when nothing has passed yet, or when the k asked for is where the cost is flat anyway).
+                    k = knnK(Math.max(k * 4, turns.length === 0 ? VEC_KNN_K_MAX : Math.ceil((k * want * 2) / turns.length)));
+                }
+            };
+            let vecQuant = getVecQuant(db, 'vec_exchanges');
+            let vec;
+            try {
+                vec = vecQuery(vecQuant);
+            }
+            catch (e) {
+                // The int8 migration may have swapped the table dtype between our
+                // dtype read and the query (read path is not serialized by the swap
+                // lock). Retry once with a fresh dtype; rethrow anything else.
+                const fresh = getVecQuant(db, 'vec_exchanges');
+                if (fresh.dtype === vecQuant.dtype && fresh.scale === vecQuant.scale)
+                    throw e;
+                vecQuant = fresh;
+                vec = vecQuery(vecQuant);
+            }
+            vectorRows = vec.rows;
+            folded += vec.folded;
+            meta.vector = vec.stats;
+        }
+        // In 'both' mode always run the text pass and merge: vector (semantic) and
+        // text (literal/keyword) are complementary, so skipping text when vector is
+        // full would drop exact matches that vector ranks lower. The text pass is now
+        // cheap (FTS5), so there is no reason to skip it.
+        if (mode === 'text' || mode === 'both') {
             let textResults = [];
             // FTS5 (BM25-ranked) — replaces the O(rows) LIKE full scan. Build a safe
             // MATCH expression by quoting each whitespace token (neutralizes FTS5
@@ -197,7 +403,7 @@ export async function searchConversations(query, options = {}) {
                 .split(/[^\p{L}\p{N}]+/u)
                 .map((t) => t.trim())
                 .filter(Boolean);
-            const ftsExpr = ftsTokens.map((t) => `"${t}"`).join(' ');
+            const ftsExpr = ftsTokens.map(ftsTerm).join(' ');
             const MAX_FTS_TOKENS = 6;
             const MAX_OR_TOKENS = 10; // hard bound on posting-list unions (latency)
             let orTokens = ftsTokens;
@@ -221,6 +427,10 @@ export async function searchConversations(query, options = {}) {
             // it is in every ladder rung's match set; the first non-empty rung is
             // the most selective one — small enough to BM25-rank meaningfully.
             let usedFts = false;
+            // Why the keyword pass is about to scan every exchange with LIKE instead of using the index — it used
+            // to switch without a word (seconds per query on a large index), so the reason travels with the result.
+            let likeReason = ftsExpr ? null : 'the query has no letter or digit to look up in the keyword index';
+            let textTruncated = false;
             if (ftsExpr) {
                 try {
                     // Readiness flag (set in db.ts / backfill-fts.mjs). On a fresh upgrade
@@ -229,7 +439,10 @@ export async function searchConversations(query, options = {}) {
                     // use an explicit '1' flag and fall back to LIKE until it is set — never
                     // silently hiding historical text matches.
                     const built = db.prepare(`SELECT value FROM fts_meta WHERE key='exchanges_fts_built'`).get();
-                    if (built?.value === '1') {
+                    if (built?.value !== '1') {
+                        likeReason = 'the keyword index has not been built yet (scripts/backfill-fts.mjs builds it)';
+                    }
+                    else {
                         // Unfiltered queries: sort + LIMIT happen INSIDE a subquery on
                         // the FTS table and only the k winners are joined to `exchanges`
                         // — joining before the sort materializes the FULL conversation
@@ -240,17 +453,41 @@ export async function searchConversations(query, options = {}) {
                         // inner-limit over-fetch was reproduced hiding a valid old row
                         // behind 250 newer matches) — so they use the join-then-sort
                         // form; filters shrink the materialized set instead.
-                        const mkFtsStmt = timeClause
-                            ? (orderBy) => db.prepare(`
+                        // That form fixes the join order with CROSS JOIN: the keyword
+                        // index is scanned once, each match is then looked up by rowid.
+                        // Left to the planner (the index has no statistics), a
+                        // coding_agent filter made idx_coding_agent the outer loop — one
+                        // keyword-index probe per row of the agent: 12 s for an English
+                        // query and 300 s for a Korean (prefix) one on a 341,840-row
+                        // index where every row is 'claude-code', the server answering
+                        // nothing else meanwhile. Fixed order: 10–60 ms.
+                        //
+                        // No caller filter, machine noise left out (the default): the cheap
+                        // inner-limit form is kept, but it reads AHEAD of `limit` and marks
+                        // each row noise-or-not, growing the look-ahead until `limit` rows
+                        // pass, the matches run out, or TEXT_LOOKAHEAD_MAX is reached (then
+                        // the result says the keyword pass was cut short). Putting the noise
+                        // condition into the join-then-sort form instead would bring back
+                        // the full-text materialization above for every unfiltered query.
+                        const ftsStatements = new Map();
+                        const ftsStatement = (key, sql) => {
+                            let stmt = ftsStatements.get(key);
+                            if (!stmt) {
+                                stmt = db.prepare(sql());
+                                ftsStatements.set(key, stmt);
+                            }
+                            return stmt;
+                        };
+                        const filteredSql = (orderBy) => `
                   SELECT ${cols}, 0 as distance
                   FROM exchanges_fts AS fts
-                  JOIN exchanges AS e ON e.rowid = fts.rowid
+                  CROSS JOIN exchanges AS e ON e.rowid = fts.rowid
                   WHERE exchanges_fts MATCH ?
-                    ${timeClause}
+                    ${ftsRowClause}
                   ORDER BY ${orderBy.replace('rowid', 'fts.rowid')}
                   LIMIT ?
-                `)
-                            : (orderBy) => db.prepare(`
+                `;
+                        const innerLimitSql = (orderBy) => `
                   SELECT ${cols}, 0 as distance
                   FROM (
                     SELECT rowid FROM exchanges_fts
@@ -260,9 +497,17 @@ export async function searchConversations(query, options = {}) {
                   ) AS fts
                   JOIN exchanges AS e ON e.rowid = fts.rowid
                   LIMIT ?
-                `);
-                        const rankedStmt = mkFtsStmt('rank');
-                        const recentStmt = mkFtsStmt('rowid DESC');
+                `;
+                        const lookAheadSql = (orderBy) => `
+                  SELECT e.id AS id, (NOT ${NOISE_EXCHANGE_SQL}) AS pass
+                  FROM (
+                    SELECT rowid FROM exchanges_fts
+                    WHERE exchanges_fts MATCH ?
+                    ORDER BY ${orderBy}
+                    LIMIT ?
+                  ) AS fts
+                  JOIN exchanges AS e ON e.rowid = fts.rowid
+                `;
                         // BM25 (ORDER BY rank) scores EVERY matching document, and under
                         // detail=column with external content each bm25() call RE-READS
                         // AND RE-TOKENIZES the source text (term frequencies are not in
@@ -276,37 +521,59 @@ export async function searchConversations(query, options = {}) {
                         const ftsSchema = db.prepare(`SELECT sql FROM sqlite_master WHERE name='exchanges_fts'`).get()?.sql ?? '';
                         const RANK_BUDGET = /detail\s*=\s*column/i.test(ftsSchema) ? 200 : 20000;
                         const countStmt = db.prepare(`SELECT count(*) c FROM exchanges_fts WHERE exchanges_fts MATCH ?`);
-                        const ftsStmt = {
-                            all: (expr, ...rest) => {
-                                const n = countStmt.get(expr).c;
-                                if (n === 0)
-                                    return [];
-                                const lim = rest[rest.length - 1];
-                                const params = rest.slice(0, -1); // timeParams
-                                const stmt = n <= RANK_BUDGET ? rankedStmt : recentStmt;
-                                // filtered form: (expr, ...timeParams, limit)
-                                // unfiltered subquery form: (expr, innerLimit, outerLimit)
-                                if (timeClause)
-                                    return stmt.all(expr, ...params, lim);
-                                const rows = stmt.all(expr, lim, lim);
+                        // Join-before-limit: correct even when the index holds orphan rowids.
+                        const healRows = (expr, lim) => db.prepare(`
+                    SELECT ${cols}, 0 as distance
+                    FROM exchanges_fts AS fts
+                    JOIN exchanges AS e ON e.rowid = fts.rowid
+                    WHERE exchanges_fts MATCH ?
+                      ${noiseClause}
+                    ORDER BY fts.rowid DESC
+                    LIMIT ?
+                  `).all(expr, lim);
+                        /** At most `lim` rows matching `expr`, under the caller's filters and the noise exclusion. */
+                        const ftsRows = (expr, lim) => {
+                            const n = countStmt.get(expr).c;
+                            if (n === 0)
+                                return [];
+                            const orderBy = n <= RANK_BUDGET ? 'rank' : 'rowid DESC';
+                            if (timeClause) {
+                                return ftsStatement(`filtered:${orderBy}`, () => filteredSql(orderBy)).all(expr, ...timeParams, lim);
+                            }
+                            if (!noiseClause) {
+                                const rows = ftsStatement(`inner:${orderBy}`, () => innerLimitSql(orderBy)).all(expr, lim, lim);
                                 // Self-heal on index desync: every legit FTS rowid joins to an
                                 // exchanges row (triggers keep them in sync), so a shortfall
                                 // vs the counted matches means the inner LIMIT picked stale/
                                 // orphan rowids that the join then dropped. Retry once with
                                 // join-before-limit, which is correct even with orphans.
-                                if (rows.length < Math.min(n, lim)) {
-                                    const healStmt = db.prepare(`
-                    SELECT ${cols}, 0 as distance
-                    FROM exchanges_fts AS fts
-                    JOIN exchanges AS e ON e.rowid = fts.rowid
-                    WHERE exchanges_fts MATCH ?
-                    ORDER BY fts.rowid DESC
-                    LIMIT ?
-                  `);
-                                    return healStmt.all(expr, lim);
-                                }
+                                if (rows.length < Math.min(n, lim))
+                                    return healRows(expr, lim);
                                 return rows;
-                            },
+                            }
+                            const lookAhead = ftsStatement(`ahead:${orderBy}`, () => lookAheadSql(orderBy));
+                            let inner = Math.min(n, Math.max(lim * 4, 64));
+                            for (;;) {
+                                const candidates = lookAhead.all(expr, inner);
+                                // Same desync signal as above: fewer joined rows than rowids asked for.
+                                if (candidates.length < Math.min(n, inner))
+                                    return healRows(expr, lim);
+                                const passing = candidates.filter((c) => c.pass).slice(0, lim);
+                                if (passing.length >= lim || inner >= n || inner >= TEXT_LOOKAHEAD_MAX) {
+                                    if (passing.length < lim && inner < n)
+                                        textTruncated = true;
+                                    const full = fetchRows(passing.map((c) => c.id));
+                                    const rows = [];
+                                    for (const c of passing) {
+                                        const row = full.get(c.id);
+                                        if (row)
+                                            rows.push(row);
+                                    }
+                                    return rows;
+                                }
+                                // Same stepping as the vector pass: at least ×4, or what the pass rate so far implies.
+                                inner = Math.min(n, TEXT_LOOKAHEAD_MAX, Math.max(inner * 4, passing.length === 0 ? TEXT_LOOKAHEAD_MAX : Math.ceil((inner * lim * 2) / passing.length)));
+                            }
                         };
                         // Rarest-token AND ladder (see comment above orTokens): walk AND
                         // of the 4→3→2→1 rarest candidate tokens and ACCUMULATE rungs
@@ -315,26 +582,21 @@ export async function searchConversations(query, options = {}) {
                         // other query terms (lower rungs still contribute). df=0 tokens
                         // are dropped (they match nothing).
                         const orFallbackRows = (lim) => {
-                            let rare = [];
-                            try {
-                                rare = [...new Set(orTokens)]
-                                    .map((t) => ({ t, df: countStmt.get(`"${t}"`).c }))
-                                    .filter((x) => x.df > 0)
-                                    .sort((a, b) => a.df - b.df)
-                                    .map((x) => x.t);
-                            }
-                            catch {
-                                return [];
-                            }
+                            // A failing frequency probe is not "no matches": it reaches the handler below, which says so.
+                            const rare = [...new Set(orTokens)]
+                                .map((t) => ({ t, df: countStmt.get(ftsTerm(t)).c }))
+                                .filter((x) => x.df > 0)
+                                .sort((a, b) => a.df - b.df)
+                                .map((x) => x.t);
                             // Rungs: AND-of-rarest prefixes (most selective first), then
                             // every token individually in df order — so hits matching only
                             // the OTHER query terms still surface after the rare ones.
                             const rungs = [];
                             for (let k = Math.min(4, rare.length); k >= 2; k--) {
-                                rungs.push(rare.slice(0, k).map((t) => `"${t}"`).join(' '));
+                                rungs.push(rare.slice(0, k).map(ftsTerm).join(' '));
                             }
                             for (const t of rare)
-                                rungs.push(`"${t}"`);
+                                rungs.push(ftsTerm(t));
                             // Two-pass fill with a per-rung quota: pass 1 lets each rung
                             // take at most half the slots so one populous rung (many docs
                             // matching one rare token) cannot crowd out hits that match the
@@ -344,7 +606,7 @@ export async function searchConversations(query, options = {}) {
                             for (const expr of rungs) {
                                 if (expr === ftsExpr)
                                     continue; // identical to the AND pass
-                                perRung.push(ftsStmt.all(expr, ...timeParams, lim));
+                                perRung.push(ftsRows(expr, lim));
                                 const distinct = new Set(perRung.flat().map((r) => r.id));
                                 if (distinct.size >= lim * 2)
                                     break; // enough material
@@ -379,10 +641,16 @@ export async function searchConversations(query, options = {}) {
                         // Contract: the text pass returns AT MOST `limit` rows in every
                         // mode, all-token (AND/exact) matches always first — identical
                         // fetch depth to the original all-AND implementation.
-                        if (ftsTokens.length <= MAX_FTS_TOKENS) {
+                        if (agentRows === 0) {
+                            textResults = []; // no exchange carries the agent — nothing to look up
+                        }
+                        else if (require_all_tokens) {
+                            textResults = ftsRows(ftsExpr, limit);
+                        }
+                        else if (ftsTokens.length <= MAX_FTS_TOKENS) {
                             // Short query: AND first (precision — identical to original
                             // behavior), ladder fallback only when AND matches nothing.
-                            textResults = ftsStmt.all(ftsExpr, ...timeParams, limit);
+                            textResults = ftsRows(ftsExpr, limit);
                             if (textResults.length === 0 && ftsTokens.length > 1) {
                                 textResults = orFallbackRows(limit);
                             }
@@ -394,7 +662,7 @@ export async function searchConversations(query, options = {}) {
                             // FIRST: an exact all-token match can never be hidden by
                             // partial-token hits. The ladder rescues the ~84% of long
                             // queries the full AND cannot match.
-                            textResults = ftsStmt.all(ftsExpr, ...timeParams, limit);
+                            textResults = ftsRows(ftsExpr, limit);
                             if (textResults.length < limit) {
                                 const orResults = orFallbackRows(limit);
                                 const seenText = new Set(textResults.map((r) => r.id));
@@ -408,8 +676,12 @@ export async function searchConversations(query, options = {}) {
                         usedFts = true;
                     }
                 }
-                catch {
-                    usedFts = false; // FTS table missing/unsupported → LIKE fallback below
+                catch (error) {
+                    // FTS table missing/unsupported → LIKE fallback below, said out loud.
+                    usedFts = false;
+                    const message = error instanceof Error ? error.message : String(error);
+                    console.error(`memory-bank search: keyword index query failed, scanning every exchange instead: ${message}`);
+                    likeReason = `the keyword index query failed: ${message}`;
                 }
             }
             if (!usedFts) {
@@ -420,29 +692,45 @@ export async function searchConversations(query, options = {}) {
           SELECT ${cols}, 0 as distance
           FROM exchanges AS e
           WHERE (e.user_message LIKE ? ESCAPE '\\' OR e.assistant_message LIKE ? ESCAPE '\\')
-            ${timeClause}
+            ${rowClause}
           ORDER BY e.timestamp DESC
           LIMIT ?
         `);
                 textResults = textStmt.all(likePattern, likePattern, ...timeParams, limit);
             }
-            if (mode === 'both') {
-                // Merge and deduplicate by ID
-                const seenIds = new Set(results.map(r => r.id));
-                for (const textResult of textResults) {
-                    if (!seenIds.has(textResult.id)) {
-                        results.push(textResult);
-                    }
-                }
-            }
-            else {
-                results = textResults;
-            }
+            meta.text = usedFts
+                ? { path: 'fts', truncated: textTruncated }
+                : { path: 'like-scan', reason: likeReason ?? 'the keyword index was not usable', truncated: false };
+            // One row per turn here too (the longest snapshot among the hits).
+            const textTurns = foldTurns(textResults);
+            textRows = textTurns.map((turn) => turn.rep);
+            folded += textResults.length - textTurns.length;
         }
     }
-    // NOTE: no db.close() — the cached connection is reused across calls (see
-    // getSearchDb). CLI processes release it at exit; the MCP server keeps it.
-    return results.map((row) => {
+    const merged = new Map();
+    vectorRows.forEach((row, rank) => {
+        merged.set(turnKey(row), { row, matchedBy: 'vector', distance: row.distance, score: 1 / (RRF_K + rank + 1) });
+    });
+    textRows.forEach((row, rank) => {
+        const score = 1 / (RRF_K + rank + 1);
+        const hit = merged.get(turnKey(row));
+        if (hit) {
+            hit.matchedBy = 'both';
+            hit.score += score;
+            if (row.id !== hit.row.id) {
+                folded++;
+                if (row.line_end > hit.row.line_end)
+                    hit.row = row;
+            }
+        }
+        else {
+            merged.set(turnKey(row), { row, matchedBy: 'text', score });
+        }
+    });
+    meta.folded = folded;
+    // Stable sort: at equal score the vector row (inserted first) stays ahead.
+    const ranked = [...merged.values()].sort((a, b) => b.score - a.score).slice(0, limit);
+    const results = ranked.map(({ row, matchedBy, distance }) => {
         const exchange = {
             id: row.id,
             project: row.project,
@@ -461,15 +749,103 @@ export async function searchConversations(query, options = {}) {
             summary = readArchiveFile(summaryPath).trim();
         }
         catch { /* absent */ }
+        // A failed summary call that was written out as the summary is not shown as one.
+        if (summary !== undefined && isErrorSummary(summary))
+            summary = undefined;
         // Create snippet (first 200 chars, collapse newlines)
         const snippetText = exchange.userMessage.substring(0, 200).replace(/\s+/g, ' ').trim();
         const snippet = snippetText + (exchange.userMessage.length > 200 ? '...' : '');
-        return {
+        const hit = {
             exchange,
-            similarity: mode === 'text' ? undefined : 1 - row.distance,
+            // Cosine similarity of the (unit) embeddings — the same conversion every
+            // other relevance figure uses. Absent for a keyword-only hit.
+            similarity: distance === undefined ? undefined : l2DistanceToSimilarity(distance),
+            matchedBy,
             snippet,
-            summary
+            summary,
         };
+        return hit;
+    });
+    return { results, meta };
+}
+/** Lines a caller should show with the results: what the search could not look at. */
+export function searchNotes(meta) {
+    const notes = [];
+    if (meta?.vector?.truncated) {
+        notes.push(`Semantic results are incomplete: only the nearest ${meta.vector.candidates} vector candidates could be examined ` +
+            `(sqlite-vec ceiling) and ${meta.vector.matched} passed the filters — narrow the query or relax the date/agent filter.`);
+    }
+    if (meta?.text?.truncated) {
+        notes.push(`Keyword results are incomplete: the first ${TEXT_LOOKAHEAD_MAX} keyword matches were mostly machine-generated turns ` +
+            `and were skipped; older matches were not examined — add a date filter or more specific words.`);
+    }
+    if (meta?.text?.path === 'like-scan') {
+        notes.push(`Keyword pass ran as a full scan (${meta.text.reason}) — slow on a large index.`);
+    }
+    return notes;
+}
+/** Characters of each message a json search result carries — the full exchange is one `read` away. */
+export const SEARCH_JSON_MESSAGE_CHARS = 500;
+const JSON_READ_HINT = `Messages are clipped to ${SEARCH_JSON_MESSAGE_CHARS} characters. Read a full exchange with the read tool: ` +
+    'path = exchange.archivePath, startLine = exchange.lineStart, endLine = exchange.lineEnd.';
+function clipMessage(text) {
+    if (text.length <= SEARCH_JSON_MESSAGE_CHARS)
+        return text;
+    let cut = text.slice(0, SEARCH_JSON_MESSAGE_CHARS);
+    if (/[\uD800-\uDBFF]$/.test(cut))
+        cut = cut.slice(0, -1);
+    return cut + '…';
+}
+/** The fields of an exchange a json result carries: where it is, and a clipped look at both messages. */
+function exchangeForJson(exchange) {
+    const userMessage = clipMessage(exchange.userMessage);
+    const assistantMessage = clipMessage(exchange.assistantMessage);
+    return {
+        exchange: {
+            id: exchange.id,
+            project: exchange.project,
+            timestamp: exchange.timestamp,
+            codingAgent: exchange.codingAgent,
+            archivePath: exchange.archivePath,
+            lineStart: exchange.lineStart,
+            lineEnd: exchange.lineEnd,
+            userMessage,
+            assistantMessage,
+        },
+        clipped: userMessage !== exchange.userMessage || assistantMessage !== exchange.assistantMessage,
+    };
+}
+/**
+ * The `search` tool's json answer. It used to serialize every exchange in full (limit 10 → up to 165K
+ * characters, limit 50 → 272K); a result now carries the location, the match and a clipped look.
+ */
+export function searchResultsToJson(results, meta, mode) {
+    return JSON.stringify({
+        results: results.map((r) => ({
+            ...exchangeForJson(r.exchange),
+            similarity: r.similarity,
+            matchedBy: r.matchedBy,
+            snippet: r.snippet,
+        })),
+        count: results.length,
+        mode,
+        notes: searchNotes(meta),
+        hint: JSON_READ_HINT,
+    });
+}
+/** The json answer of a multi-concept search, clipped the same way. */
+export function multiConceptResultsToJson(results, concepts) {
+    return JSON.stringify({
+        results: results.map((r) => ({
+            ...exchangeForJson(r.exchange),
+            snippet: r.snippet,
+            matchedBy: r.matchedBy,
+            conceptSimilarities: r.conceptSimilarities,
+            averageSimilarity: r.averageSimilarity,
+        })),
+        count: results.length,
+        concepts,
+        hint: JSON_READ_HINT,
     });
 }
 // Helper function to count lines in a file efficiently
@@ -532,9 +908,10 @@ function getFileSizeInKB(filePath) {
         return 0;
     return Math.round(stats.size / 1024 * 10) / 10; // Round to 1 decimal place
 }
-export async function formatResults(results) {
+export async function formatResults(results, meta) {
+    const notes = searchNotes(meta).map((note) => `_Note: ${note}_\n`).join('');
     if (results.length === 0) {
-        return 'No results found.';
+        return notes ? `No results found.\n\n${notes}` : 'No results found.';
     }
     let output = `Found ${results.length} relevant conversation${results.length > 1 ? 's' : ''}:\n\n`;
     // Pre-compute per-result file metadata in PARALLEL — the line counts are
@@ -549,8 +926,12 @@ export async function formatResults(results) {
         const agent = result.exchange.codingAgent || 'claude-code';
         const agentTag = agent !== 'claude-code' ? ` @${agent}` : '';
         output += `${index + 1}. [${result.exchange.project}, ${date}${agentTag}]`;
+        // A percentage only where a vector distance exists; a keyword hit says what it is.
         if (simPct !== null) {
-            output += ` - ${simPct}% match`;
+            output += ` - ${simPct}% match${result.matchedBy === 'both' ? ' (semantic + keyword)' : ''}`;
+        }
+        else if (result.matchedBy === 'text') {
+            output += ' - keyword match';
         }
         output += '\n';
         // Show summary only if it's concise (< 300 chars)
@@ -577,15 +958,115 @@ export async function formatResults(results) {
         // File information with metadata (clean format for smart tool selection)
         output += `   Lines ${lineRange} in ${result.exchange.archivePath} (${fileSizeKB}KB, ${totalLines} lines)\n\n`;
     }
-    return output;
+    return output + notes;
 }
+/**
+ * Keyword side of the multi-concept search: exchanges that contain every word of every concept, one per
+ * conversation — up to 5×limit of them, in the keyword pass's own order (BM25; by recency over its ranking
+ * budget). Each carries its real similarity to every concept, computed from its stored vector (NaN when the
+ * exchange has no vector row — unknown, not zero): the similarity is shown with the result, it does not
+ * rank it.
+ * They used to be re-sorted by that similarity. A short concept and a long turn score in a narrow band
+ * whatever the turn is about, so the sort moved the turn the keyword pass ranked first out of the answer
+ * (live index, 70 two-word queries made from known facts, limit 10: the fact's source conversation was in
+ * the answer for 10 with the sort and for 14 with the keyword order; 16 before the two lists were fused —
+ * the remaining 2 are the places the fused ranking gives to semantic matches).
+ */
+async function keywordConceptMatches(concepts, options, limit) {
+    const { results, meta } = await searchConversationsDetailed(concepts.join(' '), {
+        ...options,
+        mode: 'text',
+        limit: limit * 5,
+        require_all_tokens: true,
+    });
+    if (meta.text?.path !== 'fts') {
+        // Without the keyword index the pass is a LIKE scan for the joined text — not "every word". This side
+        // contributes nothing then, and says so; the semantic side still answers.
+        console.error(`memory-bank search: multi-concept keyword matching skipped (${meta.text?.reason ?? 'keyword index unavailable'})`);
+        return [];
+    }
+    const perConversation = new Map();
+    for (const hit of results) {
+        if (!perConversation.has(hit.exchange.archivePath))
+            perConversation.set(hit.exchange.archivePath, hit);
+    }
+    const hits = [...perConversation.values()];
+    if (hits.length === 0)
+        return [];
+    await initEmbeddings();
+    const embeddings = [];
+    for (const concept of concepts)
+        embeddings.push(await generateEmbedding(concept, 'query'));
+    const db = getSearchDb();
+    const quant = getVecQuant(db, 'vec_exchanges');
+    const distance = db.prepare(`SELECT vec_distance_l2(embedding, ${vecParamSql(quant)}) AS d FROM vec_exchanges WHERE id = ?`);
+    const blobs = embeddings.map((embedding) => embeddingToVecBlob(embedding, quant));
+    // `hits` is in the keyword pass's order, and that order is kept.
+    return hits.map((hit) => {
+        const conceptSimilarities = blobs.map((blob) => {
+            const row = distance.get(blob, hit.exchange.id);
+            return row ? l2DistanceToSimilarity(normalizeVecDistance(row.d, quant)) : Number.NaN;
+        });
+        return {
+            exchange: hit.exchange,
+            snippet: hit.snippet,
+            conceptSimilarities,
+            averageSimilarity: conceptSimilarities.reduce((sum, sim) => sum + sim, 0) / conceptSimilarities.length,
+            matchedBy: 'keyword',
+        };
+    });
+}
+/**
+ * One ranking out of the two sides of a multi-concept search, by reciprocal rank fusion (the same constant
+ * as the single-query merge), cut to `limit`. Both lists come best first. A conversation on both lists adds
+ * its two scores and is listed once, as its keyword match (the exchange that has every word is the place to
+ * read). Equal scores — the same rank on each list — put the keyword match first.
+ * They used to be concatenated, keyword matches first: `limit` keyword matches left no room for any
+ * semantic match, however close.
+ */
+function fuseConceptMatches(keyword, semantic, limit) {
+    const fused = new Map();
+    keyword.forEach((result, rank) => {
+        fused.set(result.exchange.archivePath, { result, score: 1 / (RRF_K + rank + 1) });
+    });
+    semantic.forEach((result, rank) => {
+        const score = 1 / (RRF_K + rank + 1);
+        const hit = fused.get(result.exchange.archivePath);
+        if (hit)
+            hit.score += score;
+        else
+            fused.set(result.exchange.archivePath, { result, score });
+    });
+    // Stable sort: at equal score the keyword match (inserted first) stays ahead.
+    return [...fused.values()].sort((a, b) => b.score - a.score).slice(0, limit).map((entry) => entry.result);
+}
+/**
+ * Conversations that match ALL concepts, at most `limit`, in one ranking (fuseConceptMatches) of
+ *  - exchanges that contain every word of every concept (keyword index), in the keyword pass's order, and
+ *  - conversations in which every concept has a semantically near exchange, by average similarity.
+ * The second alone — intersecting each concept's nearest 5×limit exchanges — returned nothing on a large
+ * index even when dozens of exchanges contained all the words (the lists rarely share a conversation).
+ */
 export async function searchMultipleConcepts(concepts, options = {}) {
     const { limit = 10 } = options;
     if (concepts.length === 0) {
         return [];
     }
-    // Search for each concept independently
-    const conceptResults = await Promise.all(concepts.map(concept => searchConversations(concept, { ...options, limit: limit * 5, mode: 'vector' })));
+    // Search for each concept independently — one after the other (the database calls are synchronous anyway),
+    // each starting its vector pass at the largest k an earlier concept needed: the share of the nearest vectors
+    // that pass the row conditions belongs to the index and the filters, not to the concept. On an index that
+    // is mostly machine noise every concept used to pay for a first round that was too small (measured: 5 of
+    // 37 per-concept searches were done after one round).
+    const conceptResults = [];
+    let firstK;
+    for (const concept of concepts) {
+        const { results, meta } = await searchConversationsDetailed(concept, {
+            ...options, limit: limit * 5, mode: 'vector', vector_first_k: firstK,
+        });
+        conceptResults.push(results);
+        if (meta.vector && meta.vector.k > (firstK ?? 0))
+            firstK = meta.vector.k;
+    }
     // Build map of conversation path -> array of results (one per concept)
     const conversationMap = new Map();
     conceptResults.forEach((results, conceptIndex) => {
@@ -615,15 +1096,19 @@ export async function searchMultipleConcepts(concepts, options = {}) {
                 exchange: firstResult.exchange,
                 snippet: firstResult.snippet,
                 conceptSimilarities,
-                averageSimilarity
+                averageSimilarity,
+                matchedBy: 'semantic',
             });
         }
     }
     // Sort by average similarity (highest first)
     multiConceptResults.sort((a, b) => b.averageSimilarity - a.averageSimilarity);
-    // Apply limit
-    return multiConceptResults.slice(0, limit);
+    // Both sides in one ranking, cut to the limit.
+    const keywordResults = await keywordConceptMatches(concepts, options, limit);
+    return fuseConceptMatches(keywordResults, multiConceptResults, limit);
 }
+/** Characters of a fact in the Related Knowledge section — the full text is one search_facts away. */
+export const KNOWLEDGE_FACT_CHARS = 300;
 /**
  * Enrich search results with knowledge graph context.
  * Finds related facts from the ontology and expands via graph traversal.
@@ -654,19 +1139,20 @@ export async function getKnowledgeContext(query, project, limit = 5) {
             : undefined;
         const domainName = catInfo ? (catInfo.domainName ?? 'Unclassified') : 'Unclassified';
         const catName = catInfo ? catInfo.categoryName : 'Unclassified';
-        // Expand via 1-hop graph traversal
-        const related = getRelatedFacts(db, fact.id, 1);
-        const relatedFacts = related.map(({ fact: relFact, relation }) => ({
-            fact: relFact.fact,
-            relationType: relation.relation_type,
+        // Expand via 1-hop graph traversal — a few neighbours, short (a hub fact has had 106 of them, 76K chars).
+        const related = summarizeRelated(getRelatedFacts(db, fact.id, 1));
+        const relatedFacts = related.shown.map((line) => ({
+            fact: line.text,
+            relationType: line.relationType,
         }));
         enrichedFacts.push({
-            fact: fact.fact,
+            fact: clipLine(fact.fact, KNOWLEDGE_FACT_CHARS),
             category: fact.category,
             domain: domainName,
             categoryName: catName,
             similarity,
             relatedFacts,
+            relatedOmitted: related.omitted,
         });
     }
     return { facts: enrichedFacts };
@@ -683,6 +1169,9 @@ export function formatKnowledgeContext(context) {
         for (const rel of fact.relatedFacts) {
             output += `  - ${rel.relationType}: ${rel.fact}\n`;
         }
+        if (fact.relatedOmitted) {
+            output += `  - _…and ${fact.relatedOmitted} more related facts_\n`;
+        }
     }
     return output;
 }
@@ -695,12 +1184,16 @@ export async function formatMultiConceptResults(results, concepts) {
     for (let index = 0; index < results.length; index++) {
         const result = results[index];
         const date = new Date(result.exchange.timestamp).toISOString().split('T')[0];
-        const avgPct = Math.round(result.averageSimilarity * 100);
-        // Header with average match percentage
-        output += `${index + 1}. [${result.exchange.project}, ${date}] - ${avgPct}% avg match\n`;
+        // A keyword match whose exchange has no vector row has no similarity (NaN): shown as n/a, never as 0%.
+        const pct = (value) => (Number.isFinite(value) ? `${Math.round(value * 100)}%` : 'n/a');
+        const avgPct = pct(result.averageSimilarity);
+        // Header: how it matched, with the average semantic similarity
+        output += result.matchedBy === 'keyword'
+            ? `${index + 1}. [${result.exchange.project}, ${date}] - every word in one exchange (${avgPct} avg semantic)\n`
+            : `${index + 1}. [${result.exchange.project}, ${date}] - ${avgPct} avg match\n`;
         // Show individual concept scores
         const scores = result.conceptSimilarities
-            .map((sim, i) => `${concepts[i]}: ${Math.round(sim * 100)}%`)
+            .map((sim, i) => `${concepts[i]}: ${pct(sim)}`)
             .join(', ');
         output += `   Concepts: ${scores}\n`;
         // Show snippet

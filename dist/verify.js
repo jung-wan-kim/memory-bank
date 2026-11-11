@@ -1,164 +1,357 @@
 import fs from 'fs';
 import path from 'path';
-import { parseConversation } from './parser.js';
-import { initDatabase, getAllExchanges, getFileLastIndexed } from './db.js';
+import { initDatabase, isExchangeCurrent, deleteExchanges } from './db.js';
 import { getArchiveDir, getExcludedProjects, isExcludedProject } from './paths.js';
-import { archiveFileExists, canonicalArchiveName, removeArchiveFile, statArchiveFile } from './archive-io.js';
-export async function verifyIndex() {
-    const result = {
-        missing: [],
-        orphaned: [],
-        outdated: [],
-        corrupted: []
-    };
+import { archiveFileExists, archiveTrailingBytes, canonicalArchiveName, removeArchiveFile, statArchiveFile } from './archive-io.js';
+import { parseGuarded } from './conversation-guard.js';
+import { shouldIndexExchange } from './noise.js';
+import { backupExchangeRows, newBackupPath } from './row-backup.js';
+/**
+ * The conversation files verify, repair and rebuild look at: every `.jsonl`
+ * (plain or `.zst`, canonical name) directly inside a project folder of the
+ * archive that is not excluded. Sub-folders are not descended into — rows
+ * indexed from files below that level are never judged by this listing (their
+ * file is checked on disk instead) and never re-created by a re-index.
+ */
+export function listArchiveConversations(opts = {}) {
     const archiveDir = getArchiveDir();
-    // Track all files we find
-    const foundFiles = new Set();
-    // Find all conversation files
-    if (!fs.existsSync(archiveDir)) {
-        return result;
-    }
-    // Initialize database once for all checks
-    const db = initDatabase();
-    const projects = fs.readdirSync(archiveDir);
+    const out = [];
+    if (!fs.existsSync(archiveDir))
+        return out;
     const excludedProjects = getExcludedProjects();
-    let totalChecked = 0;
-    for (const project of projects) {
+    for (const project of fs.readdirSync(archiveDir)) {
         if (isExcludedProject(project, excludedProjects)) {
-            console.log("\nSkipping excluded project: " + project);
+            opts.onExcludedProject?.(project);
             continue;
         }
         const projectPath = path.join(archiveDir, project);
-        const stat = fs.statSync(projectPath);
-        if (!stat.isDirectory())
+        if (!fs.statSync(projectPath).isDirectory())
             continue;
         // Archive files may be compressed out-of-band (.jsonl.zst) — canonicalize
         // to the .jsonl name the database stores.
         const files = [...new Set(fs.readdirSync(projectPath)
                 .filter(f => f.endsWith('.jsonl') || f.endsWith('.jsonl.zst'))
                 .map(f => canonicalArchiveName(f)))];
-        for (const file of files) {
-            totalChecked++;
-            if (totalChecked % 100 === 0) {
-                console.log(`  Checked ${totalChecked} conversations...`);
+        for (const file of files)
+            out.push({ project, path: path.join(projectPath, file) });
+    }
+    return out;
+}
+export async function verifyIndex() {
+    const result = {
+        missingSummary: [],
+        notIndexed: [],
+        orphaned: [],
+        outdated: [],
+        corrupted: [],
+        trailingBytes: [],
+        totals: { exchanges: 0, conversations: 0, indexable: 0 }
+    };
+    const archiveDir = getArchiveDir();
+    // Find all conversation files
+    if (!fs.existsSync(archiveDir)) {
+        return result;
+    }
+    // Initialize database once for all checks
+    const db = initDatabase();
+    try {
+        // One read of a file's rows gives both when it was last indexed and how far each indexed turn goes.
+        const rowsOfFile = db.prepare('SELECT line_start AS lineStart, line_end AS lineEnd, last_indexed AS lastIndexed FROM exchanges WHERE archive_path = ?');
+        const conversations = listArchiveConversations({
+            onExcludedProject: (project) => console.log("\nSkipping excluded project: " + project),
+        });
+        for (const { project, path: conversationPath } of conversations) {
+            result.totals.conversations++;
+            if (result.totals.conversations % 100 === 0) {
+                console.log(`  Checked ${result.totals.conversations} conversations...`);
             }
-            const conversationPath = path.join(projectPath, file);
-            foundFiles.add(conversationPath);
-            const summaryPath = conversationPath.replace('.jsonl', '-summary.txt');
-            // Check for missing summary
-            if (!archiveFileExists(summaryPath)) {
-                result.missing.push({ path: conversationPath, reason: 'No summary file' });
-                continue;
-            }
-            // Check if file is outdated (modified after last_indexed)
-            const lastIndexed = getFileLastIndexed(db, conversationPath);
-            if (lastIndexed !== null) {
-                const fileStat = statArchiveFile(conversationPath);
-                if (fileStat && fileStat.mtimeMs > lastIndexed) {
-                    result.outdated.push({
-                        path: conversationPath,
-                        fileTime: fileStat.mtimeMs,
-                        dbTime: lastIndexed
-                    });
-                }
-            }
-            // Try parsing to detect corruption
+            // One pass: parse + exclusion markers. A file that cannot be read is
+            // "could not judge" — reported, and nothing else is concluded about it.
+            let indexable;
             try {
-                await parseConversation(conversationPath, project, conversationPath);
+                const { exchanges, excluded } = await parseGuarded(conversationPath, project, conversationPath);
+                // The file was read to the end of its frames. Bytes after them that
+                // begin no frame were not read: counted, so they are not dropped unseen.
+                const tail = archiveTrailingBytes(conversationPath);
+                if (tail > 0)
+                    result.trailingBytes.push({ path: conversationPath, bytes: tail });
+                if (excluded)
+                    continue; // opted out: nothing to index, nothing to summarize
+                indexable = exchanges.filter(shouldIndexExchange);
             }
             catch (error) {
                 result.corrupted.push({
                     path: conversationPath,
                     error: error instanceof Error ? error.message : String(error)
                 });
+                continue;
+            }
+            // Nothing a repair would index or summarize (no exchange yet, or only
+            // worker prompts / machine noise): neither "missing" nor "not indexed".
+            // Counting these made repair plan one LLM summary per warm-up file.
+            if (indexable.length === 0)
+                continue;
+            result.totals.indexable++;
+            const summaryPath = conversationPath.replace('.jsonl', '-summary.txt');
+            if (!archiveFileExists(summaryPath)) {
+                result.missingSummary.push({ path: conversationPath });
+            }
+            let lastIndexed = null;
+            const indexedEndOfTurn = new Map();
+            for (const row of rowsOfFile.all(conversationPath)) {
+                if (row.lastIndexed !== null && (lastIndexed === null || row.lastIndexed > lastIndexed))
+                    lastIndexed = row.lastIndexed;
+                if (row.lineEnd > (indexedEndOfTurn.get(row.lineStart) ?? -1))
+                    indexedEndOfTurn.set(row.lineStart, row.lineEnd);
+            }
+            if (lastIndexed === null) {
+                result.notIndexed.push({ path: conversationPath });
+                continue;
+            }
+            // Outdated, either way:
+            //  - modified after last_indexed AND holding an exchange the index
+            //    lacks. The mtime alone is not enough: indexing skips exchanges that
+            //    are already current, so a file that grew by a line that forms no
+            //    new exchange keeps its old last_indexed.
+            //  - the index holds a turn of this file only up to an earlier line than
+            //    the file does. The mtime says nothing here: a shorter copy of the
+            //    turn written AFTER the file last changed (a sync that had read the
+            //    file earlier) is newer than the file and still incomplete.
+            const fileStat = statArchiveFile(conversationPath);
+            const changedSince = fileStat !== null && fileStat.mtimeMs > lastIndexed && indexable.some(e => !isExchangeCurrent(db, e.id));
+            const shorterTurnIndexed = indexable.some(e => {
+                const indexedEnd = indexedEndOfTurn.get(e.lineStart);
+                return indexedEnd !== undefined && indexedEnd < e.lineEnd;
+            });
+            if (changedSince || shorterTurnIndexed) {
+                result.outdated.push({
+                    path: conversationPath,
+                    fileTime: fileStat?.mtimeMs ?? 0,
+                    dbTime: lastIndexed
+                });
+            }
+        }
+        console.log(`Verified ${result.totals.conversations} conversations.`);
+        if (result.trailingBytes.length > 0) {
+            // One line, no paths: these files are read (up to their last complete
+            // frame) and need no repair. A loop instead of Math.min(...sizes): the
+            // list can be long.
+            let smallest = Infinity;
+            let largest = 0;
+            for (const { bytes } of result.trailingBytes) {
+                if (bytes < smallest)
+                    smallest = bytes;
+                if (bytes > largest)
+                    largest = bytes;
+            }
+            console.log(`Compressed files with bytes after their last complete zstd frame: ${result.trailingBytes.length} ` +
+                `(${smallest} to ${largest} bytes each) — read up to that frame; the bytes after it are not a frame and are ignored`);
+        }
+        // Orphaned rows: the file each indexed path points at is checked ON DISK,
+        // path by path. The walk above only lists the top level of each project
+        // folder, while the index also holds deeper paths
+        // (<project>/<session>/subagents/agent-*.jsonl) — "not in my listing" once
+        // judged 131,380 rows (38% of one index) orphaned, 121,971 of them with
+        // their file sitting right there.
+        result.totals.exchanges = db.prepare('SELECT count(*) AS n FROM exchanges').get().n;
+        const indexedPaths = db.prepare('SELECT DISTINCT archive_path AS p FROM exchanges').all();
+        const idsOfPath = db.prepare('SELECT id FROM exchanges WHERE archive_path = ?');
+        for (const { p } of indexedPaths) {
+            if (archiveFileExists(p))
+                continue;
+            for (const row of idsOfPath.all(p)) {
+                result.orphaned.push({ uuid: row.id, path: p });
             }
         }
     }
-    console.log(`Verified ${totalChecked} conversations.`);
-    // Check for orphaned database entries
-    const dbExchanges = getAllExchanges(db);
-    db.close();
-    for (const exchange of dbExchanges) {
-        if (!foundFiles.has(exchange.archivePath)) {
-            result.orphaned.push({
-                uuid: exchange.id,
-                path: exchange.archivePath
-            });
-        }
+    finally {
+        db.close();
     }
     return result;
 }
-export async function repairIndex(issues) {
+/** A count needs `yes` when it is over BOTH this share of the total and the floor. */
+export const REPAIR_THRESHOLD_RATIO = 0.05;
+/** Chosen, not measured: below this many items a share of a small index means nothing. */
+export const REPAIR_THRESHOLD_FLOOR = 20;
+/**
+ * Summary (LLM) calls a repair starts without `yes`, whatever share of the
+ * archive they are. Chosen, not measured: each call is a headless model
+ * session of 10-14s, so 100 is about 20 minutes of account usage.
+ */
+export const REPAIR_LLM_CALLS_MAX = 100;
+function unique(paths) {
+    return [...new Set(paths)];
+}
+export function planRepair(issues, opts = {}) {
+    const reindex = unique([...issues.notIndexed.map(n => n.path), ...issues.outdated.map(o => o.path)]);
+    const summarize = opts.noSummaries
+        ? []
+        : unique([...issues.missingSummary.map(m => m.path), ...issues.outdated.map(o => o.path)]);
+    const plan = {
+        missingFileRows: issues.orphaned.length,
+        deleteRows: opts.pruneMissing ? issues.orphaned.length : 0,
+        reindexFiles: reindex.length,
+        summaryCalls: summarize.length,
+        totals: issues.totals,
+        overThreshold: [],
+    };
+    const check = (count, total, what, of, ceiling = Infinity) => {
+        // A total that is not a number (a hand-built result without it) is held to the floor, never to "no limit".
+        const share = Number.isFinite(total) ? Math.floor(total * REPAIR_THRESHOLD_RATIO) : 0;
+        const limit = Math.min(Math.max(REPAIR_THRESHOLD_FLOOR, share), ceiling);
+        if (count > limit) {
+            plan.overThreshold.push(`${what}: ${count} is over ${limit} (${REPAIR_THRESHOLD_RATIO * 100}% of ${total} ${of}, at least ${REPAIR_THRESHOLD_FLOOR}` +
+                (ceiling === Infinity ? ')' : `, at most ${ceiling})`));
+        }
+    };
+    check(plan.deleteRows, plan.totals.exchanges, 'rows to delete', 'indexed exchanges');
+    // Files and LLM calls are measured against the conversations that hold
+    // something to index — not every file in the archive. On the measured
+    // archive 272,274 files were walked and about 18,000 held a real exchange
+    // (the rest: agent warm-ups, observer files); 5% of all files was 13,613,
+    // a line no real count crossed, and 6,767 summary calls started unasked.
+    check(plan.reindexFiles, plan.totals.indexable, 'conversations to re-index', 'conversations with something to index');
+    check(plan.summaryCalls, plan.totals.indexable, 'summary (LLM) calls', 'conversations with something to index', REPAIR_LLM_CALLS_MAX);
+    return plan;
+}
+export function formatRepairPlan(plan, opts = {}) {
+    return [
+        'Repair plan:',
+        `  index rows whose file is gone: ${plan.missingFileRows}` + (plan.missingFileRows === 0 ? ''
+            : opts.pruneMissing ? ` — ${plan.deleteRows} will be backed up, then deleted (--prune-missing)`
+                : ' — kept (reported only; pass --prune-missing to back them up and delete them)'),
+        `  conversations to re-index: ${plan.reindexFiles}`,
+        `  summary (LLM) calls: ${plan.summaryCalls}` + (opts.noSummaries ? ' (--no-summaries)' : ''),
+        `  index size: ${plan.totals.exchanges} exchanges, ${plan.totals.conversations} archived conversations (${plan.totals.indexable} with something to index)`,
+    ];
+}
+/** Thrown before anything is changed when the plan is over a threshold and `yes` was not given. */
+export class RepairAbortedError extends Error {
+    plan;
+    constructor(plan) {
+        super(`repair stopped before changing anything — ${plan.overThreshold.join('; ')}. Re-run with --yes to go ahead.`);
+        this.plan = plan;
+        this.name = 'RepairAbortedError';
+    }
+}
+export async function repairIndex(issues, opts = {}) {
+    const plan = planRepair(issues, opts);
+    for (const line of formatRepairPlan(plan, opts))
+        console.log(line);
+    if (plan.overThreshold.length > 0 && !opts.yes) {
+        throw new RepairAbortedError(plan);
+    }
     console.log('Repairing index...');
     // To avoid circular dependencies, we import the indexer functions dynamically
-    const { initDatabase, insertExchange, deleteExchange } = await import('./db.js');
-    const { parseConversation } = await import('./parser.js');
-    const { initEmbeddings, generateExchangeEmbedding } = await import('./embeddings.js');
+    const { indexExchanges } = await import('./index-exchanges.js');
     const { summarizeConversation, REFUSED_SUMMARY } = await import('./summarizer.js');
+    const outcome = {
+        plan, deletedRows: 0, backupPath: null, reindexedFiles: 0, indexedExchanges: 0,
+        summariesWritten: 0, skippedFiles: 0, failed: [],
+    };
     const db = initDatabase();
-    await initEmbeddings();
-    // Remove orphaned entries first
-    for (const orphan of issues.orphaned) {
-        console.log(`Removing orphaned entry: ${orphan.uuid}`);
-        deleteExchange(db, orphan.uuid);
-    }
-    // Re-index missing and outdated conversations
-    const toReindex = [
-        ...issues.missing.map(m => m.path),
-        ...issues.outdated.map(o => o.path)
-    ];
-    for (const conversationPath of toReindex) {
-        console.log(`Re-indexing: ${conversationPath}`);
-        try {
-            // Extract project name from path
-            const archiveDir = getArchiveDir();
-            const relativePath = conversationPath.replace(archiveDir + path.sep, '');
-            const project = relativePath.split(path.sep)[0];
-            // Parse conversation
-            const exchanges = await parseConversation(conversationPath, project, conversationPath);
-            if (exchanges.length === 0) {
-                console.log(`  Skipped (no exchanges)`);
-                continue;
+    try {
+        // Rows whose file is gone: only on request, and only after a backup that
+        // holds every row about to go.
+        if (opts.pruneMissing && issues.orphaned.length > 0) {
+            // Judge again right before deleting: verify may be minutes old, and a
+            // file that is back (re-synced, decompressed) keeps its rows.
+            const stillMissing = issues.orphaned.filter(o => !archiveFileExists(o.path));
+            if (stillMissing.length > 0) {
+                const ids = stillMissing.map(o => o.uuid);
+                const backupPath = newBackupPath('prune-missing');
+                const backedUp = backupExchangeRows(db, ids, backupPath);
+                console.log(`Backed up ${backedUp.exchanges} exchange row(s) and ${backedUp.toolCalls} tool call(s) to ${backupPath}`);
+                outcome.backupPath = backupPath;
+                outcome.deletedRows = deleteExchanges(db, ids);
+                console.log(`Deleted ${outcome.deletedRows} index row(s) whose archive file is gone`);
             }
-            // Generate/update summary
-            // A failed summary must not block re-indexing the exchanges. The stale
-            // summary is removed (plain and compressed): kept, it would never be
-            // redone, since the file exists and the exchanges are indexed as current
-            // again. A missing one is written by the next sync while the source
-            // conversation is still in the projects dir, else by the next repair.
-            const summaryPath = conversationPath.replace('.jsonl', '-summary.txt');
+        }
+        else if (issues.orphaned.length > 0) {
+            console.log(`${issues.orphaned.length} index row(s) point at a file that is gone — kept (run with --prune-missing to back them up and delete them)`);
+        }
+        // Re-index what is not indexed or outdated; summarize what has no summary
+        // (and, as before, refresh the summary of an outdated conversation).
+        const toReindex = new Set([...issues.notIndexed.map(n => n.path), ...issues.outdated.map(o => o.path)]);
+        const toSummarize = new Set(opts.noSummaries
+            ? []
+            : [...issues.missingSummary.map(m => m.path), ...issues.outdated.map(o => o.path)]);
+        const excludedProjects = getExcludedProjects();
+        const archiveDir = getArchiveDir();
+        for (const conversationPath of unique([...toReindex, ...toSummarize])) {
+            console.log(`${toReindex.has(conversationPath) ? 'Re-indexing' : 'Summarizing'}: ${conversationPath}`);
             try {
-                const summary = await summarizeConversation(exchanges);
-                if (summary === REFUSED_SUMMARY && archiveFileExists(summaryPath)) {
-                    // An older summary of this conversation beats the refusal marker.
-                    console.log(`  Summary refused, keeping the existing one`);
+                // Extract project name from path
+                const relativePath = conversationPath.replace(archiveDir + path.sep, '');
+                const project = relativePath.split(path.sep)[0];
+                // The same guards sync applies: excluded project, exclusion marker,
+                // and (inside indexExchanges) worker prompts and machine noise.
+                if (isExcludedProject(project, excludedProjects)) {
+                    console.log(`  Skipped (excluded project)`);
+                    outcome.skippedFiles++;
+                    continue;
                 }
-                else {
-                    fs.writeFileSync(summaryPath, summary, 'utf-8');
-                    console.log(`  Created summary: ${summary.split(/\s+/).length} words`);
+                const { exchanges, excluded } = await parseGuarded(conversationPath, project, conversationPath);
+                if (excluded) {
+                    console.log(`  Skipped (exclusion marker)`);
+                    outcome.skippedFiles++;
+                    continue;
+                }
+                const indexable = exchanges.filter(shouldIndexExchange);
+                if (indexable.length === 0) {
+                    console.log(`  Skipped (no exchanges)`);
+                    outcome.skippedFiles++;
+                    continue;
+                }
+                // Generate/update summary
+                // A failed summary must not block re-indexing the exchanges. The stale
+                // summary is removed (plain and compressed): kept, it would never be
+                // redone, since the file exists and the exchanges are indexed as current
+                // again. A missing one is written by the next sync while the source
+                // conversation is still in the projects dir, else by the next repair.
+                if (toSummarize.has(conversationPath)) {
+                    const summaryPath = conversationPath.replace('.jsonl', '-summary.txt');
+                    try {
+                        const summary = await summarizeConversation(indexable);
+                        if (summary === REFUSED_SUMMARY && archiveFileExists(summaryPath)) {
+                            // An older summary of this conversation beats the refusal marker.
+                            console.log(`  Summary refused, keeping the existing one`);
+                        }
+                        else {
+                            fs.writeFileSync(summaryPath, summary, 'utf-8');
+                            outcome.summariesWritten++;
+                            console.log(`  Created summary: ${summary.split(/\s+/).length} words`);
+                        }
+                    }
+                    catch (error) {
+                        removeArchiveFile(summaryPath);
+                        console.error(`  Summary failed (re-indexing continues; the summary is redone later): ${error instanceof Error ? error.message : String(error)}`);
+                    }
+                }
+                // Index exchanges
+                if (toReindex.has(conversationPath)) {
+                    const indexed = await indexExchanges(db, indexable);
+                    outcome.reindexedFiles++;
+                    outcome.indexedExchanges += indexed.indexed;
+                    console.log(`  Indexed ${indexed.indexed} exchanges (${indexed.unchanged} already current)`);
                 }
             }
             catch (error) {
-                removeArchiveFile(summaryPath);
-                console.error(`  Summary failed (re-indexing continues; the summary is redone later): ${error instanceof Error ? error.message : String(error)}`);
+                outcome.failed.push({ path: conversationPath, error: error instanceof Error ? error.message : String(error) });
+                console.error(`Failed to re-index ${conversationPath}:`, error);
             }
-            // Index exchanges
-            for (const exchange of exchanges) {
-                const toolNames = exchange.toolCalls?.map(tc => tc.toolName);
-                const embedding = await generateExchangeEmbedding(exchange.userMessage, exchange.assistantMessage, toolNames);
-                insertExchange(db, exchange, embedding, toolNames);
-            }
-            console.log(`  Indexed ${exchanges.length} exchanges`);
-        }
-        catch (error) {
-            console.error(`Failed to re-index ${conversationPath}:`, error);
         }
     }
-    db.close();
+    finally {
+        db.close();
+    }
     // Report corrupted files (manual intervention needed)
     if (issues.corrupted.length > 0) {
-        console.log('\n⚠️  Corrupted files (manual review needed):');
+        console.log('\n⚠️  Unreadable files (manual review needed):');
         issues.corrupted.forEach(c => console.log(`  ${c.path}: ${c.error}`));
     }
-    console.log('✅ Repair complete.');
+    console.log(outcome.failed.length > 0
+        ? `⚠️  Repair finished with ${outcome.failed.length} failed conversation(s).`
+        : '✅ Repair complete.');
+    return outcome;
 }

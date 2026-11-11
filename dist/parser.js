@@ -1,7 +1,7 @@
 import readline from 'readline';
 import crypto from 'crypto';
 import { createArchiveReadStream } from './archive-io.js';
-export async function parseConversation(filePath, projectName, archivePath) {
+export async function parseConversation(filePath, projectName, archivePath, observer) {
     const exchanges = [];
     const fileStream = createArchiveReadStream(filePath);
     const rl = readline.createInterface({
@@ -16,9 +16,13 @@ export async function parseConversation(filePath, projectName, archivePath) {
                 .createHash('md5')
                 .update(`${archivePath}:${currentExchange.userLine}-${currentExchange.lastAssistantLine}`)
                 .digest('hex');
-            // Update tool call exchange IDs
-            const toolCalls = currentExchange.toolCalls.map(tc => ({
+            // Tool call ids are derived from the exchange id and the call's position
+            // in it, so parsing the same file again yields the same ids. A random id
+            // per parse made every re-index add the same calls as new rows on a DB
+            // whose tool_calls FK has no ON DELETE CASCADE (any DB this code creates).
+            const toolCalls = currentExchange.toolCalls.map((tc, index) => ({
                 ...tc,
+                id: `${exchangeId}:${index}`,
                 exchangeId
             }));
             const exchange = {
@@ -71,9 +75,8 @@ export async function parseConversation(filePath, projectName, archivePath) {
                 if (parsed.message.role === 'assistant') {
                     for (const block of parsed.message.content) {
                         if (block.type === 'tool_use') {
-                            const toolCallId = crypto.randomUUID();
                             toolCalls.push({
-                                id: toolCallId,
+                                id: '', // Set with the exchange id (finalizeExchange)
                                 exchangeId: '', // Will be set when we know the exchange ID
                                 toolName: block.name || 'unknown',
                                 toolInput: block.input,
@@ -92,6 +95,9 @@ export async function parseConversation(filePath, projectName, archivePath) {
                 // future feature needs real result/error data, MATCH tool_result blocks
                 // to the preceding tool_use by tool_use_id and populate both columns —
                 // do NOT trust the current always-0 `is_error`.
+            }
+            if (observer?.userText && parsed.message.role === 'user' && text) {
+                observer.userText(text);
             }
             // Skip empty messages
             if (!text.trim() && toolCalls.length === 0) {
