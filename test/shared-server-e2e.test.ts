@@ -280,19 +280,24 @@ describe('TC-RELAY-003 — unresponsive: a server that holds the name but does n
 
 describe('TC-RELAY-003 — watchdog: a connected server that stops answering', () => {
   // SIGSTOP makes a real server silent without killing it; SIGCONT makes the same server "just slow".
+  // The thresholds are seconds, not the default 30s — and not less: under the whole suite this process can be
+  // a second late in sending a signal, and a window that small turns "slow" into "stuck".
   const pingLine = /\[memory-bank relay\] ping \d+ — no answer for \d+ms/;
 
   it('watchdog: a call after a long quiet spell is not pinged — the silence clock starts with the call', async () => {
-    const env = sharedEnv(configDir(), { MEMORY_BANK_RELAY_PING_AFTER_MS: '1500', MEMORY_BANK_SHARED_IDLE_MS: '60000' });
+    // Threshold 4s → the watchdog looks every 1s. The call below stays unanswered for 1.5s: at least one look
+    // falls inside it (so a clock still standing at the last answer, 5s back, would ping), and 2.5s remain
+    // before a correct clock may ping.
+    const env = sharedEnv(configDir(), { MEMORY_BANK_RELAY_PING_AFTER_MS: '4000', MEMORY_BANK_SHARED_IDLE_MS: '60000' });
     const server = watch(env);
     const s = relay(env, projectDir('quiet'));
     await s.initialize();
     const [pid] = serverPids(server.marker);
-    await sleep(2_500);                 // quiet for longer than the ping threshold, nothing outstanding
+    await sleep(5_000);                 // quiet for longer than the ping threshold, nothing outstanding
 
-    process.kill(pid, 'SIGSTOP');       // the answer to the next call takes 600ms — well inside the threshold
+    process.kill(pid, 'SIGSTOP');
     const call = s.post('tools/list');
-    await sleep(600);
+    await sleep(1_500);
     process.kill(pid, 'SIGCONT');
     expect((await s.response(call)).result.tools).toHaveLength(11);
     expect(s.stderr).not.toMatch(pingLine);
@@ -300,7 +305,8 @@ describe('TC-RELAY-003 — watchdog: a connected server that stops answering', (
   }, 60_000);
 
   it('watchdog: a server that is only busy answers the ping and is left alone', async () => {
-    const env = sharedEnv(configDir(), { MEMORY_BANK_RELAY_PING_AFTER_MS: '1000', MEMORY_BANK_SHARED_IDLE_MS: '60000' });
+    // Threshold 4s: the ping goes out 4-5s into the silence, and the server then has 4s to answer it.
+    const env = sharedEnv(configDir(), { MEMORY_BANK_RELAY_PING_AFTER_MS: '4000', MEMORY_BANK_SHARED_IDLE_MS: '60000' });
     const server = watch(env);
     const s = relay(env, projectDir('busy'));
     await s.initialize();
@@ -308,10 +314,12 @@ describe('TC-RELAY-003 — watchdog: a connected server that stops answering', (
 
     process.kill(pid, 'SIGSTOP');
     const call = s.post('tools/list');
-    await s.waitForStderr(pingLine, 10_000); // silent past the threshold: the relay asks
+    await s.waitForStderr(pingLine, 20_000); // silent past the threshold: the relay asks
     process.kill(pid, 'SIGCONT');            // …and the server turns out to be alive
-    expect((await s.response(call)).result.tools).toHaveLength(11);
-    await sleep(1_500);                      // longer than the wait for a pong
+    const answer = await s.response(call);
+    expect(answer.error, JSON.stringify(answer.error)).toBeUndefined();
+    expect(answer.result.tools).toHaveLength(11);
+    await sleep(5_000);                      // longer than the wait for a pong
     expect(s.stderr).not.toMatch(/does not answer — ending it/);
     expect(serverPids(server.marker)).toEqual([pid]);
     expect(await s.toolNames()).toHaveLength(11);

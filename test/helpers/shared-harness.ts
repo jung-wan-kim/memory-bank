@@ -314,11 +314,6 @@ export function responsesOf(session: StdioSession): any[] {
 }
 
 /**
- * Everything a test file started, ended in one place: sessions are killed, the shared servers of the given
- * markers are killed, the directories are removed. Returns the pids that had to be killed (a test may assert
- * it is empty when the code under test was expected to clean up on its own).
- */
-/**
  * What one test file starts, so afterEach can end all of it: sessions, the shared servers they may have
  * started (found by marker), and temp dirs.
  */
@@ -361,6 +356,10 @@ export function createRig(): {
   };
 }
 
+/**
+ * Everything a test started, ended in one place: sessions are killed, the shared servers of the given
+ * markers are killed, the directories are removed.
+ */
 export async function cleanup(o: { sessions?: StdioSession[]; markers?: string[]; dirs?: string[] }): Promise<void> {
   for (const s of o.sessions ?? []) s.kill();
   const pids = (o.markers ?? []).flatMap((m) => serverPids(m));
