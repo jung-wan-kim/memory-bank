@@ -148,7 +148,7 @@ facts.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `query` | `string` | Yes | What to look for |
-| `project` | `string` | No | Project path that scopes the search (default: the server's working directory) |
+| `project` | `string` | No | Project path that scopes the search (default: the working directory of the session that calls — never the server's) |
 | `category` | `decision` \| `preference` \| `pattern` \| `knowledge` \| `constraint` | No | Only facts of this category |
 | `coding_agent` | `string` | No | Only facts extracted from this agent's conversations |
 | `tags` | `string[]` | No | Only facts carrying all of these user tags |
@@ -175,7 +175,7 @@ history and its related facts.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `query` | `string` | Yes | Finds the fact(s) to trace |
-| `project` | `string` | No | Project scope |
+| `project` | `string` | No | Project scope (default: the calling session's working directory) |
 | `limit` | `number` | No | Facts traced, 1-10 (default 3) |
 
 Per fact: the 5 newest source conversations (a 200-character look at the question, the path and the line
@@ -245,7 +245,7 @@ Facts similar to a query from projects other than the current one.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `query` | `string` | Yes | Topic or decision |
-| `current_project` | `string` | No | Project whose own facts are excluded (default: the server's working directory) |
+| `current_project` | `string` | No | Project whose own facts are excluded (default: the calling session's working directory) |
 | `limit` | `number` | No | 1-20 (default 5) |
 
 Global facts and the current project's facts are skipped inside the search, so `limit` is filled with other
@@ -261,7 +261,7 @@ level. Calls an LLM.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `question` | `string` | Yes | The question |
-| `project` | `string` | No | Project scope |
+| `project` | `string` | No | Project scope (default: the calling session's working directory) |
 
 When the LLM call fails — nobody is logged in or the API key is not accepted, the model refused, or the
 service keeps failing — the answer line says so (a missing login asks for `/login`) and the result is
@@ -290,7 +290,7 @@ Without `tags`: the tag index (tag → number of facts). With `tags`: the facts 
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `project` | `string` | No | Project scope (default: the server's working directory) |
+| `project` | `string` | No | Project scope (default: the calling session's working directory) |
 | `tags` | `string[]` | No | List the facts carrying these tags |
 | `match` | `"all"` \| `"any"` | No | Default `"all"` |
 | `limit` | `number` | No | 1-200 (default 50) |

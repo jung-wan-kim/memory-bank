@@ -27,6 +27,7 @@
 - **Cross-Project Insights** -- Find similar decisions from other projects
 - **Fact Provenance** -- Trace any fact back to its source conversation
 - **Scope Isolation** -- Project facts stay in their project, global facts are shared
+- **One shared server (v1.9.0)** -- Sessions with the same settings use one MCP server process instead of one each (model, SQLite handle, injection daemon); every session keeps its own project scope — see [Processes](#processes-v190)
 - **User Tags** -- The one labelling axis you control: free-form tags that the automatic pipeline never overwrites. Use them for review layers (`verified`), grouping that crosses project scope (`billing`), or case collection (`bug-report`). See the [tagging guide](docs/tagging-guide.md)
 - **Compressed Archive Support** -- Transparent `.jsonl.zst` reads across every path (parser, `read` tool, search, sync, stats, verify) using Node's built-in zstd (Node >= 22.15) — archives compressed out-of-band keep working
 - **MCP Integration** -- 11 tools: `search`, `read`, `search_facts`, `search_ontology`, `ask_avatar`, `trace_fact`, `explore_graph`, `cross_project_insights`, `graph_stats`, `tag_fact`, `list_tags`
@@ -339,6 +340,15 @@ export ANTHROPIC_API_KEY=your-key
 # Summarization model
 export MEMORY_BANK_API_MODEL=opus
 
+# One MCP server shared by the sessions with the same settings (default since 1.9.0).
+# 0 / false / off / no = every session runs a server of its own, as before 1.9.0.
+# An empty file conversation-index/shared-server.off does the same without touching
+# the environment (see Architecture → Processes).
+# export MEMORY_BANK_SHARED_SERVER=0
+# How long a shared server with no session connected stays up (ms, default 600000).
+# A setting like any other: sessions that set it differently use different servers.
+# export MEMORY_BANK_SHARED_IDLE_MS=600000
+
 # Fact extraction batches per session (default 12, evenly spread; at most 60 — a
 # larger value is read as 60, anything that is not a positive integer as 12).
 # This is the number of batches, not of LLM calls: a batch that fails for a
@@ -463,6 +473,22 @@ open docs/graph-3d.html   # Interactive 3D graph (local)
 ```
 
 `conversation-index/sync/` is the cross-device sync folder (facts and the knowledge graph as JSONL files, written when a session ends and imported when one starts): whoever can write to it can decide sentences that are later injected into your prompts as your own past decisions, so do not share that folder with a device, account or cloud location you do not trust.
+
+### Processes (v1.9.0)
+
+A session starts `cli/mcp-server-wrapper.js`, and that starts `dist/mcp-server.js` — a small relay that loads no database and no model. The tools run in one **shared server** (`dist/shared-server.js`) that every session with the same settings uses together, over a unix socket in `conversation-index/` (`mb-shared-<version>-<id>.sock`, owner-only). Before 1.9.0 every session ran a whole server of its own; with N sessions open that was N embedding models and N injection daemons.
+
+```
+Claude Code ⇄ wrapper ⇄ relay (dist/mcp-server.js) ─┐
+Claude Code ⇄ wrapper ⇄ relay                       ─┼─ unix socket ─ shared server (dist/shared-server.js) ─ db.sqlite
+Claude Code ⇄ wrapper ⇄ relay                       ─┘                 one per (version, code, settings)
+```
+
+- **Nothing of one session reaches another.** A connection states its working directory before anything else, and a tool's default `project` is the directory of the session that calls — the server never reads its own. A session that cannot tell its directory still connects; a call that needs the default then fails with a message asking for `project`, it is never answered for "every project".
+- **Different settings, different server.** A server's name is a hash of the plugin version, the compiled code and the settings it runs with (config dir, database path, LLM endpoint and model, locale, …), and it is started with those settings only — no session id, no messaging socket, nothing else from the shell that started the first session. A session whose settings differ gets a server of its own.
+- **Lifetime.** A server no session is connected to ends after 10 minutes (`MEMORY_BANK_SHARED_IDLE_MS`; prompt-injection requests do not keep it alive). After a plugin update it serves the sessions it has and then ends, while those sessions move to the new version's server on their own. When a server dies, every relay reconnects — starting a new server if there is none — and the session goes on; only a call that was in flight is answered with an error.
+- **When a server cannot be started** nothing is done quietly instead: a relay that has just begun exits non-zero (the wrapper then repairs the install, as it always did for a server that dies at once), and a relay that has been serving answers each call with an error that names `conversation-index/logs/shared-server.log`, and keeps trying.
+- **Turning it off.** `MEMORY_BANK_SHARED_SERVER=0`, or an empty file `conversation-index/shared-server.off`, makes a session run a server of its own again, exactly as before 1.9.0. The file is for sessions that are already open: it is read when a session's relay starts, so it applies to new sessions and to an open one the next time the wrapper restarts its child. The same happens by itself on Windows and where the config dir path is too long for a unix socket; the session says which, in one line on stderr.
 
 ## Development
 
