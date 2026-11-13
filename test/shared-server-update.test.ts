@@ -281,7 +281,8 @@ describe('TC-NEG-006 — start lock: one left by a relay that is gone', () => {
     // under a running server: gone within a few self-checks
     orphan();
     await waitFor('the server to remove the orphan lock', () => !fs.existsSync(lock), 5_000);
-    expect(serverLog(server.indexDir)).toMatch(/removed the start lock of a relay that is gone/);
+    // the server removes the file first and writes the line after it: wait for the line, do not read between the two
+    await waitFor('the server to say it removed the lock', () => /removed the start lock of a relay that is gone/.test(serverLog(server.indexDir)), 5_000);
 
     // a lock a live process holds is somebody starting a server right now: never removed
     fs.writeFileSync(lock, String(process.pid));
