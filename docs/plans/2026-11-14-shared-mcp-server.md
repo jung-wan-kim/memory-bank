@@ -66,10 +66,10 @@
   - verify: `npx vitest run test/shared-server-update.test.ts -t "1.8.0 wrapper"` → exit 0
   - evidence: `shared-update.log`
 - AC-011: 공용 서버를 쓸 수 없는 조건(소켓 경로 초과, `MEMORY_BANK_SHARED_SERVER=0`, 끄기 파일)에서는 세션별 서버 방식으로 동작하고 stderr 에 그 사실을 한 줄로 적는다. 공용 서버 프로세스는 뜨지 않고 범위 규칙은 같다.
-  - verify: `npx vitest run test/inject-daemon-long-socket-path.test.ts test/shared-server-e2e.test.ts -t "session-local"` → exit 0
+  - verify: `npx vitest run test/shared-server-e2e.test.ts -t "session-local"` 와 `npx vitest run test/inject-daemon-long-socket-path.test.ts` → 둘 다 exit 0
   - evidence: `shared-e2e.log`, `long-socket.log`
 - AC-012: 공용 서버를 띄우지 못하면 조용히 다른 방식으로 넘어가지 않는다 — 막 시작한 중계는 0이 아닌 코드로 끝나고(감독자의 구조 작업 대상), 오래 산 중계는 끝나지 않고 요청마다 JSON-RPC 오류로 답하다가 서버가 다시 뜨면 다음 호출이 성공한다.
-  - verify: `npx vitest run test/shared-server-e2e.test.ts -t "cannot start"` → exit 0
+  - verify: `npx vitest run test/shared-server-update.test.ts -t "cannot start"` → exit 0
   - evidence: `shared-e2e.log`
 - AC-013: 응답하지 않는 서버가 이름을 쥐고 있으면, 중계는 기한 뒤 그 서버(pid 파일 + 명령줄 확인)를 끝내고 새 서버를 띄워 붙는다.
   - verify: `npx vitest run test/shared-server-e2e.test.ts -t "unresponsive"` → exit 0
@@ -132,7 +132,10 @@ src/
   server-core.ts           [new]  도구 11개 선언·처리. createMemoryBankServer(ctx) — import 부작용 없음
   stdio-server.ts          [new]  세션별 서버 방식: 주입 데몬 + StdioServerTransport (지금 main() 의 내용)
   session-context.ts       [new]  SessionContext, validSessionCwd(), sessionProject()
-  shared-identity.ts       [new]  서버 환경 허용 목록, serverEnvFor(), distFingerprint(), sharedServerIdentity(), sharedMode()
+  own-cwd.ts               [new]  ownCwd() — 자기 프로세스의 작업 폴더를 읽는 유일한 곳(세션 쪽 전용)
+  shared-identity.ts       [new]  서버 환경 허용 목록, serverEnvFor(), spawnEnvFor(), distFingerprint(), sharedServerIdentity(), 소켓·pid·잠금 경로
+  shared-mode.ts           [new]  sharedMode() — 세션 쪽 판정(스위치·끄기 파일·빌드 여부). 서버가 읽는 모듈 밖
+  shared-protocol.ts       [new]  hello 형식 · 제어 줄 접두사 · 서버 종료 코드 (import 없음 — 중계 번들이 서버 의존성을 끌어오지 않게)
   unix-socket.ts           [new]  probeSocket · socketIdentity · removeIfDead (inject-daemon.ts 에서 옮김)
   socket-transport.ts      [new]  net.Socket 위의 MCP Transport + 제어 줄(mb_relay ping/pong)
   shared-server-core.ts    [new]  startSharedServer(): 단일 바인드 · hello 검증 · 접속별 Server · 유휴/은퇴/자기점검 · pid 파일
@@ -154,35 +157,42 @@ test/
 // session-context.ts
 export interface SessionContext { readonly cwd: string | null }   // null = 세션이 자기 작업 폴더를 읽지 못했다
 export function validSessionCwd(v: unknown): v is string   // 문자열 · path.isAbsolute · 1..4096바이트 · NUL 없음
-export function sessionProject(ctx: SessionContext, explicit: unknown): string   // explicit 이 비어 있지 않은 문자열이면 그것, 아니면 ctx.cwd, null 이면 throw
+export function sessionProject(ctx: SessionContext, explicit: unknown, argument = 'project'): string   // explicit 이 비어 있지 않은 문자열이면 그것, 아니면 ctx.cwd, null 이면 throw(메시지에 argument 이름)
 
 // server-core.ts
 export function createMemoryBankServer(ctx: SessionContext): Server   // cwd 가 null 도 유효한 문자열도 아니면 throw
 
-// shared-identity.ts  (Node 내장 + paths.ts + version-guard.ts 만 import)
-export function isServerEnvName(name: string): boolean
-export function serverEnvFor(env: NodeJS.ProcessEnv, cwd: string | null): Record<string, string>
+// shared-identity.ts  (Node 내장 + version-guard.ts 만 import)
+export function serverEnvKind(name: string): 'identity' | 'passthrough' | null   // null = 서버에 넘기지 않는다
+export function serverEnvFor(env: NodeJS.ProcessEnv, cwd: string | null): Record<string, string> | null   // 신원에 드는 환경. null = 상대 경로 설정인데 cwd 를 모른다
+export function spawnEnvFor(env: NodeJS.ProcessEnv, serverEnv: Record<string, string>): Record<string, string>   // 서버 환경 + 운영 변수
 export function distFingerprint(distDir: string): string
 export function sharedServerIdentity(o: { version: string; fingerprint: string; serverEnv: Record<string, string> }): string   // sha256 hex
 export function sharedSocketPathIn(indexDir: string, version: string, identity: string, maxBytes?: number): string | null
-export type SharedMode = { kind: 'shared'; socketPath: string; identity: string; version: string; serverEnv: Record<string, string>; serverEntry: string }
-                       | { kind: 'session-local'; reason: 'switch-off' | 'switch-off-file' | 'windows' | 'socket-path-too-long' | 'no-version' | 'not-built' }
-export function sharedMode(o: { entryUrl: string; env?: NodeJS.ProcessEnv; cwd: string | null }): SharedMode
+export function sharedPidPath(socketPath: string): string · sharedLockPath(socketPath: string): string · sharedServerArg(identity: string): string   // '--mb-shared=<신원8>'
+
+// shared-mode.ts  (세션 쪽 — 서버가 읽는 모듈 밖)
+export type SharedMode = { kind: 'shared'; socketPath: string; indexDir: string; identity: string; version: string; serverEnv: Record<string, string>; serverEntry: string }
+                       | { kind: 'session-local'; reason: 'switch-off' | 'switch-off-file' | 'windows' | 'socket-path-too-long' | 'no-version' | 'not-built' | 'relative-path' }
+export function sharedMode(o: { entryUrl: string; env: NodeJS.ProcessEnv; cwd: string | null; version?: string | null; platform?: NodeJS.Platform }): SharedMode
 
 // 접속 첫 줄(중계 → 서버)과 답(서버 → 중계). 이후는 MCP JSON-RPC 줄 + 제어 줄({mb_relay:1, ping|pong:n}).
 type RelayHello = { mb_relay: 1; identity: string; version: string; cwd: string | null; pid: number }
 type HelloReply = { mb_relay: 1; ok: true; pid: number; version: string }
                 | { mb_relay: 1; ok: false; error: 'bad-hello' | 'bad-cwd' | 'identity-mismatch' }
 
+// shared-protocol.ts
+export const EXIT_NAME_TAKEN = 76, EXIT_RETRY = 75, EXIT_START_FAILED = 70   // 0 은 계약에 없다 — 답하기 전의 0 은 기동 실패
+
 // shared-server-core.ts
-export const EXIT_NAME_TAKEN = 0, EXIT_RETRY = 75, EXIT_START_FAILED = 70
-export interface SharedServerHandle { socketPath: string; connections(): number; retiring(): boolean; close(): Promise<void> }
+export interface SharedServerHandle { connections(): number; retiring(): string | null; close(): Promise<void> }
 export type StartResult = { kind: 'serving'; handle: SharedServerHandle } | { kind: 'name-taken' } | { kind: 'retry'; why: string }
 export function startSharedServer(o: { identity: string; version: string; socketPath: string; createServer: (ctx: SessionContext) => Server;
-  idleMs?: number; tickMs?: number; onExit: (code: number, reason: string) => void }): Promise<StartResult>
+  idleMs: number; tickMs: number; retireGraceMs?: number; helloTimeoutMs?: number; bindWaitMs?: number; staleReason?: () => string | null;
+  onStop: (o: { reason: string; listenerClosed: boolean }) => void | Promise<void>; log?: (line: string) => void }): Promise<StartResult>
 
 // relay.ts
-export function runRelay(mode: Extract<SharedMode, { kind: 'shared' }>): void
+export function runRelay(mode: Extract<SharedMode, { kind: 'shared' }>, cwd: string | null): void
 ```
 
 ### 규칙
@@ -197,7 +207,7 @@ export function runRelay(mode: Extract<SharedMode, { kind: 'shared' }>): void
 3. **신원** — `sha256(JSON{ v: 버전, f: 코드 지문, env: 서버 환경에서 운영 변수를 뺀 [이름, 값] 정렬 목록 })`. 서버는 시작할 때 자기 `process.env` 로 같은 계산을 해 소켓 이름을 정하고, hello 의 신원이 자기 것과 다르면 거부한다.
    세션 고유 값이 허용 목록에 새로 섞이면 세션마다 서버가 따로 뜬다(공유가 안 될 뿐 섞이지 않는다 — 안전한 쪽으로 실패). 서버 로그에 신원 8자와 포함된 이름(값 없음)을 남겨 진단할 수 있게 한다.
 4. **소켓 이름** — `mb-shared-<버전>-<신원 앞 8자>.sock` (색인 폴더 안, 모드 600) + 같은 이름의 `.pid`. 주입 데몬의 정리 정규식 `inject-daemon(-…)?.sock` 과 겹치지 않는다. 경로가 한도(macOS 103 / Linux 107바이트)를 넘으면 세션별 서버 방식.
-5. **서버 기동·종료 코드** — ① 그 이름에 살아 있는 서버가 답하면 exit 0(`name-taken`) ② 무거운 모듈(`server-core` 와 그 아래) 로드 — 실패하면 exit 70(`start-failed`) ③ 바인드: `EADDRINUSE` 면 다시 확인해 살아 있으면 exit 0, 죽은 파일이면 `removeIfDead`(1초 간격 두 번 + inode 동일) 뒤 한 번 더, 그래도 안 되면 exit 75(`retry`) ④ pid 파일 기록, 죽은 `mb-shared-*.sock` 정리, 주입 데몬 시작.
+5. **서버 기동·종료 코드** — ① 그 이름에 살아 있는 서버가 답하면 exit 76(`name-taken`) ② 무거운 모듈(`server-core` 와 그 아래) 로드 — 실패하면 exit 70(`start-failed`) ③ 바인드: 이름이 있는데 소켓이 아니면(일반 파일·심링크) 바인드하지 않는다. `EADDRINUSE` 면 다시 확인해 살아 있으면 exit 76, 죽은 파일이면 `removeIfDead`(나이 2초 + 1초 뒤 재확인 + inode 동일)가 판정할 수 있을 때까지 기다렸다가(상한 8초) 다시 바인드, 그래도 안 되면 exit 75(`retry`) ④ pid 파일 기록, 죽은 `mb-shared-*.sock` 정리, 주입 데몬 시작.
    바인드된 서버는 곧 준비된 서버다(무거운 로드가 바인드 앞이라 "바인드 뒤 import 실패"가 없다).
 6. **서버 수명** — 접속 0 이 `MEMORY_BANK_SHARED_IDLE_MS`(기본 10분) 이어지면 종료(훅 요청은 세지 않는다 — 세션이 없는 서버가 훅 때문에 살아남지 않게): 리스너 닫기(이름이 아직 내 것일 때만) → 접속 수 재확인(그 사이 붙은 접속이 있으면 은퇴 상태로 그 접속이 끝날 때까지 돈다) → 주입 데몬 닫기 → pid 파일 삭제 → exit 0.
    `MEMORY_BANK_SHARED_TICK_MS`(기본 45초)마다 자기 점검: 소켓 경로의 inode 가 내 것이 아니거나 없다 / 디스크 버전 ≠ 내 버전(읽지 못하면 같은 것으로 본다) / 코드 지문이 달라졌다 → "은퇴"(접속 0이 되면 5초 뒤 종료). 이름을 잃은 서버는 리스너를 닫지 않고 끝난다(닫으면 libuv 가 후임의 파일을 이름으로 지운다).
@@ -205,7 +215,7 @@ export function runRelay(mode: Extract<SharedMode, { kind: 'shared' }>): void
    stderr 는 `<색인 폴더>/logs/shared-server.log` — 띄우는 쪽이 1MB 를 넘으면 `.old` 로 한 번 돌린 뒤 붙여 쓰기로 연다.
 7. **중계** — 시작 즉시 stdin 줄을 기록·대기열에 넣고 접속한다.
    - 접속 실패(`ENOENT`, 또는 `ECONNREFUSED` 가 짧은 재시도 3회 뒤에도) → 기동 잠금(`mb-shared-…​.lock`, `wx` 생성 + pid, 주인 pid 가 죽었거나 30초가 지나면 낡은 것) 을 잡고 → 접속을 한 번 더 확인하고 → 서버를 띄운다(ABI 가 맞는 node · `cwd`=색인 폴더 · `detached` · 환경 = 서버 환경 · 인자 `--mb-shared=<신원8>`). 잠금을 못 잡으면 기다리며 접속을 다시 시도한다.
-   - 띄운 서버가 끝난 코드: 0 → 다른 서버가 이름을 쥐었다(계속 접속 시도) · 75 → 간격을 두고 다시 · 그 밖 → **기동 실패**.
+   - 띄운 서버가 끝난 코드: 76 → 다른 서버가 이름을 쥐었다(계속 접속 시도) · 75 → 간격을 두고 다시 · 그 밖(0 포함) → **기동 실패**.
    - 기동 실패 + 그 이름에 답하는 서버 없음: 중계가 막 시작했으면(`process.uptime()` < `MEMORY_BANK_RELAY_YOUNG_MS` 기본 8초 — 감독자의 10초 기준보다 2초 여유) exit 1 → 감독자가 npm 구조 작업. 아니면 끝나지 않고 대기 중·이후 요청에 JSON-RPC 오류로 답하며 다시 시도한다(간격 1→2→4…30초, 연속 10회 뒤에는 요청이 올 때만 30초 간격으로).
    - hello 답이 `MEMORY_BANK_RELAY_HELLO_MS`(기본 10초) 안에 없으면 응답 없는 서버로 본다: pid 파일의 pid 가 `shared-server.js` 와 `--mb-shared=<신원8>` 을 명령줄에 가진 프로세스일 때만 SIGTERM → 2초 뒤 SIGKILL, 그 뒤 새로 띄운다. 요청이 30초 넘게 답이 없으면 제어 줄 ping 을 보내고, 30초 안에 pong 이 없으면 같은 처리를 한다(바쁜 서버는 pong 으로 구분된다).
    - 접속이 끊기면: 답이 안 나간 요청은 `-32001` 로 끝내고(단 `initialize` 는 붙들었다가 새 접속에 다시 보낸다), 다시 붙어 기록한 `initialize`·`initialized` 를 재생하고(이미 답한 `initialize` 의 답은 삼킨다) 이어 간다.
@@ -213,7 +223,7 @@ export function runRelay(mode: Extract<SharedMode, { kind: 'shared' }>): void
    - 끝나는 경우: stdin 종료·SIGTERM·SIGINT(exit 0), 위의 "막 시작 + 기동 실패"(exit 1), hello 거절(exit 1). 중계는 소켓 파일을 지우지 않는다.
 8. **세션별 서버 방식** — `dist/mcp-server.js` 가 자기 파일 옆의 `stdio-server.js` 를 실행 시점 경로로 동적 import(번들에 넣지 않는다). stderr 에 `shared server off: <이유> — this session runs its own server` 한 줄. `tsx` 로 `src/mcp-server.ts` 를 돌리면(확장자 `.ts`) 이유는 `not-built`.
    끄기: `MEMORY_BANK_SHARED_SERVER=0` 또는 파일 `<색인 폴더>/shared-server.off`(환경을 바꾸기 어려운 떠 있는 세션용 — 실행기가 자식을 다시 띄울 때부터 적용).
-9. **가드** — `test/server-scope-guard.test.ts` 가 `shared-server.ts` · `shared-server-core.ts` · `server-core.ts` · `inject-daemon.ts` 에서 닿는 모듈 전체를 따라가 ① `process.cwd(`·`process.chdir(` 0건 ② `process.env.NAME`·`env.NAME` 은 전부 `isServerEnvName` ③ `process.env` 를 통째로 쓰는 자리는 등록된 것(기본 인자 3곳)뿐임을 확인한다. 진입점 `mcp-server.ts`·`relay.ts`·`stdio-server.ts` 는 세션 자신의 프로세스라 대상이 아니다.
+9. **가드** — `test/server-scope-guard.test.ts` 가 `shared-server.ts` · `shared-server-core.ts` · `server-core.ts` · `inject-daemon.ts` 에서 닿는 모듈 전체를 따라가 ① `process.cwd(`·`process.chdir(` 0건 ② `process.env.NAME`·`env.NAME` 은 전부 `serverEnvKind` 가 `identity` 인 이름 ③ `process.env` 를 통째로 쓰는 자리는 등록된 것뿐임을 확인한다. 진입점 `mcp-server.ts`·`relay.ts`·`stdio-server.ts` 와 `shared-mode.ts`·`own-cwd.ts` 는 세션 자신의 프로세스라 대상이 아니고, 서버가 읽는 모듈에서 닿지 않는다는 것도 같은 테스트가 확인한다.
 
 ### 냄새 점검 (파울러 24종 — 확정 전)
 
@@ -275,6 +285,13 @@ export function runRelay(mode: Extract<SharedMode, { kind: 'shared' }>): void
 - (계획 반박 반영) 서버의 무거운 모듈 로드를 바인드 앞으로 옮기고 종료 코드 계약(0 / 75 / 70)을 넣었다 — 네이티브 모듈 고장이 "바인드 뒤" 실패가 되어 구조 작업이 걸리지 않던 문제.
 - (계획 반박 반영) 유휴 판정에서 훅 요청을 뺐다 · 답 못 받은 `initialize` 는 오류로 끝내지 않는다 · 무응답 서버 처리(pid 파일 + ping)를 넣었다 · 끄기 파일을 넣었다 · 테스트 기본값은 끔.
 - (실측 반영) 신원을 "서버가 읽는 이름 목록"에서 "서버가 받는 환경 전체(허용 목록)"로 바꿨다 — 지금 서버는 세션 환경을 통째로 물려받아 LLM 자식에게 넘기므로, 이름 몇 개만 신원에 넣으면 나머지가 남의 세션 값으로 섞인다. 로캘 변수는 `read` 의 날짜·숫자 표기에 쓰여 신원에 넣었다.
+- (구현 중 발견) 이름 선점의 종료 코드를 0 에서 76 으로 바꿨다 — 바인드 전의 대기가 전부 `unref` 타이머라, 서버가 할 일 없이 코드 0 으로 끝나는 경우가 있었고 중계가 그것을 "다른 서버가 이름을 쥠"으로 읽어 끝없이 기다렸다. 0 은 이제 계약에 없는 코드(= 기동 실패)다. 서버 진입점은 바인드가 결정될 때까지 이벤트 루프를 붙든다.
+- (구현 중 발견) 바인드는 죽은 소켓 파일이 판정 가능해질 때까지(나이 2초 + 재확인 1초) 스스로 기다린다(상한 8초) — 방금 죽은 서버의 파일 앞에서 곧바로 75 로 물러나면 중계의 재시도와 맞물려 기동이 수 초씩 늦어졌다.
+- (구현 중 발견) 이름이 소켓이 아니면(일반 파일·매달린 심링크) 바인드하지 않는다 — `listen` 이 심링크를 따라가 엉뚱한 자리에 소켓을 만들었다.
+- (구조) 세션 쪽 판정(`sharedMode`)을 `shared-mode.ts` 로, hello·종료 코드 상수를 `shared-protocol.ts` 로, 자기 작업 폴더 읽기를 `own-cwd.ts` 로 나눴다 — 서버가 읽는 모듈이 세션의 스위치를 읽지 않게 하고(가드 테스트의 서버 진입 목록에 `shared-server.ts`·`shared-server-core.ts` 포함), 중계 번들이 서버 의존성을 끌어오지 않게 하려는 것.
+- (추가) 세션별 방식 사유 `relative-path`(상대 경로 설정인데 작업 폴더를 못 읽음), 진단용 `MEMORY_BANK_RELAY_DEBUG=1`(중계가 접속 이벤트를 stderr 에 적는다 — 서버에는 넘기지 않는다).
+- (검증 명령 정정) AC-011·AC-012 와 QA 계획서 TC-SCOPE-002·TC-ENV-003·TC-SRV-005·TC-NEG-001 의 검증 명령을 실제 테스트 위치·이름으로 고쳤다 — TC-NEG-001 의 명령은 테스트 0건에 걸리는 헛검증이었다(전건 실행 대조: 명령 26개 중 1개). 시나리오의 Given/When/Then 은 그대로이고, TC-ENV-003 의 이유 목록에 `relative-path` 를, H-002 의 기대 코드를 76·75·70 으로 맞췄다.
+- (S8) `mcp-server-stdio` 를 두 방식으로 돌린다(TC-NEG-003, 방식당 28건) · 배포 꾸러미 테스트가 두 서버 진입 파일의 import 폐쇄 전체를 확인한다 · 이관 가드의 프로세스 판정 테스트에 공용 서버를 넣었다 · 실 훅 E2E 스크립트는 자기 서버(짧은 유휴 시간 = 다른 신원)를 띄우고 그 서버가 끝난 것까지 확인한다 · 소켓 한도를 넘는 설정 폴더의 실행 테스트를 추가했다(AC-011 의 세 조건 전부 실행으로 확인).
 - (사용자 제약) 단계 push 는 기능 브랜치(`feat/shared-server`)로 한다 — `main` push 는 떠 있는 세션에 곧바로 배포되므로 레벨3 까지 통과한 뒤 Phase 5 에서 한다.
 
 P3_SNAPSHOT: /private/tmp/claude-501/-Users-jung-wankim-Project-Claude-memory-bank-cloud/ea9a737f-ad52-45f6-992d-30c071014ff0/scratchpad/mbproc/p3-snapshot.json

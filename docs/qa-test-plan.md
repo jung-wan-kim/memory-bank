@@ -50,7 +50,7 @@
 - Given: `sessionProject(ctx, explicit)` 와 `server-core.ts` 원문
 - When: `ctx.cwd` 가 절대 경로 / `null` 인 두 경우로 호출, 원문에서 기본값 자리를 센다
 - Then: 명시 값이 비어 있지 않은 문자열이면 그 값, 아니면 `ctx.cwd`. `cwd` 가 `null` 이면 오류(메시지에 `project` 를 넘기라는 안내)이고 빈 문자열·`null` 을 돌려주는 경로가 없다. `server-core.ts` 의 기본값 5곳(`search_facts`·`list_tags`·`ask_avatar`·`trace_fact`·`cross_project_insights`)이 전부 `sessionProject(` 를 쓰고 `process.cwd` 는 0건. `cwd: null` 접속에서 범위 없는 도구(`graph_stats`)와 `project` 를 준 `search_facts` 는 동작한다
-- verify: `npx vitest run test/session-context.test.ts test/shared-server-hello.test.ts -t "cwd"` / evidence: 테스트 이름
+- verify: `npx vitest run test/session-context.test.ts` 와 `npx vitest run test/shared-server-scope.test.ts -t "TC-SCOPE-002"` / evidence: 테스트 이름
 
 #### TC-SCOPE-003: 공용 서버에서 닿는 모듈은 서버의 작업 폴더를 읽지 않는다
 **심각도**: CRITICAL
@@ -86,8 +86,8 @@
 **심각도**: HIGH
 - Given: `sharedMode()` 입력 — 스위치 `MEMORY_BANK_SHARED_SERVER=0` / 끄기 파일 `<색인 폴더>/shared-server.off` / 소켓 경로가 한도를 넘는 설정 폴더 / 버전을 읽을 수 없는 루트 / `.ts` 진입(미빌드) / 작업 폴더를 못 읽었는데 상대 경로 환경이 있는 경우
 - When: 각 입력으로 판정한다
-- Then: 각각 `session-local` 이고 이유가 `switch-off`·`switch-off-file`·`socket-path-too-long`·`no-version`·`not-built` 중 맞는 값이다. 조건이 없으면 `shared` 이고 소켓 경로·신원·서버 환경·서버 진입 파일을 준다
-- verify: `npx vitest run test/shared-identity.test.ts -t "mode"` / evidence: 테스트 이름
+- Then: 각각 `session-local` 이고 이유가 `switch-off`·`switch-off-file`·`socket-path-too-long`·`no-version`·`not-built`·`relative-path` 중 맞는 값이다. 조건이 없으면 `shared` 이고 소켓 경로·신원·서버 환경·서버 진입 파일을 준다
+- verify: `npx vitest run test/shared-identity.test.ts -t "sharedMode"` / evidence: 테스트 이름
 
 ### SRV: 공용 서버
 
@@ -124,7 +124,7 @@
 - Given: 임시 플러그인 루트에서 뜬 서버(접속 1개)
 - When: 그 루트의 `package.json` 버전을 바꾼다(또는 `dist` 의 파일 내용을 바꾼다) → 자기 점검 주기 경과 → 접속을 닫는다
 - Then: 접속이 있는 동안에는 계속 답하고, 접속이 0이 되면 유휴 시간을 기다리지 않고 끝난다. 버전 파일을 읽을 수 없는 동안에는 은퇴하지 않는다
-- verify: `npx vitest run test/shared-server-update.test.ts -t "retire"` / evidence: 테스트 이름
+- verify: `npx vitest run test/shared-server-hello.test.ts -t "TC-SRV-005"` 와 `npx vitest run test/shared-server-update.test.ts -t "retire"` / evidence: 테스트 이름
 
 ### RELAY: 중계
 
@@ -186,7 +186,7 @@
 - Given: 임시 플러그인 루트의 `dist/shared-server.js` 를 "곧바로 종료 코드 70" 인 파일로 바꿨다
 - When: (a) 중계를 새로 띄워 `initialize` 를 보낸다 (b) 다른 실행에서, 정상 서버로 붙어 있던 오래 산 중계(젊은 기간을 테스트용으로 짧게)에서 서버 파일을 고장 낸 뒤 서버를 죽이고 `tools/list` 를 보낸다 → 서버 파일을 되돌리고 다시 `tools/list`
 - Then: (a) 중계가 0이 아닌 코드로 끝나고 stderr 에 이유가 있다. 그 프로세스가 직접 도구에 답한 흔적(전체 서버를 자기 안에서 돈 흔적)이 없다 (b) 중계는 살아 있고 `tools/list` 는 JSON-RPC 오류로 답한다(멈추지 않는다). 되돌린 뒤의 `tools/list` 는 성공한다
-- verify: `npx vitest run test/shared-server-e2e.test.ts -t "cannot start"` / evidence: 테스트 이름
+- verify: `npx vitest run test/shared-server-update.test.ts -t "cannot start"` / evidence: 테스트 이름
 
 #### TC-NEG-002: 남의 세션 값이 서버에 들어가지 않는다
 **심각도**: HIGH
@@ -269,7 +269,7 @@
 
 #### H-002: 종료 코드가 계약대로인가
 - 등급: HIGH
-- 확인: 서버를 세 경우(이름이 이미 쥐어짐 / 재시도 대상 / 모듈 로드 실패)로 직접 실행해 종료 코드 0·75·70 을 본다. 중계를 세 경우(stdin 종료 / SIGTERM / 기동 실패)로 실행해 0·0·1 을 본다. 1.8.0 실행기가 각 코드를 어떻게 취급하는지(구조 작업·재기동 예산) 로그로 대조한다
+- 확인: 서버를 세 경우(이름이 이미 쥐어짐 / 재시도 대상 / 모듈 로드 실패)로 직접 실행해 종료 코드 76·75·70 을 본다. 중계를 세 경우(stdin 종료 / SIGTERM / 기동 실패)로 실행해 0·0·1 을 본다. 1.8.0 실행기가 각 코드를 어떻게 취급하는지(구조 작업·재기동 예산) 로그로 대조한다
 
 #### H-003: 이상한 첫 줄·끊긴 접속에 서버가 버티는가
 - 등급: HIGH

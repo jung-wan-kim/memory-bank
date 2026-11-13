@@ -296,6 +296,9 @@ describe('vec-migrate-guard', () => {
   it('finds the code root of plugin, repo and worker commands', () => {
     expect(holderCodeRoot(CMD)).toBe('/Users/u/.claude/plugins/cache/memory-bank-dev/memory-bank/1.7.6');
     expect(holderCodeRoot('node /repo/memory-bank/scripts/reembed-worker.js --x')).toBe('/repo/memory-bank');
+    // the shared MCP server (1.9.0+): the process that holds the DB for every session of one identity
+    expect(holderCodeRoot('/opt/homebrew/bin/node /Users/u/.claude/plugins/cache/memory-bank-dev/memory-bank/1.9.0/dist/shared-server.js --mb-shared=0123abcd'))
+      .toBe('/Users/u/.claude/plugins/cache/memory-bank-dev/memory-bank/1.9.0');
     expect(holderCodeRoot('python3 something.py')).toBeNull();
   });
 
@@ -323,7 +326,7 @@ describe('vec-migrate-guard', () => {
     }
   });
 
-  it('process scan: judges the MCP server child, skips its wrapper (never opens the DB), respects the scan-root boundary', async () => {
+  it('process scan: judges the MCP server child and the shared server, skips the wrapper (never opens the DB), respects the scan-root boundary', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mbscan-'));
     const plugin = path.join(root, 'plugin');
     const procs: ReturnType<typeof spawn>[] = [];
@@ -338,9 +341,15 @@ describe('vec-migrate-guard', () => {
         procs.push(c);
         await new Promise<void>((resolve) => c.stdout!.once('data', () => resolve()));
       }
+      // a shared server is started with its identity as an argument — the scan must still see whose code it runs
+      fs.writeFileSync(path.join(plugin, 'dist', 'shared-server.js'), idle);
+      const sharedServer = spawn(process.execPath, [path.join(plugin, 'dist', 'shared-server.js'), '--mb-shared=0123abcd'], { stdio: ['ignore', 'pipe', 'ignore'] });
+      procs.push(sharedServer);
+      await new Promise<void>((resolve) => sharedServer.stdout!.once('data', () => resolve()));
       const pids = listMemoryBankProcesses(process.pid, root).map((h) => h.pid);
       expect(pids).toContain(procs[0].pid);
       expect(pids).not.toContain(procs[1].pid);
+      expect(pids).toContain(sharedServer.pid);
       expect(listMemoryBankProcesses(process.pid, `${root}x`).map((h) => h.pid)).not.toContain(procs[0].pid);
       expect(isInside(`${root}/a`, root)).toBe(true);
       expect(isInside(root, root)).toBe(true);

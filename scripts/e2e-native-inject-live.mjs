@@ -5,6 +5,7 @@
 //   node scripts/e2e-native-inject-live.mjs [repo-root]      (default: the checkout this file lives in)
 // Not part of npm test — it talks to the live daemon socket directory and the live inject log.
 import fs from 'node:fs'; import os from 'node:os'; import net from 'node:net'; import path from 'node:path'; import { spawn, spawnSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 const REPO = process.argv[2] || path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const INDEX = path.join(os.homedir(), '.config/superpowers/conversation-index');
 const VERSION = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8')).version;
@@ -36,10 +37,19 @@ if (fs.existsSync(sock)) { // a live server answers the connect; a stale file (a
   if (live) { say(`socket ${sock} is answered by a live ${VERSION} server — aborting (would collide)`); process.exit(1); }
   fs.unlinkSync(sock); say(`stale socket ${path.basename(sock)} removed (connect refused)`);
 }
-const server = spawn('node', [path.join(REPO, 'dist/mcp-server.js')], { stdio: ['pipe', 'ignore', 'pipe'], env: { ...process.env } });
+// dist/mcp-server.js is what a session starts. Unless the shared server is switched off it is a relay: it starts (or joins) a
+// shared server, and that server's daemon binds the versioned socket. A short idle time gives this run a server of its own — the
+// idle time is part of a server's identity, so no open session shares it — and that server ends by itself once the relay has left.
+const serverEnv = { ...process.env, MEMORY_BANK_SHARED_IDLE_MS: '3000' };
+const { sharedMode } = await import(path.join(REPO, 'dist/shared-mode.js'));
+const { sharedPidPath } = await import(path.join(REPO, 'dist/shared-identity.js'));
+const mode = sharedMode({ entryUrl: pathToFileURL(path.join(REPO, 'dist/mcp-server.js')).href, env: serverEnv, cwd: process.cwd() });
+const server = spawn('node', [path.join(REPO, 'dist/mcp-server.js')], { stdio: ['pipe', 'ignore', 'pipe'], env: serverEnv });
 let serr = ''; server.stderr.on('data', (d) => { serr += d; });
 const t0 = Date.now(); while (!fs.existsSync(sock) && Date.now() - t0 < 60000) await new Promise((r) => setTimeout(r, 200));
-out.steps.server = { socket_up_ms: Date.now() - t0, socket_exists: fs.existsSync(sock), pid: server.pid };
+// in the shared topology the process that holds the daemon socket is the shared server, not the child started above
+const sharedPid = mode.kind === 'shared' && fs.existsSync(sharedPidPath(mode.socketPath)) ? Number(fs.readFileSync(sharedPidPath(mode.socketPath), 'utf8').trim()) : null;
+out.steps.server = { socket_up_ms: Date.now() - t0, socket_exists: fs.existsSync(sock), pid: server.pid, topology: mode.kind === 'shared' ? 'shared' : `session-local (${mode.reason})`, shared_server_pid: sharedPid };
 say(`step2 server: ${JSON.stringify(out.steps.server)}`);
 if (!fs.existsSync(sock)) { say('ABORT: daemon socket did not appear'); server.kill('SIGTERM'); process.exit(1); }
 // A fresh session id per run: the per-session ledger dedups a second run of the same id into an EMPTY block, which
@@ -65,8 +75,12 @@ const mine = lines.filter((l) => l.project === REPO);
 out.steps.log = { new_lines: lines.length, mine: mine.length, plugin_versions: [...new Set(mine.map((l) => l.plugin_version))], client_impl: mine.reduce((a, l) => { a[l.client_impl ?? 'none'] = (a[l.client_impl ?? 'none'] || 0) + 1; return a; }, {}), via: [...new Set(mine.map((l) => l.via))], statuses: [...new Set(mine.map((l) => l.status))], session_id_plaintext_in_lines: fs.readFileSync(LOG, 'utf8').split('\n').slice(logBefore).some((l) => sids.some((sid) => l.includes(sid))), session_key_present: mine.every((l) => typeof l.session_key === 'string' && l.session_key.length === 12), sample: mine.slice(-2).map((l) => ({ status: l.status, via: l.via, client_impl: l.client_impl, plugin_version: l.plugin_version, injected: l.injected, deduped: l.deduped, duration_ms: l.duration_ms, search_ms: l.search_ms })) };
 say(`step3 log: ${JSON.stringify(out.steps.log)}`);
 server.kill('SIGTERM'); await new Promise((r) => server.on('exit', r));
+// nothing of this run stays behind: the shared server it started ends on its own (no session left, idle time above)
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+const t1 = Date.now(); while (sharedPid !== null && alive(sharedPid) && Date.now() - t1 < 30000) await new Promise((r) => setTimeout(r, 200));
+out.steps.server.shared_server_gone = mode.kind === 'shared' ? (sharedPid !== null && !alive(sharedPid)) : null; out.steps.server.shared_server_gone_ms = Date.now() - t1;
 out.steps.server.exited = true; out.steps.server.socket_removed = !fs.existsSync(sock); out.steps.server.stderr_tail = serr.trim().split('\n').slice(-3);
-out.verdict = { block_nonempty: out.steps.timing.block_nonempty, journey_complete: out.steps.build.srchash_matches && out.steps.server.socket_exists && nat.every((r) => r.status === 0) && node.every((r) => r.status === 0), same_block: out.steps.timing.same_stdout, native_median_le_40ms: out.steps.timing.native_median_ms <= 40, log_marks: out.steps.log.plugin_versions.length === 1 && out.steps.log.plugin_versions[0] === VERSION && (out.steps.log.client_impl.native || 0) >= 5 && (out.steps.log.client_impl.node || 0) >= 5 && out.steps.log.via.every((v) => v === 'daemon'), no_plaintext_session_id: !out.steps.log.session_id_plaintext_in_lines && out.steps.log.session_key_present };
+out.verdict = { block_nonempty: out.steps.timing.block_nonempty, journey_complete: out.steps.build.srchash_matches && out.steps.server.socket_exists && nat.every((r) => r.status === 0) && node.every((r) => r.status === 0), same_block: out.steps.timing.same_stdout, native_median_le_40ms: out.steps.timing.native_median_ms <= 40, log_marks: out.steps.log.plugin_versions.length === 1 && out.steps.log.plugin_versions[0] === VERSION && (out.steps.log.client_impl.native || 0) >= 5 && (out.steps.log.client_impl.node || 0) >= 5 && out.steps.log.via.every((v) => v === 'daemon'), no_plaintext_session_id: !out.steps.log.session_id_plaintext_in_lines && out.steps.log.session_key_present, no_server_left: out.steps.server.shared_server_gone !== false };
 out.verdict.pass = Object.values(out.verdict).every(Boolean);
 say(`VERDICT: ${JSON.stringify(out.verdict)}`);
 fs.writeFileSync(path.join(REPO, '.qa-artifacts/e2e-live.json'), JSON.stringify(out, null, 2));

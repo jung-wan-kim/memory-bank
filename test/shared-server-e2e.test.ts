@@ -121,6 +121,28 @@ describe('TC-RELAY-004 — session-local: a session runs its own server when the
     expect(s.stderr).toMatch(/shared server off: shared-server\.off is present in the index dir/);
     expect(fs.readdirSync(index).filter((n) => n.startsWith('mb-shared-'))).toEqual([]);
   }, 60_000);
+
+  it('session-local for a config dir too deep for a unix socket: says why, and no server process is left to find', async () => {
+    // deep enough that <dir>/conversation-index/mb-shared-<version>-<8>.sock cannot be a unix socket path
+    const dir = path.join(configDir(), 'd'.repeat(80));
+    fs.mkdirSync(dir, { recursive: true });
+    const env = sharedEnv(dir);
+    expect(() => expectedServer(env)).toThrow(/socket-path-too-long/);
+    const before = new Set(execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' }).split('\n')
+      .filter((l) => l.includes('shared-server.js')).map((l) => l.trim().split(/\s+/)[0]));
+    const project = projectDir('deep');
+    const s = relay(env, project);
+    await s.initialize();
+    expect(await s.toolNames()).toHaveLength(11);
+    expect(projectLine((await s.callTool('list_tags')).text)).toBe(`Project: ${project}`);
+    expect(s.stderr).toMatch(/shared server off: the index dir path is too long for a unix socket .* this session runs its own server/);
+    // no shared server was started for it (none that was not there before, whatever its identity)
+    const after = execFileSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' }).split('\n')
+      .filter((l) => l.includes('shared-server.js') && l.includes(dir)).map((l) => l.trim().split(/\s+/)[0]);
+    expect(after.filter((pid) => !before.has(pid))).toEqual([]);
+    expect(fs.readdirSync(path.join(dir, 'conversation-index')).filter((n) => n.startsWith('mb-shared-'))).toEqual([]);
+    expect((await s.end()).code).toBe(0);
+  }, 60_000);
 });
 
 describe('TC-SRV-003 — idle: the server ends when no session is connected', () => {

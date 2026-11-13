@@ -6,10 +6,15 @@ import * as zlib from 'node:zlib';
 import Database from 'better-sqlite3';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { RELAY_ENTRY, expectedServer, serverLog, serverPids, sharedEnv, shortTmpDir, waitFor } from './helpers/shared-harness.js';
 
 // The MCP handlers had no test that runs them (mcp-server.ts starts the server on import, so the other
-// tests only read its source). This one starts the real server from source over stdio, against a
-// throwaway config dir, and calls the tools the way a client does.
+// tests only read its source). This one starts the real server over stdio, against a throwaway config
+// dir, and calls the tools the way a client does.
+//
+// TC-NEG-003 — it runs twice: once against a server of the session's own (the source run), once against
+// the shared server through the relay (the compiled entry a plugin install starts). Every answer below
+// must be the same in both: which process answers is not something a tool call may depend on.
 
 const REPO = path.resolve(__dirname, '..');
 const zstdCompressSync: ((buf: Buffer) => Buffer) | undefined =
@@ -25,11 +30,18 @@ function conversation(pairs: number, bodyChars = 0): string {
   return lines.join('\n') + '\n';
 }
 
-describe('MCP server over stdio', () => {
+const TOPOLOGIES = [
+  { name: "the session's own server (source run)", shared: false },
+  { name: 'the shared server, through the relay (compiled)', shared: true },
+];
+
+describe.each(TOPOLOGIES)('MCP server over stdio — $name', ({ shared }) => {
   let configDir: string;
   let archiveProject: string;
   let client: Client;
   let serverStderr = '';
+  /** The shared server this run is expected to use — null for a session-local run. */
+  let sharedServer: ReturnType<typeof expectedServer> | null = null;
 
   const call = async (name: string, args: Record<string, unknown>) => {
     const result = await client.callTool({ name, arguments: args });
@@ -38,7 +50,9 @@ describe('MCP server over stdio', () => {
   };
 
   beforeAll(async () => {
-    configDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mb-mcp-')));
+    // A shared server's socket lives under the config dir and a unix socket path is short: os.tmpdir() on macOS
+    // is too long for it, and the session would quietly run a server of its own instead (asserted below).
+    configDir = shared ? shortTmpDir('mbm-') : fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mb-mcp-')));
     archiveProject = path.join(configDir, 'conversation-archive', 'demo-project');
     fs.mkdirSync(archiveProject, { recursive: true });
     fs.writeFileSync(path.join(archiveProject, 'short.jsonl'), conversation(5));
@@ -58,19 +72,25 @@ describe('MCP server over stdio', () => {
       fs.writeFileSync(path.join(archiveProject, 'packed.jsonl.zst'), zstdCompressSync(Buffer.from(conversation(4), 'utf-8')));
     }
 
-    const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
-    delete env.MEMORY_BANK_DB_PATH;
-    delete env.TEST_DB_PATH;
-    delete env.TEST_ARCHIVE_DIR;
-    Object.assign(env, {
-      MEMORY_BANK_CONFIG_DIR: configDir,
-      CLAUDE_CONFIG_DIR: path.join(configDir, 'claude'),
-      ANTHROPIC_BASE_URL: 'http://127.0.0.1:9',
-    });
+    let env: Record<string, string> = {};
+    if (shared) {
+      env = sharedEnv(configDir);
+      sharedServer = expectedServer(env);
+    }
+    else {
+      for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
+      delete env.MEMORY_BANK_DB_PATH;
+      delete env.TEST_DB_PATH;
+      delete env.TEST_ARCHIVE_DIR;
+      Object.assign(env, {
+        MEMORY_BANK_CONFIG_DIR: configDir,
+        CLAUDE_CONFIG_DIR: path.join(configDir, 'claude'),
+        ANTHROPIC_BASE_URL: 'http://127.0.0.1:9',
+      });
+    }
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: [path.join(REPO, 'node_modules', 'tsx', 'dist', 'cli.mjs'), path.join(REPO, 'src', 'mcp-server.ts')],
+      args: shared ? [RELAY_ENTRY] : [path.join(REPO, 'node_modules', 'tsx', 'dist', 'cli.mjs'), path.join(REPO, 'src', 'mcp-server.ts')],
       cwd: REPO,
       env,
       stderr: 'pipe',
@@ -82,7 +102,24 @@ describe('MCP server over stdio', () => {
 
   afterAll(async () => {
     await client?.close();
+    if (sharedServer) {
+      // the session left: its server ends on its own (idle time of the test environment), nothing is killed here
+      const marker = sharedServer.marker;
+      await waitFor('the shared server to end after its only session left', () => serverPids(marker).length === 0, 20_000);
+    }
     fs.rmSync(configDir, { recursive: true, force: true });
+  });
+
+  it('runs in the topology this block names', () => {
+    if (sharedServer) {
+      expect(serverStderr).not.toMatch(/shared server off/);
+      expect(serverPids(sharedServer.marker)).toHaveLength(1);
+      expect(fs.existsSync(sharedServer.socketPath)).toBe(true);
+    }
+    else {
+      expect(serverStderr).toMatch(/shared server off: .* this session runs its own server/);
+      expect(fs.readdirSync(path.join(configDir, 'conversation-index')).filter((n) => n.startsWith('mb-shared-'))).toEqual([]);
+    }
   });
 
   it('reports the package version, not a fixed 1.0.0', () => {
@@ -449,5 +486,11 @@ describe('MCP server over stdio', () => {
 
   it('the server wrote nothing unexpected to stderr', () => {
     expect(serverStderr).not.toMatch(/Server error|UnhandledPromiseRejection|TypeError|ReferenceError/);
+    // a shared server's own stderr is its log file, not the session's
+    if (sharedServer) {
+      const log = serverLog(sharedServer.indexDir);
+      expect(log).toMatch(/ready: version /);
+      expect(log).not.toMatch(/Server error|UnhandledPromiseRejection|TypeError|ReferenceError|uncaught exception|unhandled rejection/);
+    }
   });
 });

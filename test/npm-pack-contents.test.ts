@@ -51,6 +51,32 @@ describe('TC-REL-002 npm tarball contents (AC-012)', () => {
     expect(shipped).toEqual(onDisk);
   });
 
+  // The session entry (dist/mcp-server.js, a bundle) starts one of two servers by path at run time: the shared
+  // server, or — with the shared server off — a server of the session's own. Neither is imported statically by
+  // anything hooks.json or plugin.json names, so nothing above would notice one of their files missing.
+  it('ships both servers the session entry can start, with every compiled file they load', () => {
+    const relative = /(?:from\s+|import\s*\(\s*)['"](\.\/[^'"]+\.js)['"]/g;
+    const seen = new Set<string>();
+    const queue = ['dist/shared-server.js', 'dist/stdio-server.js'];
+    while (queue.length > 0) {
+      const file = queue.pop()!;
+      if (seen.has(file)) continue;
+      seen.add(file);
+      expect(set.has(file), file).toBe(true);
+      const text = fs.readFileSync(path.join(REPO, file), 'utf8');
+      for (const m of text.matchAll(relative)) queue.push(path.posix.join(path.posix.dirname(file), m[1]));
+    }
+    // the walk did follow imports (a pattern that matches nothing would pass on two files)
+    expect(seen.size).toBeGreaterThan(15);
+    for (const file of ['dist/shared-server-core.js', 'dist/server-core.js', 'dist/inject-daemon.js', 'dist/socket-transport.js']) {
+      expect(seen.has(file), file).toBe(true);
+    }
+    // and the entry really does name them by path
+    const entry = fs.readFileSync(path.join(REPO, 'dist/mcp-server.js'), 'utf8');
+    expect(entry).toContain('shared-server.js');
+    expect(entry).toContain('stdio-server');
+  });
+
   it('leaves development, QA and workspace files out', () => {
     const forbiddenPrefixes = ['.codex/', '.claude/', 'docs/', 'bench/', 'test/', 'src/', 'vercel/', '.autoresearch/', '.qa-',
       '.githooks/', 'native/inject-client/target/', 'node_modules/', 'video/'];
