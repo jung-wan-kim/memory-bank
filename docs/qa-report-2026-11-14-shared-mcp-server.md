@@ -13,6 +13,7 @@
 | 공용 서버 수 = 신원 수 | 2 = 2 (세션 18개가 한 서버, `MEMORY_BANK_AGENT_SOURCES` 를 따로 준 세션 1개가 다른 서버) | `post-install.json` 의 `shared_servers` |
 | 떠 있던 세션의 전환 | 재시작 없이 19/19 — 설치 뒤 새 세션을 띄우고 재기 시작한 지 52초 시점에 합계 1,446MB | `level4/swap-timeline-first.json` 의 `mem_total_mb` 열(역할 열은 쓸 수 없다 — 아래 "측정 도구에서 고친 것") |
 | 실제 세션 2개의 기본 프로젝트 | 서로 다른 폴더에서 동시에 연 세션이 `project` 없이 부른 `search_facts` 의 `Project` 줄이 각자 폴더 | `level4/scope-checks.json` — 모델의 답이 아니라 도구 결과 원문에서 읽음 |
+| 설치본의 프롬프트 주입 훅(운영 상태 그대로, 새 세션 번호 13회) | 13/13 이 운영 공용 서버의 데몬으로 답함 · 전부 주입 · 네이티브 클라이언트 중앙값 18.1ms · node 클라이언트 73.8ms | `level4/live-hook-installed.json` — 운영 주입 로그의 `plugin_version`·`via`·`status` |
 | 실데이터 사본에서 두 프로젝트 교차 검색 | 호출 100회 · 사실 id 710개 확인 · 다른 프로젝트 사실 0건 | `level2/r4/probes-b.json` X-001 |
 | 한 서버에 세션 30개 동시 접속 | 371ms, 30/30, 서버 1개 | 같은 파일 H-004 |
 | 부하 중 검색(실데이터 사본, 105회) | p50 201ms · p95 630ms · 오류 0 | 같은 파일 H-004 |
@@ -49,6 +50,9 @@
 
 - 표면 정렬 14/14(`level4/release-surface.json`): 원격 `main` · 태그 `v1.9.0`(주석 태그) · GitHub 릴리스(23:09Z 공개, 노트 = CHANGELOG `[1.9.0]` 절) · 마켓플레이스 사본 · 설치 기록이 모두 `d24b134` · 버전 3곳(`package.json`·`plugin.json`·`marketplace.json`) 1.9.0. npm 은 대상이 아니다(이 이름은 레지스트리에 없다 — 조회 404).
 - 설치: `claude plugin marketplace update memory-bank-dev` → `claude plugin update memory-bank@memory-bank-dev` 1.8.0 → 1.9.0. 그 뒤 처음 뜬 세션의 SessionStart 가 새 코드를 옛 버전 폴더에 전파했고, 떠 있던 세션의 실행기가 한가할 때 자식을 새 중계로 바꿨다.
+- 설치 직후 처음 뜬 세션 2개의 훅 2건은 주입 없이 지나갔다(운영 주입 로그 23:09:43Z, 오류로 기록되고 프롬프트는 그대로 진행). 새 버전 폴더의 첫 실행이 의존성을 설치하기 전이라 임베딩 모듈을 찾지 못했다 — 새 버전 폴더에 처음 설치될 때마다 있는 기존 동작이고 이번 변경과 무관하다. 그 뒤의 훅은 데몬으로 답했다(위 표).
+- 공용 서버 2개 가운데 하나가 주입 소켓을 쥐고 훅에 답하고 다른 하나는 쥐고 있지 않다는 것을 운영 서버 로그의 `prompt injection: …` 두 줄로 확인했다(`level4/live-hook-installed.json` 의 `inject_socket_owner_by_server_log`).
+- 릴리스 전 실 훅 E2E(`scripts/e2e-native-inject-live.mjs`)는 이 체크아웃의 서버를 띄워 버전 소켓을 쥐게 하므로, 같은 버전이 설치돼 떠 있는 지금은 충돌 방지로 중단한다. 릴리스 전 마지막 실행은 `d24b134` 에서 통과했고(`.qa-artifacts/e2e-live.json`), 릴리스 뒤에는 설치본의 훅을 직접 부르는 위 확인으로 대신했다.
 - 이 보고 커밋은 릴리스 뒤에 `main` 에 더해졌다(태그·설치본은 `d24b134`, 코드 변경 없음).
 
 ## 남은 한계·잔여 목록
