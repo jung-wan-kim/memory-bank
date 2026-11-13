@@ -1,9 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { indexDirOf } from './paths.js';
-import { MAX_UNIX_SOCKET_PATH_BYTES, ownPackageVersion } from './version-guard.js';
+import { MAX_UNIX_SOCKET_PATH_BYTES } from './version-guard.js';
 /**
  * Which sessions may share one MCP server process, and what that process is told.
  *
@@ -127,36 +125,3 @@ export const sharedPidPath = (socketPath) => socketPath.replace(/\.sock$/, '.pid
 export const sharedLockPath = (socketPath) => socketPath.replace(/\.sock$/, '.lock');
 /** Marks a shared server on its command line, so a pid read from a file can be checked before it is signalled. */
 export const sharedServerArg = (identity) => `--mb-shared=${identity.slice(0, 8)}`;
-export const SHARED_SWITCH_FILE = 'shared-server.off';
-const SWITCH_OFF_RE = /^(0|false|off|no)$/i;
-/**
- * Whether the session whose entry file is `entryUrl` talks to a shared server, or runs a server of its own.
- * Decides only — no directory is created, nothing is started.
- */
-export function sharedMode(o) {
-    const local = (reason) => ({ kind: 'session-local', reason });
-    if (SWITCH_OFF_RE.test(o.env.MEMORY_BANK_SHARED_SERVER ?? ''))
-        return local('switch-off');
-    if ((o.platform ?? process.platform) === 'win32')
-        return local('windows');
-    // The server is plain compiled output next to the entry file; a source run (tsx) has none to start.
-    const entry = fileURLToPath(o.entryUrl);
-    const distDir = path.dirname(entry);
-    const serverEntry = path.join(distDir, 'shared-server.js');
-    if (path.extname(entry) !== '.js' || !fs.existsSync(serverEntry))
-        return local('not-built');
-    const version = o.version === undefined ? ownPackageVersion() : o.version;
-    if (!version)
-        return local('no-version');
-    const serverEnv = serverEnvFor(o.env, o.cwd);
-    if (serverEnv === null)
-        return local('relative-path');
-    const indexDir = indexDirOf(serverEnv);
-    if (fs.existsSync(path.join(indexDir, SHARED_SWITCH_FILE)))
-        return local('switch-off-file');
-    const identity = sharedServerIdentity({ version, fingerprint: distFingerprint(distDir), serverEnv });
-    const socketPath = sharedSocketPathIn(indexDir, version, identity);
-    if (socketPath === null)
-        return local('socket-path-too-long');
-    return { kind: 'shared', socketPath, indexDir, identity, version, serverEnv, serverEntry };
-}

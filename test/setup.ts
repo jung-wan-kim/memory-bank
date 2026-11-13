@@ -20,6 +20,11 @@ import { afterAll, beforeEach } from 'vitest';
  *    run against a chosen endpoint, set MEMORY_BANK_TEST_LLM_BASE_URL.
  *  - MEMORY_BANK_TEST_GUARD=1: initDatabase() refuses a database under the real
  *    home config dir (src/test-guard.ts).
+ *  - MEMORY_BANK_SHARED_SERVER=0, when the variable has no value: an MCP server a
+ *    test starts runs in its own process and ends with it. The shared server is a
+ *    detached process that outlives the test that started it — only the tests of
+ *    the shared server turn it on, with a config dir and an idle time of their own
+ *    (test/helpers/shared-harness.ts).
  *
  * The defaults are put back before every test: test files delete these
  * variables in their own afterEach, and the next test must not fall through
@@ -45,6 +50,7 @@ const DIR_DEFAULTS: Record<string, string> = {
 
 function applyDefaults(): void {
   process.env.MEMORY_BANK_TEST_GUARD = '1';
+  if (process.env.MEMORY_BANK_SHARED_SERVER === undefined) process.env.MEMORY_BANK_SHARED_SERVER = '0';
   for (const [key, name] of Object.entries(DIR_DEFAULTS)) {
     if (!process.env[key]) process.env[key] = tempDir(name);
   }

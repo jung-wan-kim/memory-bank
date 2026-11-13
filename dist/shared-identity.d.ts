@@ -33,30 +33,3 @@ export declare const sharedPidPath: (socketPath: string) => string;
 export declare const sharedLockPath: (socketPath: string) => string;
 /** Marks a shared server on its command line, so a pid read from a file can be checked before it is signalled. */
 export declare const sharedServerArg: (identity: string) => string;
-export declare const SHARED_SWITCH_FILE = "shared-server.off";
-export type SharedMode = {
-    kind: 'shared';
-    socketPath: string;
-    indexDir: string;
-    identity: string;
-    version: string;
-    /** The identity part of the server's environment. */
-    serverEnv: Record<string, string>;
-    /** dist/shared-server.js next to the running entry file. */
-    serverEntry: string;
-} | {
-    kind: 'session-local';
-    reason: SessionLocalReason;
-};
-export type SessionLocalReason = 'switch-off' | 'switch-off-file' | 'windows' | 'not-built' | 'no-version' | 'relative-path' | 'socket-path-too-long';
-/**
- * Whether the session whose entry file is `entryUrl` talks to a shared server, or runs a server of its own.
- * Decides only — no directory is created, nothing is started.
- */
-export declare function sharedMode(o: {
-    entryUrl: string;
-    env: NodeJS.ProcessEnv;
-    cwd: string | null;
-    version?: string | null;
-    platform?: NodeJS.Platform;
-}): SharedMode;

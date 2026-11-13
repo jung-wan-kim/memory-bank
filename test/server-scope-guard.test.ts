@@ -16,9 +16,12 @@ const REPO = path.resolve(__dirname, '..');
 const src = (name: string) => path.join(REPO, 'src', name);
 
 /** Entry files of code that runs inside a server process (session-local or shared). */
-const SERVER_ROOTS = ['server-core.ts', 'inject-daemon.ts'].map(src);
-/** A session's own process: these may read their own working directory. Never loaded by a server module. */
-const SESSION_ONLY = ['own-cwd.ts'].map(src);
+const SERVER_ROOTS = ['shared-server.ts', 'shared-server-core.ts', 'server-core.ts', 'inject-daemon.ts'].map(src);
+/**
+ * A session's own process: the relay, its entry point, the mode decision, and the one module that reads a
+ * process working directory. Never loaded by a server module.
+ */
+const SESSION_ONLY = ['own-cwd.ts', 'relay.ts', 'mcp-server.ts', 'shared-mode.ts', 'stdio-server.ts'].map(src);
 
 const CWD_READ = /process\.(cwd|chdir)\s*\(/;
 
@@ -42,7 +45,8 @@ describe('TC-SCOPE-003 — a server never reads its own working directory', () =
       expect(fs.existsSync(file), file).toBe(true);
       expect(closure, path.basename(file)).not.toContain(file);
     }
-    expect(findInSources(SESSION_ONLY, CWD_READ).length).toBeGreaterThan(0);
+    // exactly one place in the whole source tree reads a process working directory for the MCP server
+    expect(findInSources(SESSION_ONLY, CWD_READ).map((h) => path.basename(h.file))).toEqual(['own-cwd.ts']);
   });
 
   it('the check fails on a module that does read it (the guard is not vacuous)', () => {
@@ -104,6 +108,11 @@ describe('TC-ENV-001 — a server reads only the variables a shared server is gi
       // computed name: the two constants below
       'src/test-guard.ts: const extra = env[TEST_GUARD_EXTRA_ROOT_ENV];',
       "src/test-guard.ts: if (env[TEST_GUARD_ENV] !== '1') return;",
+      // the allow-list filter itself: every name it copies went through serverEnvKind / the passthrough list
+      'src/shared-identity.ts: const value = env[name];',
+      'src/shared-identity.ts: const value = env[name];',
+      // the shared server working out its own identity from the (already filtered) environment it was given
+      'src/shared-server.ts: const serverEnv = serverEnvFor(process.env, null);',
     ].sort());
     expect(serverEnvKind(guard.TEST_GUARD_ENV)).toBe('identity');
     expect(serverEnvKind(guard.TEST_GUARD_EXTRA_ROOT_ENV)).toBe('identity');

@@ -6,11 +6,11 @@ import {
   distFingerprint,
   serverEnvFor,
   serverEnvKind,
-  sharedMode,
   sharedServerIdentity,
   sharedSocketPathIn,
   spawnEnvFor,
 } from '../src/shared-identity.js';
+import { sharedMode } from '../src/shared-mode.js';
 import { injectSocketPathIn } from '../src/version-guard.js';
 
 // TC-ENV-002 · TC-ENV-003 — which sessions may share one server process, and what that process is told about
