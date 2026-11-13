@@ -25,7 +25,7 @@
 - AC-014: 빌드와 기존 테스트 전건이 통과하고, 테스트가 끝난 뒤 이 저장소 경로의 서버·중계 프로세스가 남지 않는다 → TC-BUILD-001, TC-NEG-003
 - AC-015: 버전 표기 3곳과 CHANGELOG 가 1.9.0 으로 일치하고, 문서가 새 구조와 기본값 문구를 반영한다 → TC-REL-001 (태그·GitHub 릴리스는 레벨4 O-002)
 - AC-016: 이 Mac 에 설치한 뒤 — 공용 서버 수 = 신원 수, 로컬 memory-bank 프로세스 메모리 합계가 설치 전보다 줄고, 서로 다른 프로젝트의 실제 세션 2개에서 `search_facts` 기본 호출의 `Project` 표기가 각자 폴더다 → 판정은 레벨4 O-001(설치본). 같은 성질을 테스트 환경에서 보는 것은 TC-E2E-001
-- AC-017: 세션의 것은 접속이 선언한다 — 한 서버를 쓰는 두 세션의 `ask_avatar` LLM 호출은 각자 선언한 LLM 설정으로 나가고, `read`·`list_tags` 의 출력은 각자 로캘을 따르며, `read` 의 상대 경로는 호출한 세션의 작업 폴더 기준이다. 서버 설정·운영 변수·세션 고유 이름을 선언한 접속과 지원하지 않는 로캘은 거부된다. 서버가 읽는 모듈에 프로세스 기본 로캘 표기 · 등록되지 않은 한 인자 `path.resolve` · 등록되지 않은 프로세스 생성이 0건이다 → TC-SCOPE-005, TC-SCOPE-006, TC-ENV-004, TC-SRV-001
+- AC-017: 세션의 것은 접속이 선언한다 — 한 서버를 쓰는 두 세션의 `ask_avatar` LLM 호출은 각자 선언한 LLM 설정으로 나가고, `read`·`list_tags` 의 출력은 각자 로캘을 따르며, `read` 의 상대 경로는 호출한 세션의 작업 폴더 기준이다. 서버 설정·운영 변수·세션 고유 이름을 선언한 접속과 지원하지 않는 로캘은 거부된다. LLM 설정 가운데 넘기지 못한 것이 있는 세션은 그 이름을 선언하고, 그 세션의 `ask_avatar` 는 넘어온 나머지만으로 LLM 을 부르지 않고 그 이름을 적은 오류로 답한다(LLM 호출 0건, 다른 도구와 이웃 세션은 그대로). 서버가 읽는 모듈에 프로세스 기본 로캘 표기 · 등록되지 않은 한 인자 `path.resolve` · 등록되지 않은 프로세스 생성이 0건이다 → TC-SCOPE-005, TC-SCOPE-006, TC-ENV-004, TC-SRV-001
 - AC-018: 장애가 되풀이될 때 중계가 폭주하지 않는다 — 뜨자마자 끝나는 서버는 둘째 급사부터 간격을 두고 다시 띄우고, 공용 서버가 아닌 답을 하는 리스너에는 한 번만 접속하며, 기다리는 동안 온 호출은 곧바로 오류로 답한다. 주인 없는 기동 잠금은 떠 있는 서버가 지운다 → TC-NEG-004, TC-NEG-005, TC-NEG-006
 
 ## 공통 전제 조건
@@ -117,8 +117,8 @@
 #### TC-SRV-001: 첫 줄(hello)이 맞지 않는 접속은 도구에 닿지 못한다
 **심각도**: CRITICAL
 - Given: 공용 서버 1개(테스트 프로세스 안에서 시작)
-- When: 접속해 첫 줄로 — 형식이 틀린 JSON / `mb_relay` 없는 JSON-RPC `tools/call` / `cwd` 누락 / 빈 `cwd` / 상대 경로 `cwd` / 다른 신원 / `env`·`locale` 누락 / `env` 에 LLM 설정이 아닌 이름(`PATH`·`NODE_OPTIONS`·서버 설정·세션 id·`__proto__`) / 문자열이 아닌 값·NUL·9,000바이트 값 / 형식이 틀린 로캘 / 정상 hello — 를 보낸다
-- Then: 정상 hello 만 `{ok:true, pid, version}` 을 받고 이후 `initialize`·`tools/list` 가 된다. 세션 설정을 실은 정상 hello 는 그 값이 그 접속의 컨텍스트에 그대로 들어간다. 나머지는 `{ok:false, error}`(`bad-hello`·`bad-cwd`·`bad-env`·`identity-mismatch`)를 받고 접속이 닫히며, 그 접속으로 보낸 `tools/call` 은 실행되지 않는다. 거절이 다른 접속에 영향을 주지 않는다
+- When: 접속해 첫 줄로 — 형식이 틀린 JSON / `mb_relay` 없는 JSON-RPC `tools/call` / `cwd` 누락 / 빈 `cwd` / 상대 경로 `cwd` / 다른 신원 / `env`·`envMissing`·`locale` 누락 / `env` 에 LLM 설정이 아닌 이름(`PATH`·`NODE_OPTIONS`·서버 설정·세션 id·`__proto__`) / 문자열이 아닌 값·NUL·9,000바이트 값 / 목록이 아닌 `envMissing`·LLM 설정이 아닌 이름·같은 이름 두 번·`env` 에도 있는 이름 / 형식이 틀린 로캘 / 정상 hello — 를 보낸다
+- Then: 정상 hello 만 `{ok:true, pid, version}` 을 받고 이후 `initialize`·`tools/list` 가 된다. 세션 설정을 실은 정상 hello 는 그 값이 그 접속의 컨텍스트에 그대로 들어가고, 넘기지 못한 설정 이름을 선언한 정상 hello 는 그 이름이 컨텍스트에 들어간다. 나머지는 `{ok:false, error}`(`bad-hello`·`bad-cwd`·`bad-env`·`identity-mismatch`)를 받고 접속이 닫히며, 그 접속으로 보낸 `tools/call` 은 실행되지 않는다. 거절이 다른 접속에 영향을 주지 않는다
 - verify: `npx vitest run test/shared-server-hello.test.ts -t "hello"` / evidence: 테스트 이름
 
 #### TC-SRV-002: 한 이름에는 서버가 하나뿐이다
