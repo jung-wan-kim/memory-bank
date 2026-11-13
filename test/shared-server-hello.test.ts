@@ -14,7 +14,7 @@ import { LineClient, openSession, shortTmpDir, sleep, toolText, waitFor } from '
 
 const IDENTITY = 'a1b2c3d4' + '0'.repeat(56);
 const VERSION = '9.9.9';
-const HELLO = { identity: IDENTITY, version: VERSION };
+const HELLO = { identity: IDENTITY, version: VERSION, env: {}, locale: null };
 
 interface Call { cwd: string | null; tool: string }
 
@@ -86,8 +86,38 @@ describe('readHello', () => {
   const hello = (over: Record<string, unknown>) => JSON.stringify({ mb_relay: 1, pid: 1, ...HELLO, cwd: '/work/a', ...over });
 
   it('accepts an absolute working directory, and an explicit null', () => {
-    expect(readHello(hello({}), own)).toEqual({ ctx: { cwd: '/work/a' } });
-    expect(readHello(hello({ cwd: null }), own)).toEqual({ ctx: { cwd: null } });
+    expect(readHello(hello({}), own)).toEqual({ ctx: { cwd: '/work/a', childEnv: {} } });
+    expect(readHello(hello({ cwd: null }), own)).toEqual({ ctx: { cwd: null, childEnv: {} } });
+  });
+
+  it("carries what is the session's alone: its settings for the LLM child, and its locale", () => {
+    const env = { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9', CLAUDE_CODE_ENTRYPOINT: 'cli', API_TIMEOUT_MS: '600000', LANG: 'ko_KR.UTF-8' };
+    expect(readHello(hello({ env, locale: 'ko-KR' }), own)).toEqual({ ctx: { cwd: '/work/a', childEnv: env, locale: 'ko-KR' } });
+    // an explicit "could not tell" is not a locale: the field is left out, and the renderer's default applies
+    expect(readHello(hello({ env, locale: null }), own)).toEqual({ ctx: { cwd: '/work/a', childEnv: env } });
+  });
+
+  it('refuses a hello that does not state them, or states something that is not a session setting', () => {
+    const { env: _noEnv, ...withoutEnv } = { mb_relay: 1, pid: 1, ...HELLO, cwd: '/work/a' };
+    const { locale: _noLocale, ...withoutLocale } = { mb_relay: 1, pid: 1, ...HELLO, cwd: '/work/a' };
+    expect(readHello(JSON.stringify(withoutEnv), own)).toEqual({ error: 'bad-env' });
+    expect(readHello(JSON.stringify(withoutLocale), own)).toEqual({ error: 'bad-env' });
+    const notSettings: unknown[] = [
+      null, 'ANTHROPIC_BASE_URL=x', ['ANTHROPIC_BASE_URL'], 7,
+      { PATH: '/evil/bin' },                         // an operating variable of the server process
+      { NODE_OPTIONS: '--require /tmp/x.js' },       // nothing a session may hand to the server's child
+      { MEMORY_BANK_DB_PATH: '/tmp/other.sqlite' },  // the server's own setting: part of its identity, not a session's to give
+      { CLAUDE_CODE_SESSION_ID: 'abc' },             // one session's own id never travels
+      { ANTHROPIC_BASE_URL: 7 }, { ANTHROPIC_BASE_URL: null }, { ANTHROPIC_BASE_URL: ['x'] },
+      { ANTHROPIC_BASE_URL: 'a\u0000b' },
+      { ANTHROPIC_CUSTOM_HEADERS: 'x'.repeat(9_000) },
+    ];
+    for (const env of notSettings) expect(readHello(hello({ env }), own), JSON.stringify(env).slice(0, 60)).toEqual({ error: 'bad-env' });
+    // __proto__ as a key (JSON.parse makes it an own property) is not a setting either
+    expect(readHello(`{"mb_relay":1,"pid":1,"identity":"${IDENTITY}","version":"${VERSION}","cwd":"/work/a","locale":null,"env":{"__proto__":{"ANTHROPIC_BASE_URL":"x"}}}`, own)).toEqual({ error: 'bad-env' });
+    for (const locale of ['', 7, ['ko-KR'], {}, 'not a locale', 'x'.repeat(65), 'ko_KR.UTF-8']) {
+      expect(readHello(hello({ locale }), own), JSON.stringify(locale)).toEqual({ error: 'bad-env' });
+    }
   });
 
   it('refuses a working directory that is missing, empty, relative or not a string', () => {

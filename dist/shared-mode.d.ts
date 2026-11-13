@@ -19,8 +19,28 @@ export type SharedMode = {
 } | {
     kind: 'session-local';
     reason: SessionLocalReason;
+} | {
+    kind: 'broken';
+    reason: BrokenReason;
 };
-export type SessionLocalReason = 'switch-off' | 'switch-off-file' | 'windows' | 'not-built' | 'no-version' | 'relative-path' | 'socket-path-too-long';
+/**
+ * Why a session runs a server of its own. Three kinds, and nothing else:
+ *  - the user turned the shared server off (the variable, or the file in the index dir);
+ *  - this way of running has no shared server by design (Windows: no unix sockets; a run from source: there
+ *    is no compiled server to start);
+ *  - a setting makes the socket impossible (a path too long for one; a relative path setting in a session
+ *    that cannot read its own working directory).
+ * A session-local server answers exactly as a shared one does — same database, same tools, same scope rule;
+ * what differs is one process per session. The entry point says which reason applied, on stderr.
+ */
+export type SessionLocalReason = 'switch-off' | 'switch-off-file' | 'windows' | 'source-run' | 'relative-path' | 'socket-path-too-long';
+/**
+ * An install that cannot run at all the way it was built to: the compiled server is missing next to the
+ * compiled entry, or the package version cannot be read. Not a reason to run some other way — a session that
+ * quietly ran its own server here would hide the broken install and keep one whole server per session. The
+ * entry point exits non-zero and says what is missing; the wrapper above repairs the install and tries again.
+ */
+export type BrokenReason = 'server-file-missing' | 'no-version';
 /**
  * Whether the session whose entry file is `entryUrl` talks to a shared server, or runs a server of its own.
  * Decides only — no directory is created, nothing is started.

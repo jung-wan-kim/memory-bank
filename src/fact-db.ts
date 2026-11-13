@@ -1140,7 +1140,7 @@ export function setFactTags(
  */
 export function listTags(
   db: Database.Database,
-  opts: { project?: string; includeInactive?: boolean } = {}
+  opts: { project?: string; includeInactive?: boolean; /** Order of equally frequent tags: the reading session's locale (undefined = the process default). */ locale?: string } = {}
 ): Array<{ tag: string; count: number }> {
   const where: string[] = ['tags IS NOT NULL'];
   const params: unknown[] = [];
@@ -1162,7 +1162,7 @@ export function listTags(
   }
   return [...counts.entries()]
     .map(([tag, count]) => ({ tag, count }))
-    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, opts.locale));
 }
 
 /**

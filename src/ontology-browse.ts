@@ -55,7 +55,8 @@ type CategoryEntry = DomainTree['categories'][number];
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 const sum = (entries: CategoryEntry[]) => entries.reduce((total, entry) => total + entry.factCount, 0);
 
-export function formatOntologyBrowse(db: Database.Database, params: OntologyBrowseParams): string {
+/** `locale`: the order of equally large names is the reading session's, not this process's (undefined = the process default). */
+export function formatOntologyBrowse(db: Database.Database, params: OntologyBrowseParams, locale?: string): string {
   const factsPerCategory = params.facts_per_category ?? (params.category ? ONTOLOGY_DEFAULT_FACTS_PER_CATEGORY : 0);
   const withFacts = factsPerCategory > 0;
   const maxCategories = params.max_categories
@@ -80,7 +81,7 @@ export function formatOntologyBrowse(db: Database.Database, params: OntologyBrow
     .map(({ domain, categories }) => {
       const nonEmpty = categories
         .filter((entry) => entry.factCount > 0)
-        .sort((a, b) => b.factCount - a.factCount || a.category.name.localeCompare(b.category.name));
+        .sort((a, b) => b.factCount - a.factCount || a.category.name.localeCompare(b.category.name, locale));
       return {
         domain,
         listed: nonEmpty.slice(offset, offset + maxCategories),
@@ -90,7 +91,7 @@ export function formatOntologyBrowse(db: Database.Database, params: OntologyBrow
         factCount: sum(nonEmpty),
       };
     })
-    .sort((a, b) => b.factCount - a.factCount || a.domain.name.localeCompare(b.domain.name));
+    .sort((a, b) => b.factCount - a.factCount || a.domain.name.localeCompare(b.domain.name, locale));
 
   const totalCategories = domains.reduce((n, d) => n + d.categoryCount, 0);
   const totalFacts = domains.reduce((n, d) => n + d.factCount, 0);

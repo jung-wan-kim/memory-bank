@@ -17,9 +17,15 @@
 export declare const ACCESS_DENIED_MESSAGE = "Access denied: path is outside the conversation archive";
 /**
  * The real path of the conversation file to read for `requestedPath`.
+ *
+ * A relative path is the caller's: it is resolved against `baseDir`, the working directory of the session
+ * that asked — never against the directory of the process this runs in, which for a shared server is the
+ * index dir and nobody's project. With no `baseDir` (the session could not read its own) a relative path is
+ * refused.
+ *
  * Throws: "Invalid file type" (not .jsonl / .jsonl.zst), ACCESS_DENIED_MESSAGE
  * (outside the roots — existing or not), "File not found" (inside, absent).
  */
-export declare function resolveReadableConversation(requestedPath: string, allowedRoots: string[]): string;
+export declare function resolveReadableConversation(requestedPath: string, allowedRoots: string[], baseDir?: string | null): string;
 /** A reversed line range is a mistake to report, not an empty conversation to return. */
 export declare function assertLineRange(startLine: number | undefined, endLine: number | undefined): void;

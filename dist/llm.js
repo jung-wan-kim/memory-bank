@@ -157,9 +157,41 @@ function backoffMs(attempt) {
     return Math.min(base * Math.pow(3, attempt), MAX_BACKOFF_MS);
 }
 const sleep = (ms) => (ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve());
+/**
+ * The environment the LLM child runs in, and the one the API-key fallback reads its key from.
+ *
+ * Called for a session a shared server serves, `childEnv` is that session's own settings (account, endpoint,
+ * model and client options): the child gets them on top of the server's environment, which has none of its
+ * own (shared-identity.ts). Without it this process is the caller's own — a session-local server, a worker,
+ * the CLI — and the child inherits it, as it always did.
+ */
+function llmEnvironment(childEnv) {
+    const own = process.env;
+    return childEnv ? { ...own, ...childEnv } : own;
+}
+/**
+ * Options of the API-key fallback client, read from the environment of the call (`llmEnvironment`).
+ *
+ * Left to itself the Anthropic SDK fills the endpoint, the bearer token and the extra headers from the
+ * environment of the process it runs in. In a shared server that is not the calling session's: the session's
+ * key would go to the default endpoint instead of the one that session set. So each is handed over — for a
+ * caller that runs in its own process these are the values the SDK would have read anyway. (The SDK's log
+ * level stays the process's own: that output goes to this process's log, not to a session.)
+ */
+export function fallbackClientOptions(apiKey, llmEnv, ownBaseUrl) {
+    const baseURL = ownBaseUrl || llmEnv.ANTHROPIC_BASE_URL;
+    const defaultHeaders = {};
+    for (const line of (llmEnv.ANTHROPIC_CUSTOM_HEADERS ?? '').split('\n')) {
+        const colon = line.indexOf(':');
+        if (colon >= 0)
+            defaultHeaders[line.slice(0, colon).trim()] = line.slice(colon + 1).trim();
+    }
+    return { apiKey, authToken: llmEnv.ANTHROPIC_AUTH_TOKEN ?? null, ...(baseURL ? { baseURL } : {}), defaultHeaders };
+}
 /** 단발 호출 — Agent SDK 우선, 실패 시(그리고 키가 있을 때만) Anthropic SDK 폴백. */
-async function callOnce(systemPrompt, userMessage, maxTokens) {
+async function callOnce(systemPrompt, userMessage, maxTokens, childEnv) {
     const model = process.env.MEMORY_BANK_FACT_MODEL || DEFAULT_LLM_MODEL;
+    const llmEnv = llmEnvironment(childEnv);
     // The result is judged after the try: a refusal or an error turn thrown inside
     // it would land in the API-key fallback below and re-send a request that
     // already failed on the same model.
@@ -181,6 +213,8 @@ async function callOnce(systemPrompt, userMessage, maxTokens) {
                 maxTurns: 1,
                 ...ISOLATED_QUERY_OPTIONS,
                 cwd: llmWorkdir(),
+                // Only when a session declared its own: otherwise the SDK's default (inherit this process) stands.
+                ...(childEnv ? { env: llmEnv } : {}),
             },
         })) {
             if (message.type === 'system' && message.subtype === 'model_refusal_no_fallback') {
@@ -201,15 +235,14 @@ async function callOnce(systemPrompt, userMessage, maxTokens) {
     catch (agentSdkError) {
         noteSdkFailure(agentSdkError, 'memory-bank llm');
         // Fallback to direct Anthropic SDK if agent SDK fails (standalone mode)
-        const apiKey = process.env.ANTHROPIC_API_KEY || process.env.MEMORY_BANK_API_TOKEN;
+        const apiKey = llmEnv.ANTHROPIC_API_KEY || process.env.MEMORY_BANK_API_TOKEN;
         if (!apiKey) {
             // 키 없음 = 폴백 불가. 원인 에러를 그대로 전파해야 분류기가 transient/deterministic
             // 을 읽을 수 있다 (문자열로 감싸면 status 등 구조가 소실된다).
             throw agentSdkError;
         }
         const { default: Anthropic } = await import('@anthropic-ai/sdk');
-        const baseURL = process.env.MEMORY_BANK_API_BASE_URL;
-        const client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
+        const client = new Anthropic(fallbackClientOptions(apiKey, llmEnv, process.env.MEMORY_BANK_API_BASE_URL));
         const response = await client.messages.create({
             model,
             max_tokens: maxTokens,
@@ -277,12 +310,14 @@ function agentResultText(result, refused, refusalCategory) {
  *    보류·재시도, deterministic 은 attempt 소모)가 비로소 작동한다 (fail-loud).
  * 호출자 계약: 성공 반환값은 **비어있지 않음이 보장**된다.
  */
-export async function callHaiku(systemPrompt, userMessage, maxTokens = 2048) {
+export async function callHaiku(systemPrompt, userMessage, maxTokens = 2048, 
+/** `childEnv`: the calling session's settings for the LLM child, when a shared server makes this call for it. */
+opts = {}) {
     const retries = retryBudget();
     let lastError;
     for (let attempt = 0; attempt <= retries; attempt++) {
         try {
-            const text = await callOnce(systemPrompt, userMessage, maxTokens);
+            const text = await callOnce(systemPrompt, userMessage, maxTokens, opts.childEnv);
             if (text && text.trim() !== '')
                 return text;
             lastError = new EmptyLlmResponseError(`LLM returned an empty response (attempt ${attempt + 1}/${retries + 1})`);

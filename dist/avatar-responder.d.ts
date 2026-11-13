@@ -10,4 +10,8 @@ export type AvatarFailure = 'login' | 'refusal' | LlmErrorClass;
 export interface AvatarResult extends AvatarResponse {
     failure?: AvatarFailure;
 }
-export declare function askAvatar(db: Database.Database, question: string, project?: string): Promise<AvatarResult>;
+export declare function askAvatar(db: Database.Database, question: string, project?: string, 
+/** `childEnv`: the asking session's settings for the LLM child (null/absent = this process is the session's own). */
+opts?: {
+    childEnv?: Readonly<Record<string, string>> | null;
+}): Promise<AvatarResult>;

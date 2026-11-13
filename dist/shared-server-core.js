@@ -1,8 +1,8 @@
 import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
-import { validSessionCwd } from './session-context.js';
-import { sharedPidPath } from './shared-identity.js';
+import { sessionContext, validSessionCwd, validSessionLocale } from './session-context.js';
+import { sharedPidPath, validChildEnv } from './shared-identity.js';
 import { CONTROL_PREFIX } from './shared-protocol.js';
 import { SocketTransport } from './socket-transport.js';
 import { nameExists, probeSocket, removeIfDead, socketIdentity } from './unix-socket.js';
@@ -50,10 +50,27 @@ export function readHello(line, own) {
     // `cwd` must be stated: an absolute path, or an explicit null. A hello without it is not "no project".
     if (!('cwd' in h) || (h.cwd !== null && !validSessionCwd(h.cwd)))
         return { error: 'bad-cwd' };
-    return { ctx: { cwd: h.cwd } };
+    // So must what else is the session's alone. A hello without them is not "use the server's": the server
+    // has no account, model setting or locale of its own to lend.
+    if (!validChildEnv(h.env))
+        return { error: 'bad-env' };
+    if (!('locale' in h) || (h.locale !== null && !validSessionLocale(h.locale)))
+        return { error: 'bad-env' };
+    return { ctx: sessionContext(h.cwd, { childEnv: h.env, ...(h.locale === null ? {} : { locale: h.locale }) }) };
 }
+/**
+ * The first line of a connection may be this long. A hello is a few hundred bytes plus the session's child
+ * environment, which is capped at 32 KB (shared-identity.ts CHILD_ENV_MAX_TOTAL_BYTES) and measured at 1.3 KB
+ * at most on a machine with 20 sessions: 64 KB holds the largest hello a relay can send (that cap, a 4 KB
+ * working directory, a few hundred bytes of the rest) with room to spare.
+ */
 const HELLO_MAX_BYTES = 64 * 1024;
-/** A dead socket file younger than this may be a server between bind() and listen(). */
+/**
+ * A dead socket file younger than this may be a server between bind() and listen(). Node does both in one
+ * call, so the gap is normally too short to see; two seconds allows for a process held up in between on a
+ * loaded machine, and is the wait a start right after a crash pays once (measured: about 3 s from a killed
+ * server to its replacement answering).
+ */
 const OWN_SOCKET_MIN_AGE_MS = 2_000;
 function listenOnce(server, socketPath) {
     return new Promise((resolve) => {
@@ -122,9 +139,16 @@ function removeOwnPidFile(socketPath) {
  */
 export async function startSharedServer(o) {
     const log = o.log ?? (() => { });
+    // A retired server stays for a session that is between two connections. A relay connects again the moment
+    // it loses one, so this only has to outlast a relay that was held up for a moment: 5 s.
     const retireGraceMs = o.retireGraceMs ?? 5_000;
+    // A relay writes its hello the moment it connects. 10 s is not a slow relay, it is a connection that will
+    // never say hello — the same line the wrapper draws for a child that never came up.
     const helloTimeoutMs = o.helloTimeoutMs ?? 10_000;
     const listener = net.createServer();
+    // Long enough to outwait OWN_SOCKET_MIN_AGE_MS and the confirmation that a socket file is dead more than
+    // once, and no longer than the 8 s after which the relay that started this process is no longer "just
+    // started" and would stop exiting for its wrapper.
     const bound = await bind(listener, o.socketPath, o.bindWaitMs ?? 8_000);
     if (bound === 'name-taken')
         return { kind: 'name-taken' };

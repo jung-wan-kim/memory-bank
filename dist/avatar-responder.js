@@ -42,7 +42,9 @@ function isLoginFailure(error) {
     const message = (reason instanceof Error ? reason.message : String(reason)).toLowerCase();
     return /not logged in|please run \/login|invalid (x-)?api[- ]?key|authentication_error/.test(message);
 }
-export async function askAvatar(db, question, project) {
+export async function askAvatar(db, question, project, 
+/** `childEnv`: the asking session's settings for the LLM child (null/absent = this process is the session's own). */
+opts = {}) {
     await initEmbeddings();
     const questionEmbedding = await generateEmbedding(question, 'query');
     const scopeProject = project ?? null;
@@ -107,7 +109,7 @@ export async function askAvatar(db, question, project) {
     // 없음"이 구분되지 않았다(fail-loud-no-unapproved-fallback).
     let response;
     try {
-        response = await callHaiku(AVATAR_SYSTEM_PROMPT, prompt, 1024);
+        response = await callHaiku(AVATAR_SYSTEM_PROMPT, prompt, 1024, { childEnv: opts.childEnv ?? null });
     }
     catch (error) {
         // 원문 provider 에러는 엔드포인트·토큰 조각 등을 담을 수 있어 사용자 대면 응답에

@@ -27,17 +27,21 @@ export function sharedMode(o) {
     const entry = fileURLToPath(o.entryUrl);
     const distDir = path.dirname(entry);
     const serverEntry = path.join(distDir, 'shared-server.js');
-    if (path.extname(entry) !== '.js' || !fs.existsSync(serverEntry))
-        return local('not-built');
+    if (path.extname(entry) !== '.js')
+        return local('source-run');
+    // The user's "off" comes before anything about the install: either form of it is a choice to run without
+    // the parts checked below.
+    const serverEnv = serverEnvFor(o.env, o.cwd);
+    const indexDir = serverEnv === null ? null : indexDirOf(serverEnv);
+    if (indexDir !== null && fs.existsSync(path.join(indexDir, SHARED_SWITCH_FILE)))
+        return local('switch-off-file');
+    if (!fs.existsSync(serverEntry))
+        return { kind: 'broken', reason: 'server-file-missing' };
     const version = o.version === undefined ? ownPackageVersion() : o.version;
     if (!version)
-        return local('no-version');
-    const serverEnv = serverEnvFor(o.env, o.cwd);
-    if (serverEnv === null)
+        return { kind: 'broken', reason: 'no-version' };
+    if (serverEnv === null || indexDir === null)
         return local('relative-path');
-    const indexDir = indexDirOf(serverEnv);
-    if (fs.existsSync(path.join(indexDir, SHARED_SWITCH_FILE)))
-        return local('switch-off-file');
     const identity = sharedServerIdentity({ version, fingerprint: distFingerprint(distDir), serverEnv });
     const socketPath = sharedSocketPathIn(indexDir, version, identity);
     if (socketPath === null)

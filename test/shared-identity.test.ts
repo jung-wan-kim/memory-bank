@@ -3,12 +3,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
+  CHILD_ENV_MAX_TOTAL_BYTES,
+  CHILD_ENV_MAX_VALUE_BYTES,
+  childEnvFor,
   distFingerprint,
+  removeOrphanStartLock,
   serverEnvFor,
   serverEnvKind,
   sharedServerIdentity,
   sharedSocketPathIn,
   spawnEnvFor,
+  startLockHolder,
+  validChildEnv,
 } from '../src/shared-identity.js';
 import { sharedMode } from '../src/shared-mode.js';
 import { injectSocketPathIn } from '../src/version-guard.js';
@@ -69,12 +75,22 @@ const identityOf = (env: Record<string, string>, extra: { version?: string; fing
     serverEnv: serverEnvFor(env, '/Users/u/project-a')!,
   });
 
-describe('serverEnvKind — what a server process may be given', () => {
-  it('names the three kinds', () => {
-    expect(serverEnvKind('MEMORY_BANK_DB_PATH')).toBe('identity');
-    expect(serverEnvKind('ANTHROPIC_BASE_URL')).toBe('identity');
-    expect(serverEnvKind('LANG')).toBe('identity');
-    expect(serverEnvKind('HOME')).toBe('identity');
+/** What only the LLM child of a session's calls reads — the session's own, sent with its connection. */
+const CHILD_OF_SESSION = [
+  'LANG', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'API_TIMEOUT_MS', 'CLAUDECODE',
+  'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS', '_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL',
+];
+
+describe('serverEnvKind — how a variable of a session reaches a shared server', () => {
+  it('names the four kinds', () => {
+    // the server's own settings, and what the Node runtime of that one process reads: its identity
+    for (const name of ['MEMORY_BANK_DB_PATH', 'MEMORY_BANK_AGENT_SOURCES', 'TEST_DB_PATH', 'HOME', 'XDG_CONFIG_HOME', 'TZ', 'HTTPS_PROXY', 'NODE_EXTRA_CA_CERTS']) {
+      expect(serverEnvKind(name), name).toBe('identity');
+    }
+    // the session's own, for the LLM child of its calls: never part of the server
+    for (const name of [...CHILD_OF_SESSION, 'ANTHROPIC_API_KEY', 'AWS_PROFILE', 'CLAUDE_CONFIG_DIR', 'LC_ALL', 'MAX_THINKING_TOKENS', 'ENABLE_TOOL_SEARCH']) {
+      expect(serverEnvKind(name), name).toBe('child');
+    }
     expect(serverEnvKind('PATH')).toBe('passthrough');
     expect(serverEnvKind('TMPDIR')).toBe('passthrough');
     for (const name of SESSION_ONLY) expect(serverEnvKind(name), name).toBeNull();
@@ -83,13 +99,11 @@ describe('serverEnvKind — what a server process may be given', () => {
 });
 
 describe('serverEnvFor — the environment a shared server is started with', () => {
-  it('carries the settings the server and its LLM child read, and nothing that belongs to one session', () => {
+  it('carries the settings the server itself reads — nothing of one session, and nothing only its LLM child reads', () => {
     const env = serverEnvFor(SESSION_ENV, '/Users/u/project-a')!;
     for (const name of SESSION_ONLY) expect(env, name).not.toHaveProperty(name);
-    for (const name of ['HOME', 'LANG', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'API_TIMEOUT_MS', 'CLAUDECODE',
-      'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS', '_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL', 'MEMORY_BANK_CONFIG_DIR']) {
-      expect(env[name], name).toBe(SESSION_ENV[name]);
-    }
+    for (const name of CHILD_OF_SESSION) expect(env, name).not.toHaveProperty(name);
+    expect(env).toEqual({ HOME: SESSION_ENV.HOME, MEMORY_BANK_CONFIG_DIR: SESSION_ENV.MEMORY_BANK_CONFIG_DIR });
     // operating variables are handed over separately (spawnEnvFor) and are not part of the identity
     expect(env).not.toHaveProperty('PATH');
     const spawned = spawnEnvFor(SESSION_ENV, env);
@@ -117,6 +131,93 @@ describe('serverEnvFor — the environment a shared server is started with', () 
   });
 });
 
+describe("childEnvFor — what a session declares for the LLM child of its own calls", () => {
+  it('carries the account, endpoint, model and client settings and the locale — nothing else', () => {
+    const { env, dropped } = childEnvFor(SESSION_ENV, '/Users/u/project-a');
+    expect(Object.keys(env).sort()).toEqual([...CHILD_OF_SESSION].sort());
+    for (const name of CHILD_OF_SESSION) expect(env[name], name).toBe(SESSION_ENV[name]);
+    expect(dropped).toEqual([]);
+    expect(validChildEnv(env)).toBe(true);
+  });
+
+  it("a variable goes one way only: the server's environment and a session's declaration never share a name", () => {
+    const server = spawnEnvFor(SESSION_ENV, serverEnvFor(SESSION_ENV, '/Users/u/project-a')!);
+    const { env } = childEnvFor(SESSION_ENV, '/Users/u/project-a');
+    expect(Object.keys(env).filter((name) => name in server)).toEqual([]);
+    // and together they leave out exactly what belongs to this one session
+    const neither = Object.keys(SESSION_ENV).filter((name) => !(name in server) && !(name in env)).sort();
+    expect(neither).toEqual([...SESSION_ONLY].sort());
+  });
+
+  it('a relative path setting becomes absolute against the session working directory; without one it is dropped, and named', () => {
+    const withCwd = childEnvFor({ CLAUDE_CONFIG_DIR: '.claude-alt', ANTHROPIC_BASE_URL: 'http://x' }, '/Users/u/project-a');
+    expect(withCwd).toEqual({ env: { ANTHROPIC_BASE_URL: 'http://x', CLAUDE_CONFIG_DIR: '/Users/u/project-a/.claude-alt' }, dropped: [] });
+    const blind = childEnvFor({ CLAUDE_CONFIG_DIR: '.claude-alt', ANTHROPIC_BASE_URL: 'http://x' }, null);
+    expect(blind).toEqual({ env: { ANTHROPIC_BASE_URL: 'http://x' }, dropped: ['CLAUDE_CONFIG_DIR'] });
+  });
+
+  it('a value that cannot be carried is dropped and named — it never costs the rest', () => {
+    const big = 'x'.repeat(CHILD_ENV_MAX_VALUE_BYTES + 1);
+    const out = childEnvFor({ ANTHROPIC_BASE_URL: 'http://x', ANTHROPIC_CUSTOM_HEADERS: big, CLAUDE_X: 'a\u0000b' }, '/x');
+    expect(out).toEqual({ env: { ANTHROPIC_BASE_URL: 'http://x' }, dropped: ['ANTHROPIC_CUSTOM_HEADERS', 'CLAUDE_X'] });
+    // the total is bounded too, counted as the JSON the hello carries (a value of quotes doubles in size there)
+    const many: Record<string, string> = {};
+    for (let i = 0; i < 12; i++) many[`CLAUDE_FILL_${String(i).padStart(2, '0')}`] = '"'.repeat(2_000);
+    const bounded = childEnvFor(many, '/x');
+    expect(bounded.dropped.length).toBeGreaterThan(0);
+    expect(Buffer.byteLength(JSON.stringify(bounded.env))).toBeLessThanOrEqual(CHILD_ENV_MAX_TOTAL_BYTES + 12 * 4);
+    expect(validChildEnv(bounded.env)).toBe(true);
+    expect(validChildEnv(many)).toBe(false);
+  });
+
+  it('validChildEnv refuses whatever a relay would not have sent', () => {
+    for (const bad of [null, 'x', [], 7, { PATH: '/bin' }, { MEMORY_BANK_DB_PATH: '/x' }, { CLAUDE_CODE_SESSION_ID: 's' }, { ANTHROPIC_BASE_URL: 1 }, { ANTHROPIC_BASE_URL: 'a\u0000b' }]) {
+      expect(validChildEnv(bad), JSON.stringify(bad)).toBe(false);
+    }
+    expect(validChildEnv({})).toBe(true);
+  });
+});
+
+describe('the start lock — a relay killed while it held it', () => {
+  let dir: string;
+  beforeAll(() => { dir = fs.mkdtempSync('/tmp/mblock-'); });
+  afterAll(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+  const lockAt = (name: string, content: string, ageMs: number): string => {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, content);
+    const then = new Date(Date.now() - ageMs);
+    fs.utimesSync(file, then, then);
+    return file;
+  };
+
+  it('no file: nothing to say, nothing removed', () => {
+    expect(startLockHolder(path.join(dir, 'none.lock'))).toBeNull();
+    expect(removeOrphanStartLock(path.join(dir, 'none.lock'))).toBe(false);
+  });
+
+  it('a lock whose holder is gone is an orphan once it is not brand new, and only then removed', () => {
+    const fresh = lockAt('fresh.lock', '999999', 0);
+    expect(startLockHolder(fresh)).toMatchObject({ alive: false, orphan: false });
+    expect(removeOrphanStartLock(fresh)).toBe(false);
+    expect(fs.existsSync(fresh)).toBe(true);
+    const old = lockAt('old.lock', '999999', 5_000);
+    expect(startLockHolder(old)).toMatchObject({ alive: false, orphan: true });
+    expect(removeOrphanStartLock(old)).toBe(true);
+    expect(fs.existsSync(old)).toBe(false);
+  });
+
+  it('a lock a live process holds is never an orphan, however old; one with no pid in it is', () => {
+    const held = lockAt('held.lock', String(process.pid), 600_000);
+    expect(startLockHolder(held)).toMatchObject({ alive: true, orphan: false });
+    expect(removeOrphanStartLock(held)).toBe(false);
+    expect(fs.existsSync(held)).toBe(true);
+    for (const junk of ['', 'not-a-pid', '-1', '0', '1']) {
+      const file = lockAt('junk.lock', junk, 5_000);
+      expect(startLockHolder(file), junk).toMatchObject({ alive: false, orphan: true });
+    }
+  });
+});
+
 describe('sharedServerIdentity — who may share a server', () => {
   const base = identityOf(SESSION_ENV);
 
@@ -132,20 +233,35 @@ describe('sharedServerIdentity — who may share a server', () => {
   });
 
   it.each([
-    ['LLM endpoint', { ANTHROPIC_BASE_URL: 'https://example.invalid' }],
-    ['LLM credentials', { ANTHROPIC_AUTH_TOKEN: 'another-account' }],
-    ['model alias', { ANTHROPIC_DEFAULT_OPUS_MODEL: 'other-model' }],
     ['config dir', { MEMORY_BANK_CONFIG_DIR: '/Users/u/other-config' }],
     ['database path', { MEMORY_BANK_DB_PATH: '/Users/u/other.sqlite' }],
     ['archive dir', { TEST_ARCHIVE_DIR: '/Users/u/archive' }],
     ['embedding model', { MEMORY_BANK_EMBEDDING_MODEL: 'x' }],
+    ['conversation sources', { MEMORY_BANK_AGENT_SOURCES: 'claude-code,codex' }],
     ['excluded projects', { CONVERSATION_SEARCH_EXCLUDE_PROJECTS: 'a,b' }],
-    ['locale', { LANG: 'en_US.UTF-8' }],
     ['time zone', { TZ: 'UTC' }],
     ['home', { HOME: '/Users/other' }],
-    ['Claude config dir', { CLAUDE_CONFIG_DIR: '/Users/u/.claude-alt' }],
-  ])('a different %s is a different identity', (_what, change) => {
+    ['proxy', { HTTPS_PROXY: 'http://proxy.invalid:3128' }],
+    ['CA bundle', { NODE_EXTRA_CA_CERTS: '/etc/ssl/corp.pem' }],
+  ])("a different %s is a different identity (the server's own setting)", (_what, change) => {
     expect(identityOf({ ...SESSION_ENV, ...change })).not.toBe(base);
+  });
+
+  // What made 20 running sessions of one machine split into 7 servers before these moved to the connection.
+  it.each([
+    ['LLM endpoint', { ANTHROPIC_BASE_URL: 'https://example.invalid' }],
+    ['LLM credentials', { ANTHROPIC_AUTH_TOKEN: 'another-account' }],
+    ['model alias', { ANTHROPIC_DEFAULT_OPUS_MODEL: 'other-model' }],
+    ['API timeout', { API_TIMEOUT_MS: '120000' }],
+    ['entry point', { CLAUDE_CODE_ENTRYPOINT: 'sdk-ts' }],
+    ['client option', { ENABLE_TOOL_SEARCH: 'false' }],
+    ['locale', { LANG: 'en_US.UTF-8' }],
+    ['Claude config dir', { CLAUDE_CONFIG_DIR: '/Users/u/.claude-alt' }],
+  ])("a different %s is the same identity (the session's own — it travels with the connection)", (_what, change) => {
+    expect(identityOf({ ...SESSION_ENV, ...change })).toBe(base);
+    // and it is what that session declares
+    const changed = childEnvFor({ ...SESSION_ENV, ...change }, '/Users/u/project-a').env;
+    for (const [name, value] of Object.entries(change)) expect(changed[name], name).toBe(value);
   });
 
   it('a different version or different code is a different identity', () => {
@@ -285,20 +401,36 @@ describe('sharedMode — shared server, or this session runs its own (TC-ENV-003
       .toEqual({ kind: 'session-local', reason: 'socket-path-too-long' });
   });
 
-  it('no readable version, Windows, source run, missing server file, relative path with no working directory', () => {
-    expect(sharedMode({ entryUrl, env: baseEnv(), cwd: '/x', version: null, platform: 'darwin' })).toEqual({ kind: 'session-local', reason: 'no-version' });
+  it('session-local by design or by setting: Windows, a run from source, a relative path with no working directory', () => {
     expect(sharedMode({ entryUrl, env: baseEnv(), cwd: '/x', version: '1.9.0', platform: 'win32' })).toEqual({ kind: 'session-local', reason: 'windows' });
     const tsEntry = pathToFileURL(path.join(root, 'dist', 'mcp-server.ts')).href;
-    expect(sharedMode({ entryUrl: tsEntry, env: baseEnv(), cwd: '/x', version: '1.9.0', platform: 'darwin' })).toEqual({ kind: 'session-local', reason: 'not-built' });
+    expect(sharedMode({ entryUrl: tsEntry, env: baseEnv(), cwd: '/x', version: '1.9.0', platform: 'darwin' })).toEqual({ kind: 'session-local', reason: 'source-run' });
+    expect(sharedMode({ entryUrl, env: { HOME: '/Users/u', MEMORY_BANK_CONFIG_DIR: 'relative-cfg' }, cwd: null, version: '1.9.0', platform: 'darwin' }))
+      .toEqual({ kind: 'session-local', reason: 'relative-path' });
+  });
+
+  it('a broken install is not a reason to run some other way: no server file next to the entry, no readable version', () => {
+    expect(sharedMode({ entryUrl, env: baseEnv(), cwd: '/x', version: null, platform: 'darwin' })).toEqual({ kind: 'broken', reason: 'no-version' });
     const lonely = fs.mkdtempSync('/tmp/mbsm-');
     try {
       fs.writeFileSync(path.join(lonely, 'mcp-server.js'), '// entry\n');
       expect(sharedMode({ entryUrl: pathToFileURL(path.join(lonely, 'mcp-server.js')).href, env: baseEnv(), cwd: '/x', version: '1.9.0', platform: 'darwin' }))
-        .toEqual({ kind: 'session-local', reason: 'not-built' });
+        .toEqual({ kind: 'broken', reason: 'server-file-missing' });
+      // the user's switch still wins: turning the shared server off is a choice, and it is honoured first —
+      // by the variable, and by the file in the index dir
+      const lonelyEntry = pathToFileURL(path.join(lonely, 'mcp-server.js')).href;
+      expect(sharedMode({ entryUrl: lonelyEntry, env: { ...baseEnv(), MEMORY_BANK_SHARED_SERVER: '0' }, cwd: '/x', version: '1.9.0', platform: 'darwin' }))
+        .toEqual({ kind: 'session-local', reason: 'switch-off' });
+      const cfg = path.join(lonely, 'cfg');
+      fs.mkdirSync(path.join(cfg, 'conversation-index'), { recursive: true });
+      fs.writeFileSync(path.join(cfg, 'conversation-index', 'shared-server.off'), '');
+      const offByFile = { HOME: '/Users/u', MEMORY_BANK_CONFIG_DIR: cfg };
+      expect(sharedMode({ entryUrl: lonelyEntry, env: offByFile, cwd: '/x', version: '1.9.0', platform: 'darwin' }))
+        .toEqual({ kind: 'session-local', reason: 'switch-off-file' });
+      expect(sharedMode({ entryUrl, env: offByFile, cwd: '/x', version: null, platform: 'darwin' }))
+        .toEqual({ kind: 'session-local', reason: 'switch-off-file' });
     } finally {
       fs.rmSync(lonely, { recursive: true, force: true });
     }
-    expect(sharedMode({ entryUrl, env: { HOME: '/Users/u', MEMORY_BANK_CONFIG_DIR: 'relative-cfg' }, cwd: null, version: '1.9.0', platform: 'darwin' }))
-      .toEqual({ kind: 'session-local', reason: 'relative-path' });
   });
 });

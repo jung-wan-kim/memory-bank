@@ -13,26 +13,43 @@
  */
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { ownCwd } from './own-cwd.js';
+import { ownCwd, ownLocale } from './own-cwd.js';
 import { runRelay } from './relay.js';
-import { sharedMode, type SessionLocalReason } from './shared-mode.js';
+import { childEnvFor } from './shared-identity.js';
+import { sharedMode, type BrokenReason, type SessionLocalReason } from './shared-mode.js';
 
 const WHY_SESSION_LOCAL: Record<SessionLocalReason, string> = {
   'switch-off': 'MEMORY_BANK_SHARED_SERVER is off',
   'switch-off-file': 'shared-server.off is present in the index dir',
   windows: 'not available on Windows',
-  'not-built': 'running from source, or dist/shared-server.js is missing',
-  'no-version': 'the plugin version (package.json) cannot be read',
+  'source-run': 'running from source — there is no compiled server to start',
   'relative-path': 'a path setting is relative and this process has no working directory to resolve it against',
   'socket-path-too-long': 'the index dir path is too long for a unix socket — a shorter MEMORY_BANK_CONFIG_DIR / XDG_CONFIG_HOME turns it on',
+};
+
+const WHY_BROKEN: Record<BrokenReason, string> = {
+  'server-file-missing': 'dist/shared-server.js is missing next to dist/mcp-server.js',
+  'no-version': 'the plugin version (package.json next to dist/) cannot be read',
 };
 
 async function main(): Promise<void> {
   // This process belongs to one session: its working directory is that session's project.
   const cwd = ownCwd();
   const mode = sharedMode({ entryUrl: import.meta.url, env: process.env, cwd });
+  if (mode.kind === 'broken') {
+    // Not a reason to run some other way: the install is incomplete, and saying so is the only honest answer.
+    console.error(`[memory-bank] this install is incomplete: ${WHY_BROKEN[mode.reason]}. `
+      + 'This session has no memory-bank tools until it is repaired (reinstall or update the plugin); '
+      + 'set MEMORY_BANK_SHARED_SERVER=0 to run a server per session instead.');
+    process.exit(1);
+  }
   if (mode.kind === 'shared') {
-    runRelay(mode, cwd);
+    // What is this session's alone goes to the server with the connection, never into the server's own environment.
+    const child = childEnvFor(process.env, cwd);
+    if (child.dropped.length > 0) {
+      console.error(`[memory-bank] not passed on to the LLM child of this session's calls (too long, or a relative path with no working directory): ${child.dropped.join(', ')}`);
+    }
+    runRelay(mode, { cwd, env: child.env, locale: ownLocale() });
     return;
   }
   console.error(`[memory-bank] shared server off: ${WHY_SESSION_LOCAL[mode.reason]} — this session runs its own server`);

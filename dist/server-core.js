@@ -182,10 +182,10 @@ const AVATAR_MAX_RELATED_LISTED = 10;
  * repeated on its own answer until the answer stops moving: the variant the reader picks for the returned
  * path is then that path itself (or a link to it). A chain that never settles is refused.
  */
-function resolveReadTarget(requestedPath, roots) {
-    let file = resolveReadableConversation(requestedPath, roots);
+function resolveReadTarget(requestedPath, roots, baseDir) {
+    let file = resolveReadableConversation(requestedPath, roots, baseDir);
     for (let hop = 0; hop < 8; hop++) {
-        const again = resolveReadableConversation(file, roots);
+        const again = resolveReadableConversation(file, roots, baseDir);
         if (again === file)
             return file;
         file = again;
@@ -540,7 +540,7 @@ async function handleCallTool(ctx, request) {
             const realFile = resolveReadTarget(params.path, [
                 getArchiveDir(),
                 path.join(os.homedir(), '.claude', 'projects'),
-            ]);
+            ], ctx.cwd);
             // Read and format the requested line range as a stream: the cost follows
             // the range, not the file (whole-file reads failed on files over 512MB),
             // the output is capped with a continuation hint (a line, and a character
@@ -551,6 +551,7 @@ async function handleCallTool(ctx, request) {
                 endLine: params.endLine,
                 startChar: params.startChar,
                 full: params.full,
+                locale: ctx.locale,
             });
             return {
                 content: [
@@ -651,7 +652,7 @@ async function handleCallTool(ctx, request) {
                     }
                     return { content: [{ type: 'text', text: output }] };
                 }
-                const tagIndex = listTags(db, { project: currentProject });
+                const tagIndex = listTags(db, { project: currentProject, locale: ctx.locale });
                 let output = `# Tag index\n\nProject: ${currentProject}\nDistinct tags: ${tagIndex.length}\n\n`;
                 if (!tagIndex.length) {
                     output += '_No tags yet. Tags are user-assigned — the automatic pipeline never creates them._\n';
@@ -672,7 +673,7 @@ async function handleCallTool(ctx, request) {
             const params = SearchOntologyInputSchema.parse(args);
             const db = initDatabase();
             try {
-                return { content: [{ type: 'text', text: formatOntologyBrowse(db, params) }] };
+                return { content: [{ type: 'text', text: formatOntologyBrowse(db, params, ctx.locale) }] };
             }
             catch (error) {
                 return {
@@ -689,7 +690,7 @@ async function handleCallTool(ctx, request) {
             const project = sessionProject(ctx, params.project);
             const db = initDatabase();
             try {
-                const result = await askAvatar(db, params.question, project);
+                const result = await askAvatar(db, params.question, project, { childEnv: ctx.childEnv ?? null });
                 const confidenceLabel = result.confidence >= 0.9
                     ? 'HIGH'
                     : result.confidence >= 0.7
@@ -879,10 +880,11 @@ async function handleCallTool(ctx, request) {
 /**
  * One MCP server for one session, with the memory-bank tools registered. Connect it to a transport to serve
  * that session. `ctx.cwd` is the project the tools fall back to — the session's working directory, never
- * this process's.
+ * this process's. The same goes for what else is the session's alone: the environment of the LLM child its
+ * calls start (`ctx.childEnv`) and the locale its output is written in (`ctx.locale`).
  */
 export function createMemoryBankServer(ctx) {
-    const session = sessionContext(ctx.cwd);
+    const session = sessionContext(ctx.cwd, { childEnv: ctx.childEnv ?? null, locale: ctx.locale });
     const server = new Server({
         name: 'memory-bank',
         // The version of the code that is running (package.json next to dist/), so a client can tell which

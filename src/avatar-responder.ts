@@ -69,6 +69,8 @@ export async function askAvatar(
   db: Database.Database,
   question: string,
   project?: string,
+  /** `childEnv`: the asking session's settings for the LLM child (null/absent = this process is the session's own). */
+  opts: { childEnv?: Readonly<Record<string, string>> | null } = {},
 ): Promise<AvatarResult> {
   await initEmbeddings();
 
@@ -154,7 +156,7 @@ export async function askAvatar(
   // 없음"이 구분되지 않았다(fail-loud-no-unapproved-fallback).
   let response: string;
   try {
-    response = await callHaiku(AVATAR_SYSTEM_PROMPT, prompt, 1024);
+    response = await callHaiku(AVATAR_SYSTEM_PROMPT, prompt, 1024, { childEnv: opts.childEnv ?? null });
   } catch (error) {
     // 원문 provider 에러는 엔드포인트·토큰 조각 등을 담을 수 있어 사용자 대면 응답에
     // 그대로 싣지 않는다 — 분류만 노출하고 상세는 서버 로그로 (Codex 리뷰 MEDIUM).

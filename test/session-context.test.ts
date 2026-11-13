@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { sessionContext, sessionProject, validSessionCwd } from '../src/session-context.js';
+import { sessionContext, sessionProject, validSessionCwd, validSessionLocale } from '../src/session-context.js';
 
 // TC-SCOPE-002 — the project a tool falls back to comes from the session the call belongs to, through one
 // helper. A missing value must never reach a scope filter: several of them read an empty project as "every
@@ -33,6 +33,27 @@ describe('sessionContext', () => {
     for (const bad of [undefined, '', 'relative', 7]) {
       expect(() => sessionContext(bad), JSON.stringify(bad)).toThrow(/working directory/);
     }
+  });
+});
+
+describe("what else a session declares as its own: the LLM child's settings and the locale", () => {
+  it('a session served by a shared server carries both; one in its own process carries neither', () => {
+    const served = sessionContext('/Users/a/project', { childEnv: { ANTHROPIC_BASE_URL: 'https://x.invalid' }, locale: 'ko-KR' });
+    expect(served).toEqual({ cwd: '/Users/a/project', childEnv: { ANTHROPIC_BASE_URL: 'https://x.invalid' }, locale: 'ko-KR' });
+    expect(sessionContext('/Users/a/project')).toEqual({ cwd: '/Users/a/project' });
+    expect(sessionContext('/Users/a/project', { childEnv: null })).toEqual({ cwd: '/Users/a/project' });
+  });
+
+  it('an empty declaration is still a declaration: the child must not fall back to inheriting the server', () => {
+    expect(sessionContext('/x', { childEnv: {} })).toEqual({ cwd: '/x', childEnv: {} });
+  });
+
+  it('a locale is a language tag this runtime accepts, or it is refused — never repaired', () => {
+    for (const ok of ['en-US', 'ko-KR', 'de', 'zh-Hant-TW', 'en-u-hc-h23']) expect(validSessionLocale(ok), ok).toBe(true);
+    for (const bad of [undefined, null, '', 'C', 'POSIX', 'ko_KR', 'en_US.UTF-8', 'not a tag', 7, {}, 'x'.repeat(65)]) {
+      expect(validSessionLocale(bad), JSON.stringify(bad)).toBe(false);
+    }
+    expect(() => sessionContext('/x', { locale: 'ko_KR.UTF-8' })).toThrow(/locale/);
   });
 });
 

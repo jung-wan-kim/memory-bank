@@ -10,6 +10,17 @@ import path from 'node:path';
 export interface SessionContext {
   /** Absolute path, or null when the session could not read its own working directory (it was removed). */
   readonly cwd: string | null;
+  /**
+   * What the LLM child started for this session's calls gets on top of the server's own environment: the
+   * session's account, endpoint, model and client settings. Absent or null when the process is the session's
+   * own (session-local) — the child then inherits that process, as it always did.
+   */
+  readonly childEnv?: Readonly<Record<string, string>> | null;
+  /**
+   * The locale this session's output is written in — dates, numbers, the order of names (a BCP 47 tag).
+   * Absent when the process is the session's own, or the session could not tell: the process default.
+   */
+  readonly locale?: string;
 }
 
 const MAX_CWD_BYTES = 4096;
@@ -25,12 +36,37 @@ export function validSessionCwd(value: unknown): value is string {
   );
 }
 
+const MAX_LOCALE_CHARS = 64;
+
+/**
+ * A locale a session may declare: a tag this runtime formats in. A well-formed tag it has no data for
+ * ("POSIX") is refused too — Intl would quietly format in the process default, which is not that session's.
+ */
+export function validSessionLocale(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_LOCALE_CHARS) return false;
+  try {
+    return Intl.DateTimeFormat.supportedLocalesOf(value).length === 1;
+  } catch {
+    return false;
+  }
+}
+
 /** The context of one session. Anything but an absolute path or null is refused — never repaired. */
-export function sessionContext(cwd: unknown): SessionContext {
+export function sessionContext(
+  cwd: unknown,
+  rest: { childEnv?: Readonly<Record<string, string>> | null; locale?: string } = {},
+): SessionContext {
   if (cwd !== null && !validSessionCwd(cwd)) {
     throw new Error('memory-bank: a session must declare its working directory as an absolute path');
   }
-  return { cwd };
+  if (rest.locale !== undefined && !validSessionLocale(rest.locale)) {
+    throw new Error('memory-bank: a session must declare its locale as a language tag');
+  }
+  return {
+    cwd,
+    ...(rest.childEnv ? { childEnv: rest.childEnv } : {}),
+    ...(rest.locale !== undefined ? { locale: rest.locale } : {}),
+  };
 }
 
 /**

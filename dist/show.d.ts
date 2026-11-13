@@ -18,6 +18,11 @@ export interface ConversationRangeOptions {
     full?: boolean;
     /** Output ceiling in characters (default READ_MAX_OUTPUT_CHARS). */
     maxChars?: number;
+    /**
+     * The locale dates and numbers are written in: the reading session's, when a server renders for it.
+     * undefined = the default of this process (right when the process is the reader's own).
+     */
+    locale?: string;
 }
 /**
  * The `read` tool: Markdown of a line range of an archived conversation, read as a stream (plain or
@@ -28,4 +33,4 @@ export interface ConversationRangeOptions {
  * A range outside the file is an error carrying the file's line count — never an empty string.
  */
 export declare function readConversationRange(filePath: string, opts?: ConversationRangeOptions): Promise<string>;
-export declare function formatConversationAsHTML(jsonl: string): string;
+export declare function formatConversationAsHTML(jsonl: string, locale?: string): string;

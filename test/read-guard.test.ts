@@ -102,6 +102,43 @@ describe('resolveReadableConversation', () => {
     expect(() => resolveReadableConversation('/etc/passwd', roots)).toThrow(/Invalid file type/);
   });
 
+  // A shared server runs in the index dir, nobody's project: a relative path is the asking session's.
+  describe('a relative path', () => {
+    it('resolves against the directory given — the asking session working directory — not the process one', () => {
+      const elsewhere = path.join(tmp, 'elsewhere');
+      fs.mkdirSync(elsewhere);
+      const before = process.cwd();
+      process.chdir(elsewhere); // where a shared server runs has nothing to do with the answer
+      try {
+        expect(resolveReadableConversation('proj/a.jsonl', roots, archive)).toBe(path.join(archive, 'proj', 'a.jsonl'));
+        expect(resolveReadableConversation('./archive/proj/../proj/a.jsonl', roots, tmp)).toBe(path.join(archive, 'proj', 'a.jsonl'));
+        // the same words from a session somewhere else point somewhere else: outside the roots
+        expect(() => resolveReadableConversation('proj/a.jsonl', roots, outside)).toThrow(ACCESS_DENIED_MESSAGE);
+        expect(() => resolveReadableConversation('secret.jsonl', roots, outside)).toThrow(ACCESS_DENIED_MESSAGE);
+        expect(() => resolveReadableConversation('../outside/secret.jsonl', roots, archive)).toThrow(ACCESS_DENIED_MESSAGE);
+      } finally {
+        process.chdir(before);
+      }
+    });
+
+    it('is refused when the session working directory is unknown — never read against the process directory', () => {
+      const before = process.cwd();
+      process.chdir(archive); // even when the process directory would make the path valid
+      try {
+        expect(() => resolveReadableConversation('proj/a.jsonl', roots, null)).toThrow(/relative path cannot be resolved.*absolute path/);
+        expect(() => resolveReadableConversation('proj/a.jsonl', roots)).toThrow(/relative path cannot be resolved/);
+      } finally {
+        process.chdir(before);
+      }
+    });
+
+    it('an absolute path is the same with or without a directory', () => {
+      const abs = path.join(archive, 'proj', 'a.jsonl');
+      expect(resolveReadableConversation(abs, roots, outside)).toBe(abs);
+      expect(resolveReadableConversation(abs, roots, null)).toBe(abs);
+    });
+  });
+
   it('works when a root itself is reached through a symlink', () => {
     fs.symlinkSync(archive, path.join(tmp, 'archive-link'));
     expect(resolveReadableConversation(path.join(tmp, 'archive-link', 'proj', 'a.jsonl'), [path.join(tmp, 'archive-link')]))

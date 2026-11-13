@@ -31,4 +31,5 @@ export interface OntologyBrowseParams {
     /** Categories to skip per domain (largest first) — lists the ones behind max_categories. Default 0. */
     category_offset?: number;
 }
-export declare function formatOntologyBrowse(db: Database.Database, params: OntologyBrowseParams): string;
+/** `locale`: the order of equally large names is the reading session's, not this process's (undefined = the process default). */
+export declare function formatOntologyBrowse(db: Database.Database, params: OntologyBrowseParams, locale?: string): string;

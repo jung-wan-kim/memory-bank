@@ -2,7 +2,7 @@ import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { sharedLockPath, sharedPidPath, sharedServerArg, spawnEnvFor } from './shared-identity.js';
+import { isAlive, sharedLockPath, sharedPidPath, sharedServerArg, spawnEnvFor, startLockHolder } from './shared-identity.js';
 import type { SharedMode } from './shared-mode.js';
 import { CONTROL_PREFIX, EXIT_NAME_TAKEN, EXIT_RETRY, positiveMs, type HelloReply, type RelayHello } from './shared-protocol.js';
 import { probeSocket } from './unix-socket.js';
@@ -14,8 +14,9 @@ import { LineSplitter, SupervisorState, abortedRequestError, isInitializeRespons
  *   client (stdio) ⇄ wrapper ⇄ relay (this) ⇄ unix socket ⇄ shared server
  *
  * It passes MCP lines both ways and owns nothing else — no database, no embedding model. What it adds:
- *  - It declares the session to the server (the hello: identity, version, this process's working directory)
- *    and refuses to pass a single client line before the server accepted that.
+ *  - It declares the session to the server (the hello: identity, version, and what is this session's alone —
+ *    its working directory, its settings for the LLM child, its locale) and refuses to pass a single client
+ *    line before the server accepted that.
  *  - When no server answers it starts one (detached, with the allow-list environment), under a lock so a
  *    burst of sessions starts one server, not many.
  *  - When the server goes away it reconnects, starting a new one if need be, and replays the MCP handshake it
@@ -31,6 +32,14 @@ import { LineSplitter, SupervisorState, abortedRequestError, isInitializeRespons
 
 type Shared = Extract<SharedMode, { kind: 'shared' }>;
 
+/** What this session declares to the server it connects to — read from this process by the entry point. */
+export interface RelaySession {
+  cwd: string | null;
+  /** The session's settings for the LLM child of its calls (shared-identity.ts childEnvFor). */
+  env: Record<string, string>;
+  locale: string | null;
+}
+
 /** Relay timings — every one can be shortened through the environment (tests do). */
 interface Timings {
   /** A relay younger than this that cannot get a server exits, so its wrapper repairs the install. */
@@ -41,23 +50,34 @@ interface Timings {
   startWaitMs: number;
   /** A call unanswered this long gets a ping; a ping unanswered this long means the server is stuck. */
   pingAfterMs: number;
+  /** A connection that ends sooner than this after it was made counts as a server that ended right after starting. */
+  stableMs: number;
 }
 
+/**
+ * Where the defaults come from (measured on the 4.2 GB index this was built against, 2026-11-14):
+ *  - a hello is answered in milliseconds — 30 sessions connecting at once all had their answer within 0.4 s;
+ *  - a server this relay starts answers on its socket in 0.3–0.9 s, 1.7 s with the first initialize.
+ * helloMs and startWaitMs are not tuned to those numbers: they are the point past which waiting longer has
+ * stopped being "slow" and is "stuck". 10 s is what the wrapper above already uses for the same question
+ * (a child that dies within 10 s is a start-up failure). 30 s is the server's own bind wait (8 s, to tell a
+ * killed server's socket from one about to listen — shared-server-core.ts) plus its module and native
+ * addon load on a cold disk, with room; a server that needs longer is ended and reported, not waited for.
+ */
 function timings(env: NodeJS.ProcessEnv): Timings {
   return {
     // The wrapper counts a child that dies within 10s as a start-up failure; 8s leaves it room to see that.
     youngMs: positiveMs(env.MEMORY_BANK_RELAY_YOUNG_MS, 8_000),
     helloMs: positiveMs(env.MEMORY_BANK_RELAY_HELLO_MS, 10_000),
     startWaitMs: positiveMs(env.MEMORY_BANK_RELAY_START_WAIT_MS, 30_000),
+    // The slowest tool call measured under load took 4.5 s; 30 s of silence is not a slow call.
     pingAfterMs: positiveMs(env.MEMORY_BANK_RELAY_PING_AFTER_MS, 30_000),
+    // The same 10 s the wrapper uses: a server gone that soon did not get to serve.
+    stableMs: positiveMs(env.MEMORY_BANK_RELAY_STABLE_MS, 10_000),
   };
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
-function isAlive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch (err) { return (err as NodeJS.ErrnoException).code === 'EPERM'; }
-}
 
 /** JSON-RPC error for a call that could not be passed on because no server is available. */
 function unavailableError(id: string | number, why: string): string {
@@ -74,10 +94,11 @@ type Attempt =
   | { kind: 'refused' }                 // a file nobody accepts on: a dead server's leftover, or a listener too busy
   | { kind: 'silent' }                  // connected, but no answer to the hello in time
   | { kind: 'rejected'; error: string } // the server answered the hello with ok:false
+  | { kind: 'not-ours' }                // something answered the hello, and it is not a memory-bank shared server
   | { kind: 'error'; why: string };
 
 /** One connect + hello. Nothing of the client's is sent on this connection before the server said ok. */
-function attemptConnection(mode: Shared, cwd: string | null, helloMs: number): Promise<Attempt> {
+function attemptConnection(mode: Shared, session: RelaySession, helloMs: number): Promise<Attempt> {
   return new Promise((resolve) => {
     const socket = net.connect(mode.socketPath);
     const splitter = new LineSplitter();
@@ -99,7 +120,10 @@ function attemptConnection(mode: Shared, cwd: string | null, helloMs: number): P
       else finish({ kind: 'error', why: err.code ?? err.message });
     });
     socket.on('connect', () => {
-      const hello: RelayHello = { mb_relay: 1, identity: mode.identity, version: mode.version, cwd, pid: process.pid };
+      const hello: RelayHello = {
+        mb_relay: 1, identity: mode.identity, version: mode.version,
+        cwd: session.cwd, env: session.env, locale: session.locale, pid: process.pid,
+      };
       socket.write(JSON.stringify(hello) + '\n');
     });
     socket.on('close', () => finish({ kind: 'error', why: 'closed before answering the hello' }));
@@ -112,7 +136,7 @@ function attemptConnection(mode: Shared, cwd: string | null, helloMs: number): P
         const parsed = JSON.parse(first) as HelloReply;
         if (parsed && parsed.mb_relay === 1 && typeof parsed.ok === 'boolean') reply = parsed;
       } catch { /* not a hello reply */ }
-      if (reply === null) finish({ kind: 'error', why: 'the listener on the socket is not a memory-bank shared server' });
+      if (reply === null) finish({ kind: 'not-ours' });
       else if (!reply.ok) finish({ kind: 'rejected', error: reply.error });
       else finish({ kind: 'connected', socket, splitter, rest, serverPid: reply.pid });
     });
@@ -139,13 +163,14 @@ function acquireStartLock(lockPath: string, maxAgeMs: number): (() => void) | nu
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') return null;
     }
     try {
-      const age = Date.now() - fs.statSync(lockPath).mtimeMs;
-      const holder = Number(fs.readFileSync(lockPath, 'utf8').trim());
-      const holderAlive = Number.isInteger(holder) && holder > 1 && isAlive(holder);
-      // A file with no live holder gets a second: it may have been created this instant, pid not yet written.
-      const stale = holderAlive ? age > maxAgeMs : age > 1_000;
-      if (!stale) return null;
-      fs.unlinkSync(lockPath);
+      const lock = startLockHolder(lockPath);
+      if (lock !== null) {
+        // A lock nobody holds is replaced once it is no longer brand new; one a live process holds only once
+        // it is older than any start can take (the pid in it may have gone to another process meanwhile).
+        const stale = lock.alive ? lock.ageMs > maxAgeMs : lock.orphan;
+        if (!stale) return null;
+        fs.unlinkSync(lockPath);
+      }
     } catch { /* the lock went away while we looked — try to take it */ }
   }
   return null;
@@ -205,6 +230,14 @@ function pidFromFile(socketPath: string): number | null {
   }
 }
 
+/**
+ * How often a start may come back with "a server answers on the socket" while the hello still fails, before
+ * this relay stops looking. One look takes about 0.3 s (three connects, 100 ms apart): five cover a server
+ * that listens but has not read its first hello yet, and end well inside the 8 s in which a relay that
+ * cannot get a server still exits for its wrapper.
+ */
+const ANSWERING_LOOKS = 5;
+
 type StartOutcome =
   | { kind: 'answering' }           // a server answers on the socket now (ours, or one that got there first)
   | { kind: 'again' }               // nothing to conclude — look at the socket again
@@ -258,7 +291,7 @@ async function startServer(mode: Shared, t: Timings): Promise<StartOutcome> {
 }
 
 /** Run as the relay of one session until its client goes away. Never returns a server of its own. */
-export function runRelay(mode: Shared, cwd: string | null): void {
+export function runRelay(mode: Shared, session: RelaySession): void {
   const t = timings(process.env);
   const logPath = path.join(mode.indexDir, 'logs', 'shared-server.log');
   const state = new SupervisorState();
@@ -272,8 +305,13 @@ export function runRelay(mode: Shared, cwd: string | null): void {
   /** The client's handshake was answered by a server that is gone: the next one gets it replayed. */
   let needReplay = false;
   let failures = 0;
+  /** When the current connection was made, and how many in a row ended before they were stable. */
+  let connectedAt = 0;
+  let quickDeaths = 0;
   let lastAttemptAt = 0;
   let retryTimer: NodeJS.Timeout | null = null;
+  /** Why there is no server, while there is none — what a call that arrives meanwhile is told. */
+  let downWhy = 'no shared server is connected';
   let quietSince = 0;
   let pingSentAt: number | null = null;
   let pingSeq = 0;
@@ -357,6 +395,15 @@ export function runRelay(mode: Shared, cwd: string | null): void {
           if (!pending.includes(initializeLine)) pending.unshift(initializeLine);
         }
       }
+      quickDeaths = Date.now() - connectedAt < t.stableMs ? quickDeaths + 1 : 0;
+      if (quickDeaths >= 2) {
+        // A server that keeps ending right after it starts. The first time may be an update or a crash that
+        // does not repeat, so that one reconnects at once; from the second on this waits — 2 s, 4 s, … 30 s —
+        // instead of starting a server every few seconds for as long as the session lives (measured without
+        // the wait: 20 starts in 60 s).
+        retryLater('the shared server keeps ending right after it starts', Math.min(30_000, 1_000 * 2 ** (quickDeaths - 1)), quickDeaths <= 10);
+        return;
+      }
       console.error('[memory-bank relay] the shared server went away — reconnecting');
     }
     void connect();
@@ -365,6 +412,7 @@ export function runRelay(mode: Shared, cwd: string | null): void {
   const adopt = (a: Extract<Attempt, { kind: 'connected' }>): void => {
     link = { socket: a.socket, serverPid: a.serverPid };
     failures = 0;
+    connectedAt = Date.now();
     quietSince = Date.now();
     a.socket.on('data', (chunk: string) => { for (const line of a.splitter.push(chunk)) onServerLine(line); });
     a.socket.on('error', () => { /* 'close' follows */ });
@@ -391,14 +439,21 @@ export function runRelay(mode: Shared, cwd: string | null): void {
         + 'This session has no memory-bank tools until it starts; set MEMORY_BANK_SHARED_SERVER=0 to run a server per session instead.');
       process.exit(1);
     }
+    // Keep trying on a timer for a while; after that only a client call starts an attempt.
+    retryLater(why, Math.min(30_000, 1_000 * 2 ** (failures - 1)), failures <= 10);
+  };
+
+  /** No server for now: say why, answer the calls that are waiting, and (while `timed`) try again after `delayMs`. */
+  function retryLater(why: string, delayMs: number, timed: boolean): void {
+    phase = 'down';
+    downWhy = why;
     console.error(`[memory-bank relay] no shared server (${why}) — calls are answered with an error until one starts. Log: ${logPath}`);
     failPending(why);
-    // Keep trying on a timer for a while; after that only a client call starts an attempt.
-    if (failures <= 10 && retryTimer === null) {
-      retryTimer = setTimeout(() => { retryTimer = null; void connect(); }, Math.min(30_000, 1_000 * 2 ** (failures - 1)));
+    if (timed && retryTimer === null) {
+      retryTimer = setTimeout(() => { retryTimer = null; void connect(); }, delayMs);
       retryTimer.unref();
     }
-  };
+  }
 
   async function connect(): Promise<void> {
     if (ending || phase !== 'down') return;
@@ -409,9 +464,10 @@ export function runRelay(mode: Shared, cwd: string | null): void {
     let refused = 0;
     let silent = 0;
     let waitedMs = 0;
+    let answering = 0;
     for (;;) {
       if (ending) return;
-      const a = await attemptConnection(mode, cwd, t.helloMs);
+      const a = await attemptConnection(mode, session, t.helloMs);
       if (ending) { if (a.kind === 'connected') a.socket.destroy(); return; }
       if (a.kind === 'connected') { adopt(a); return; }
       if (a.kind === 'rejected') {
@@ -419,6 +475,11 @@ export function runRelay(mode: Shared, cwd: string | null): void {
         console.error(`[memory-bank relay] the shared server refused this session (${a.error}). `
           + 'Set MEMORY_BANK_SHARED_SERVER=0 to run a server per session instead.');
         process.exit(1);
+      }
+      if (a.kind === 'not-ours') {
+        // Asking again gets the same answer, and a server of ours cannot take the name from a live listener.
+        giveUp('a process that is not a memory-bank shared server answers on the socket');
+        return;
       }
       if (a.kind === 'silent') {
         if (++silent > 2) { giveUp('a process holds the socket but does not answer'); return; }
@@ -440,6 +501,10 @@ export function runRelay(mode: Shared, cwd: string | null): void {
       } else if (started.kind === 'again') {
         waitedMs += 150;
         if (waitedMs > t.startWaitMs * 2) { giveUp('no server came up on the socket'); return; }
+      } else if (++answering > ANSWERING_LOOKS) {
+        // Something accepts connections on the socket, and the hello above still did not get through.
+        giveUp('something answers on the socket but this session cannot connect to it');
+        return;
       }
       refused = 0;
     }
@@ -482,8 +547,10 @@ export function runRelay(mode: Shared, cwd: string | null): void {
       pending.push(line);
       if (phase === 'down') {
         // No timer is running any more (too many failures): a call starts an attempt, at most every 30s.
+        // Any other call is answered now. Why there is no server is known, and held until the next attempt
+        // (up to 30 s away) it would only get the same answer later.
         if (retryTimer === null && Date.now() - lastAttemptAt >= 30_000) void connect();
-        else if (retryTimer === null) failPending('the last attempt to start it failed moments ago');
+        else failPending(downWhy);
       }
     }
   });

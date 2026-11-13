@@ -10,12 +10,29 @@ var MAX_CWD_BYTES = 4096;
 function validSessionCwd(value) {
   return typeof value === "string" && value.length > 0 && !value.includes("\0") && path.isAbsolute(value) && Buffer.byteLength(value) <= MAX_CWD_BYTES;
 }
+var MAX_LOCALE_CHARS = 64;
+function validSessionLocale(value) {
+  if (typeof value !== "string" || value.length === 0 || value.length > MAX_LOCALE_CHARS) return false;
+  try {
+    return Intl.DateTimeFormat.supportedLocalesOf(value).length === 1;
+  } catch {
+    return false;
+  }
+}
 
 // src/own-cwd.ts
 function ownCwd() {
   try {
     const cwd = process.cwd();
     return validSessionCwd(cwd) ? cwd : null;
+  } catch {
+    return null;
+  }
+}
+function ownLocale() {
+  try {
+    const locale = new Intl.DateTimeFormat().resolvedOptions().locale;
+    return validSessionLocale(locale) ? locale : null;
   } catch {
     return null;
   }
@@ -54,27 +71,13 @@ function maxUnixSocketPathBytes(platform = process.platform) {
 var MAX_UNIX_SOCKET_PATH_BYTES = maxUnixSocketPathBytes();
 
 // src/shared-identity.ts
-var IDENTITY_PREFIXES = [
-  "MEMORY_BANK_",
-  "TEST_",
-  "ANTHROPIC_",
-  "CLAUDE_",
-  "_CLAUDE_",
-  "AWS_",
-  "GOOGLE_",
-  "CLOUD_ML_",
-  "VERTEX_",
-  "DISABLE_",
-  "ENABLE_"
-];
+var IDENTITY_PREFIXES = ["MEMORY_BANK_", "TEST_"];
 var IDENTITY_NAMES = /* @__PURE__ */ new Set([
   "HOME",
   "XDG_CONFIG_HOME",
   "PERSONAL_SUPERPOWERS_DIR",
   "CONVERSATION_SEARCH_EXCLUDE_PROJECTS",
-  "CLAUDECODE",
-  "API_TIMEOUT_MS",
-  "MAX_THINKING_TOKENS",
+  // Read once by the Node runtime of the server process: they cannot differ per connection.
   "HTTPS_PROXY",
   "HTTP_PROXY",
   "NO_PROXY",
@@ -86,15 +89,20 @@ var IDENTITY_NAMES = /* @__PURE__ */ new Set([
   "NODE_EXTRA_CA_CERTS",
   "SSL_CERT_FILE",
   "SSL_CERT_DIR",
-  // `read` prints dates and numbers in the process locale and time zone
+  "TZ"
+]);
+var CHILD_PREFIXES = ["ANTHROPIC_", "CLAUDE_", "_CLAUDE_", "AWS_", "GOOGLE_", "CLOUD_ML_", "VERTEX_", "DISABLE_", "ENABLE_"];
+var CHILD_NAMES = /* @__PURE__ */ new Set([
+  "CLAUDECODE",
+  "API_TIMEOUT_MS",
+  "MAX_THINKING_TOKENS",
   "LANG",
   "LC_ALL",
   "LC_MESSAGES",
   "LC_TIME",
   "LC_NUMERIC",
   "LC_CTYPE",
-  "LC_COLLATE",
-  "TZ"
+  "LC_COLLATE"
 ]);
 var SESSION_ONLY_NAMES = /* @__PURE__ */ new Set([
   "CLAUDE_CODE_SESSION_ID",
@@ -124,7 +132,37 @@ function serverEnvKind(name) {
   if (SESSION_ONLY_NAMES.has(name) || SESSION_ONLY_PREFIXES.some((p) => name.startsWith(p))) return null;
   if (PASSTHROUGH_NAMES.has(name)) return "passthrough";
   if (IDENTITY_NAMES.has(name) || IDENTITY_PREFIXES.some((p) => name.startsWith(p))) return "identity";
+  if (CHILD_NAMES.has(name) || CHILD_PREFIXES.some((p) => name.startsWith(p))) return "child";
   return null;
+}
+var CHILD_ENV_MAX_NAMES = 256;
+var CHILD_ENV_MAX_VALUE_BYTES = 8 * 1024;
+var CHILD_ENV_MAX_TOTAL_BYTES = 32 * 1024;
+var jsonBytes = (text) => Buffer.byteLength(JSON.stringify(text));
+function childEnvFor(env, cwd) {
+  const out = {};
+  const dropped = [];
+  let total = 0;
+  for (const name of Object.keys(env).sort()) {
+    let value = env[name];
+    if (value === void 0 || serverEnvKind(name) !== "child") continue;
+    if (PATH_NAMES.has(name) && value !== "" && !path3.isAbsolute(value)) {
+      if (cwd === null) {
+        dropped.push(name);
+        continue;
+      }
+      value = path3.resolve(cwd, value);
+    }
+    const bytes = jsonBytes(name) + jsonBytes(value);
+    const fits = !value.includes("\0") && Buffer.byteLength(value) <= CHILD_ENV_MAX_VALUE_BYTES && Object.keys(out).length < CHILD_ENV_MAX_NAMES && total + bytes <= CHILD_ENV_MAX_TOTAL_BYTES;
+    if (!fits) {
+      dropped.push(name);
+      continue;
+    }
+    out[name] = value;
+    total += bytes;
+  }
+  return { env: out, dropped };
 }
 function serverEnvFor(env, cwd) {
   const out = {};
@@ -169,6 +207,28 @@ function sharedSocketPathIn(indexDir, version, identity, maxBytes = MAX_UNIX_SOC
 var sharedPidPath = (socketPath) => socketPath.replace(/\.sock$/, ".pid");
 var sharedLockPath = (socketPath) => socketPath.replace(/\.sock$/, ".lock");
 var sharedServerArg = (identity) => `--mb-shared=${identity.slice(0, 8)}`;
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+var ORPHAN_LOCK_MIN_AGE_MS = 1e3;
+function startLockHolder(lockPath) {
+  let ageMs;
+  let text;
+  try {
+    ageMs = Date.now() - fs2.statSync(lockPath).mtimeMs;
+    text = fs2.readFileSync(lockPath, "utf8");
+  } catch {
+    return null;
+  }
+  const holder = Number(text.trim());
+  const alive = Number.isInteger(holder) && holder > 1 && isAlive(holder);
+  return { alive, ageMs, orphan: !alive && ageMs > ORPHAN_LOCK_MIN_AGE_MS };
+}
 
 // src/shared-protocol.ts
 var CONTROL_PREFIX = '{"mb_relay":';
@@ -301,18 +361,13 @@ function timings(env) {
     youngMs: positiveMs(env.MEMORY_BANK_RELAY_YOUNG_MS, 8e3),
     helloMs: positiveMs(env.MEMORY_BANK_RELAY_HELLO_MS, 1e4),
     startWaitMs: positiveMs(env.MEMORY_BANK_RELAY_START_WAIT_MS, 3e4),
-    pingAfterMs: positiveMs(env.MEMORY_BANK_RELAY_PING_AFTER_MS, 3e4)
+    // The slowest tool call measured under load took 4.5 s; 30 s of silence is not a slow call.
+    pingAfterMs: positiveMs(env.MEMORY_BANK_RELAY_PING_AFTER_MS, 3e4),
+    // The same 10 s the wrapper uses: a server gone that soon did not get to serve.
+    stableMs: positiveMs(env.MEMORY_BANK_RELAY_STABLE_MS, 1e4)
   };
 }
 var sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-function isAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err.code === "EPERM";
-  }
-}
 function unavailableError(id, why) {
   return JSON.stringify({
     jsonrpc: "2.0",
@@ -320,7 +375,7 @@ function unavailableError(id, why) {
     error: { code: -32003, message: `memory-bank: the shared server is not available (${why}) \u2014 the call was not run; retry shortly` }
   });
 }
-function attemptConnection(mode, cwd, helloMs) {
+function attemptConnection(mode, session, helloMs) {
   return new Promise((resolve) => {
     const socket = net2.connect(mode.socketPath);
     const splitter = new LineSplitter();
@@ -342,7 +397,15 @@ function attemptConnection(mode, cwd, helloMs) {
       else finish({ kind: "error", why: err.code ?? err.message });
     });
     socket.on("connect", () => {
-      const hello = { mb_relay: 1, identity: mode.identity, version: mode.version, cwd, pid: process.pid };
+      const hello = {
+        mb_relay: 1,
+        identity: mode.identity,
+        version: mode.version,
+        cwd: session.cwd,
+        env: session.env,
+        locale: session.locale,
+        pid: process.pid
+      };
       socket.write(JSON.stringify(hello) + "\n");
     });
     socket.on("close", () => finish({ kind: "error", why: "closed before answering the hello" }));
@@ -356,7 +419,7 @@ function attemptConnection(mode, cwd, helloMs) {
         if (parsed && parsed.mb_relay === 1 && typeof parsed.ok === "boolean") reply = parsed;
       } catch {
       }
-      if (reply === null) finish({ kind: "error", why: "the listener on the socket is not a memory-bank shared server" });
+      if (reply === null) finish({ kind: "not-ours" });
       else if (!reply.ok) finish({ kind: "rejected", error: reply.error });
       else finish({ kind: "connected", socket, splitter, rest, serverPid: reply.pid });
     });
@@ -378,12 +441,12 @@ function acquireStartLock(lockPath, maxAgeMs) {
       if (err.code !== "EEXIST") return null;
     }
     try {
-      const age = Date.now() - fs3.statSync(lockPath).mtimeMs;
-      const holder = Number(fs3.readFileSync(lockPath, "utf8").trim());
-      const holderAlive = Number.isInteger(holder) && holder > 1 && isAlive(holder);
-      const stale = holderAlive ? age > maxAgeMs : age > 1e3;
-      if (!stale) return null;
-      fs3.unlinkSync(lockPath);
+      const lock = startLockHolder(lockPath);
+      if (lock !== null) {
+        const stale = lock.alive ? lock.ageMs > maxAgeMs : lock.orphan;
+        if (!stale) return null;
+        fs3.unlinkSync(lockPath);
+      }
     } catch {
     }
   }
@@ -442,6 +505,7 @@ function pidFromFile(socketPath) {
     return null;
   }
 }
+var ANSWERING_LOOKS = 5;
 async function startServer(mode, t) {
   try {
     fs3.mkdirSync(mode.indexDir, { recursive: true, mode: 448 });
@@ -492,7 +556,7 @@ async function startServer(mode, t) {
     release();
   }
 }
-function runRelay(mode, cwd) {
+function runRelay(mode, session) {
   const t = timings(process.env);
   const logPath = path4.join(mode.indexDir, "logs", "shared-server.log");
   const state = new SupervisorState();
@@ -502,8 +566,11 @@ function runRelay(mode, cwd) {
   let phase = "down";
   let needReplay = false;
   let failures = 0;
+  let connectedAt = 0;
+  let quickDeaths = 0;
   let lastAttemptAt = 0;
   let retryTimer = null;
+  let downWhy = "no shared server is connected";
   let quietSince = 0;
   let pingSentAt = null;
   let pingSeq = 0;
@@ -580,6 +647,11 @@ function runRelay(mode, cwd) {
           if (!pending.includes(initializeLine)) pending.unshift(initializeLine);
         }
       }
+      quickDeaths = Date.now() - connectedAt < t.stableMs ? quickDeaths + 1 : 0;
+      if (quickDeaths >= 2) {
+        retryLater("the shared server keeps ending right after it starts", Math.min(3e4, 1e3 * 2 ** (quickDeaths - 1)), quickDeaths <= 10);
+        return;
+      }
       console.error("[memory-bank relay] the shared server went away \u2014 reconnecting");
     }
     void connect();
@@ -587,6 +659,7 @@ function runRelay(mode, cwd) {
   const adopt = (a) => {
     link = { socket: a.socket, serverPid: a.serverPid };
     failures = 0;
+    connectedAt = Date.now();
     quietSince = Date.now();
     a.socket.on("data", (chunk) => {
       for (const line of a.splitter.push(chunk)) onServerLine(line);
@@ -613,16 +686,21 @@ function runRelay(mode, cwd) {
       console.error(`[memory-bank relay] cannot start the shared server: ${why}. Log: ${logPath}. This session has no memory-bank tools until it starts; set MEMORY_BANK_SHARED_SERVER=0 to run a server per session instead.`);
       process.exit(1);
     }
+    retryLater(why, Math.min(3e4, 1e3 * 2 ** (failures - 1)), failures <= 10);
+  };
+  function retryLater(why, delayMs, timed) {
+    phase = "down";
+    downWhy = why;
     console.error(`[memory-bank relay] no shared server (${why}) \u2014 calls are answered with an error until one starts. Log: ${logPath}`);
     failPending(why);
-    if (failures <= 10 && retryTimer === null) {
+    if (timed && retryTimer === null) {
       retryTimer = setTimeout(() => {
         retryTimer = null;
         void connect();
-      }, Math.min(3e4, 1e3 * 2 ** (failures - 1)));
+      }, delayMs);
       retryTimer.unref();
     }
-  };
+  }
   async function connect() {
     if (ending || phase !== "down") return;
     phase = "connecting";
@@ -634,9 +712,10 @@ function runRelay(mode, cwd) {
     let refused = 0;
     let silent = 0;
     let waitedMs = 0;
+    let answering = 0;
     for (; ; ) {
       if (ending) return;
-      const a = await attemptConnection(mode, cwd, t.helloMs);
+      const a = await attemptConnection(mode, session, t.helloMs);
       if (ending) {
         if (a.kind === "connected") a.socket.destroy();
         return;
@@ -648,6 +727,10 @@ function runRelay(mode, cwd) {
       if (a.kind === "rejected") {
         console.error(`[memory-bank relay] the shared server refused this session (${a.error}). Set MEMORY_BANK_SHARED_SERVER=0 to run a server per session instead.`);
         process.exit(1);
+      }
+      if (a.kind === "not-ours") {
+        giveUp("a process that is not a memory-bank shared server answers on the socket");
+        return;
       }
       if (a.kind === "silent") {
         if (++silent > 2) {
@@ -689,6 +772,9 @@ function runRelay(mode, cwd) {
           giveUp("no server came up on the socket");
           return;
         }
+      } else if (++answering > ANSWERING_LOOKS) {
+        giveUp("something answers on the socket but this session cannot connect to it");
+        return;
       }
       refused = 0;
     }
@@ -731,7 +817,7 @@ function runRelay(mode, cwd) {
       pending.push(line);
       if (phase === "down") {
         if (retryTimer === null && Date.now() - lastAttemptAt >= 3e4) void connect();
-        else if (retryTimer === null) failPending("the last attempt to start it failed moments ago");
+        else failPending(downWhy);
       }
     }
   });
@@ -770,13 +856,14 @@ function sharedMode(o) {
   const entry = fileURLToPath2(o.entryUrl);
   const distDir = path6.dirname(entry);
   const serverEntry = path6.join(distDir, "shared-server.js");
-  if (path6.extname(entry) !== ".js" || !fs4.existsSync(serverEntry)) return local("not-built");
-  const version = o.version === void 0 ? ownPackageVersion() : o.version;
-  if (!version) return local("no-version");
+  if (path6.extname(entry) !== ".js") return local("source-run");
   const serverEnv = serverEnvFor(o.env, o.cwd);
-  if (serverEnv === null) return local("relative-path");
-  const indexDir = indexDirOf(serverEnv);
-  if (fs4.existsSync(path6.join(indexDir, SHARED_SWITCH_FILE))) return local("switch-off-file");
+  const indexDir = serverEnv === null ? null : indexDirOf(serverEnv);
+  if (indexDir !== null && fs4.existsSync(path6.join(indexDir, SHARED_SWITCH_FILE))) return local("switch-off-file");
+  if (!fs4.existsSync(serverEntry)) return { kind: "broken", reason: "server-file-missing" };
+  const version = o.version === void 0 ? ownPackageVersion() : o.version;
+  if (!version) return { kind: "broken", reason: "no-version" };
+  if (serverEnv === null || indexDir === null) return local("relative-path");
   const identity = sharedServerIdentity({ version, fingerprint: distFingerprint(distDir), serverEnv });
   const socketPath = sharedSocketPathIn(indexDir, version, identity);
   if (socketPath === null) return local("socket-path-too-long");
@@ -788,16 +875,27 @@ var WHY_SESSION_LOCAL = {
   "switch-off": "MEMORY_BANK_SHARED_SERVER is off",
   "switch-off-file": "shared-server.off is present in the index dir",
   windows: "not available on Windows",
-  "not-built": "running from source, or dist/shared-server.js is missing",
-  "no-version": "the plugin version (package.json) cannot be read",
+  "source-run": "running from source \u2014 there is no compiled server to start",
   "relative-path": "a path setting is relative and this process has no working directory to resolve it against",
   "socket-path-too-long": "the index dir path is too long for a unix socket \u2014 a shorter MEMORY_BANK_CONFIG_DIR / XDG_CONFIG_HOME turns it on"
+};
+var WHY_BROKEN = {
+  "server-file-missing": "dist/shared-server.js is missing next to dist/mcp-server.js",
+  "no-version": "the plugin version (package.json next to dist/) cannot be read"
 };
 async function main() {
   const cwd = ownCwd();
   const mode = sharedMode({ entryUrl: import.meta.url, env: process.env, cwd });
+  if (mode.kind === "broken") {
+    console.error(`[memory-bank] this install is incomplete: ${WHY_BROKEN[mode.reason]}. This session has no memory-bank tools until it is repaired (reinstall or update the plugin); set MEMORY_BANK_SHARED_SERVER=0 to run a server per session instead.`);
+    process.exit(1);
+  }
   if (mode.kind === "shared") {
-    runRelay(mode, cwd);
+    const child = childEnvFor(process.env, cwd);
+    if (child.dropped.length > 0) {
+      console.error(`[memory-bank] not passed on to the LLM child of this session's calls (too long, or a relative path with no working directory): ${child.dropped.join(", ")}`);
+    }
+    runRelay(mode, { cwd, env: child.env, locale: ownLocale() });
     return;
   }
   console.error(`[memory-bank] shared server off: ${WHY_SESSION_LOCAL[mode.reason]} \u2014 this session runs its own server`);
@@ -810,4 +908,4 @@ main().catch((error) => {
   console.error("Server error:", error);
   process.exit(1);
 });
-// memory-bank-bundle-stamp v1 inputs=b94b7906b655fdd7c1e0a03306a9ea52828778b4e389833cabae1845ddbc805b body=65b05fe306eb7eb37f091e420c81828f6481e2a8be3ed740983350e2925dce3a
+// memory-bank-bundle-stamp v1 inputs=ede88bd38e0e8450413aea4e34daf1bdaaf86e796d494d2226f9390332e1c74f body=14c050bcfc25cf80c8af25011a158aa6abc518131d38cff30bfa7bbe63f70470

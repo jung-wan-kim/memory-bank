@@ -309,7 +309,8 @@ export declare function setFactTags(db: Database.Database, factId: string, rawTa
  */
 export declare function listTags(db: Database.Database, opts?: {
     project?: string;
-    includeInactive?: boolean;
+    includeInactive?: boolean; /** Order of equally frequent tags: the reading session's locale (undefined = the process default). */
+    locale?: string;
 }): Array<{
     tag: string;
     count: number;

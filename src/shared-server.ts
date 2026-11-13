@@ -14,7 +14,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getIndexDir } from './paths.js';
-import { distFingerprint, serverEnvFor, sharedServerArg, sharedServerIdentity, sharedSocketPathIn } from './shared-identity.js';
+import {
+  distFingerprint, removeOrphanStartLock, serverEnvFor, sharedLockPath, sharedServerArg, sharedServerIdentity, sharedSocketPathIn,
+} from './shared-identity.js';
 import { EXIT_NAME_TAKEN, EXIT_RETRY, EXIT_START_FAILED, positiveMs } from './shared-protocol.js';
 import { probeSocket } from './unix-socket.js';
 import { ownPackageVersion } from './version-guard.js';
@@ -81,6 +83,7 @@ async function main(): Promise<void> {
 
   const packageJson = path.join(distDir, '..', 'package.json');
   let daemon: { close(): Promise<void> } | null = null;
+  const tickMs = positiveMs(process.env.MEMORY_BANK_SHARED_TICK_MS, 45_000);
 
   // Until the listener is bound nothing holds this process's event loop: the waits inside the bind are
   // unref'd (they are shared with code that must not keep an MCP server alive), and a process with nothing
@@ -92,8 +95,12 @@ async function main(): Promise<void> {
     identity,
     version,
     createServer: tools.createMemoryBankServer,
+    // What the two sides of this trade cost, measured on a 4.2 GB index: a session that finds no server pays
+    // about 1.7 s for its first answer, and a server with the embedding model loaded holds about 0.8 GB.
+    // Ten minutes spans closing one session and opening the next without keeping that memory through an
+    // idle hour. A judgement between the two, not a measured optimum — MEMORY_BANK_SHARED_IDLE_MS moves it.
     idleMs: positiveMs(process.env.MEMORY_BANK_SHARED_IDLE_MS, 10 * 60_000),
-    tickMs: positiveMs(process.env.MEMORY_BANK_SHARED_TICK_MS, 45_000),
+    tickMs,
     retireGraceMs: positiveMs(process.env.MEMORY_BANK_SHARED_RETIRE_GRACE_MS, 5_000),
     staleReason: () => {
       const disk = versionOnDisk(packageJson);
@@ -127,6 +134,15 @@ async function main(): Promise<void> {
   // Warm prompt injection for the hooks, served from this process's embedding model (one socket per version).
   daemon = inject.startInjectDaemon();
   log(`ready: version ${version}, identity ${identity.slice(0, 8)}, environment names: ${Object.keys(serverEnv).join(', ')}`);
+
+  // A relay killed while it held the start lock cannot give it back, and sessions that find this server
+  // answering never look at the lock: it is cleared here, now and on every self-check.
+  const lockPath = sharedLockPath(socketPath);
+  const clearOrphanLock = (): void => {
+    if (removeOrphanStartLock(lockPath)) log('removed the start lock of a relay that is gone');
+  };
+  clearOrphanLock();
+  setInterval(clearOrphanLock, tickMs).unref();
 
   const shutdown = (signal: string): void => {
     log(`${signal} received`);

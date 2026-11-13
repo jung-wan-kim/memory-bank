@@ -968,7 +968,7 @@ export function listTags(db, opts = {}) {
     }
     return [...counts.entries()]
         .map(([tag, count]) => ({ tag, count }))
-        .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+        .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, opts.locale));
 }
 /**
  * Facts carrying the given tags. `match: 'all'` (default) requires every tag,

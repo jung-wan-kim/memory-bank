@@ -51,6 +51,8 @@ function isRenderableMessage(msg: ConversationMessage): boolean {
 interface MarkdownCaps {
   /** Longest tool input value / tool result shown before it is clipped. */
   blockChars: number;
+  /** The reader's locale for dates and numbers (undefined = the default of the process that renders). */
+  locale?: string;
 }
 
 const NO_CAPS: MarkdownCaps = { blockChars: Infinity };
@@ -99,7 +101,7 @@ const SIDECHAIN_END = '\n---\n**🔀 SIDECHAIN END**\n---\n\n';
  */
 function renderMarkdownMessage(messages: ConversationMessage[], i: number, caps: MarkdownCaps): string | null {
   const msg = messages[i];
-  const timestamp = new Date(msg.timestamp).toLocaleString();
+  const timestamp = new Date(msg.timestamp).toLocaleString(caps.locale);
   const messageId = msg.uuid || `msg-${i}`;
 
   // Skip user messages that are just tool results
@@ -204,14 +206,14 @@ function renderMarkdownMessage(messages: ConversationMessage[], i: number, caps:
     // Add token usage if present
     if (msg.message.usage) {
       const usage = msg.message.usage;
-      output += `_in: ${(usage.input_tokens || 0).toLocaleString()}`;
+      output += `_in: ${(usage.input_tokens || 0).toLocaleString(caps.locale)}`;
       if (usage.cache_read_input_tokens) {
-        output += ` | cache read: ${usage.cache_read_input_tokens.toLocaleString()}`;
+        output += ` | cache read: ${usage.cache_read_input_tokens.toLocaleString(caps.locale)}`;
       }
       if (usage.cache_creation_input_tokens) {
-        output += ` | cache create: ${usage.cache_creation_input_tokens.toLocaleString()}`;
+        output += ` | cache create: ${usage.cache_creation_input_tokens.toLocaleString(caps.locale)}`;
       }
-      output += ` | out: ${(usage.output_tokens || 0).toLocaleString()}_\n\n`;
+      output += ` | out: ${(usage.output_tokens || 0).toLocaleString(caps.locale)}_\n\n`;
     }
   }
 
@@ -291,6 +293,11 @@ export interface ConversationRangeOptions {
   full?: boolean;
   /** Output ceiling in characters (default READ_MAX_OUTPUT_CHARS). */
   maxChars?: number;
+  /**
+   * The locale dates and numbers are written in: the reading session's, when a server renders for it.
+   * undefined = the default of this process (right when the process is the reader's own).
+   */
+  locale?: string;
 }
 
 /**
@@ -336,7 +343,7 @@ export async function readConversationRange(filePath: string, opts: Conversation
     return `_No user or assistant messages in lines ${firstLine}-${lastLineRead}._\n`;
   }
 
-  const caps: MarkdownCaps = { blockChars: opts.full ? Infinity : READ_MAX_BLOCK_CHARS };
+  const caps: MarkdownCaps = { blockChars: opts.full ? Infinity : READ_MAX_BLOCK_CHARS, locale: opts.locale };
   let output = markdownHeader(shown[0].msg);
   let inSidechain = false;
   let rendered = 0;
@@ -473,7 +480,7 @@ async function archiveHasLine(filePath: string, line: number): Promise<boolean> 
   }
 }
 
-export function formatConversationAsHTML(jsonl: string): string {
+export function formatConversationAsHTML(jsonl: string, locale?: string): string {
   const lines = jsonl.trim().split('\n').filter(line => line.trim());
   const allMessages = parseJsonlMessages(lines);
 
@@ -543,7 +550,7 @@ export function formatConversationAsHTML(jsonl: string): string {
 
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
-    const timestamp = new Date(msg.timestamp).toLocaleString();
+    const timestamp = new Date(msg.timestamp).toLocaleString(locale);
     const messageId = `msg-${msg.uuid || i}`;
 
     // Skip user messages that are just tool results - they'll be rendered with their tool use
@@ -700,14 +707,14 @@ export function formatConversationAsHTML(jsonl: string): string {
       if (msg.message.usage) {
         const usage = msg.message.usage;
         bodyContent += '<div class="token-usage">';
-        bodyContent += `in: ${(usage.input_tokens || 0).toLocaleString()}`;
+        bodyContent += `in: ${(usage.input_tokens || 0).toLocaleString(locale)}`;
         if (usage.cache_read_input_tokens) {
-          bodyContent += ` | cache read: ${usage.cache_read_input_tokens.toLocaleString()}`;
+          bodyContent += ` | cache read: ${usage.cache_read_input_tokens.toLocaleString(locale)}`;
         }
         if (usage.cache_creation_input_tokens) {
-          bodyContent += ` | cache create: ${usage.cache_creation_input_tokens.toLocaleString()}`;
+          bodyContent += ` | cache create: ${usage.cache_creation_input_tokens.toLocaleString(locale)}`;
         }
-        bodyContent += ` | out: ${(usage.output_tokens || 0).toLocaleString()}`;
+        bodyContent += ` | out: ${(usage.output_tokens || 0).toLocaleString(locale)}`;
         bodyContent += '</div>';
       }
     }

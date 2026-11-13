@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { sharedPidPath } from '../src/shared-identity.js';
+import { childEnvFor, sharedPidPath } from '../src/shared-identity.js';
 import {
   REPO, RELAY_ENTRY, WRAPPER, StdioSession, cleanup, createRig, expectedServer, isAlive, killAll, responsesOf, serverPids,
   sharedEnv, shortTmpDir, sleep, waitFor,
@@ -278,6 +278,76 @@ describe('TC-RELAY-003 — unresponsive: a server that holds the name but does n
   }, 60_000);
 });
 
+/**
+ * A listener on the server's name that answers — with something that is not a hello reply. Asking again gets
+ * the same answer and no server of ours can take the name from it; found as a relay that reconnected 481
+ * times in 25 s without an error or an exit (level-3 probe A-003, 2026-11-14).
+ */
+describe('TC-NEG-004 — wrong listener: something else answers on the server name', () => {
+  /** Answers every line with a JSON-RPC error, and prints one line per connection it gets. */
+  function wrongListener(socketPath: string): { child: ChildProcess; connections: () => number; up: Promise<void> } {
+    const child = spawn(process.execPath, ['-e', `
+      let n = 0;
+      require('net').createServer((c) => {
+        console.log('conn ' + (++n));
+        c.on('data', () => c.write('{"jsonrpc":"2.0","id":0,"error":{"code":-1,"message":"not for you"}}\\n'));
+        c.on('error', () => {});
+      }).listen(process.argv[1], () => console.log('up'));
+    `, socketPath], { stdio: ['ignore', 'pipe', 'inherit'] });
+    strays.push(child);
+    let out = '';
+    let ready: () => void;
+    const up = new Promise<void>((resolve) => { ready = resolve; });
+    child.stdout!.on('data', (d: Buffer) => { out += d.toString(); if (out.includes('up')) ready(); });
+    return { child, connections: () => (out.match(/^conn /gm) ?? []).length, up };
+  }
+
+  it('wrong listener: a relay that has just begun exits non-zero after one look — no storm of connections, nothing started', async () => {
+    const env = sharedEnv(configDir());
+    const server = watch(env);
+    fs.mkdirSync(server.indexDir, { recursive: true });
+    const listener = wrongListener(server.socketPath);
+    await listener.up;
+
+    const s = relay(env, projectDir('alpha'));
+    s.post('initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 't', version: '0' } });
+    const exit = await s.waitForExit(10_000);
+    expect(exit.code).toBe(1);
+    expect(s.stderr).toMatch(/cannot start the shared server: a process that is not a memory-bank shared server answers on the socket/);
+    expect(s.stderr).not.toMatch(/running via stdio|shared server off/);
+    expect(responsesOf(s)).toEqual([]);
+    expect(listener.connections()).toBe(1);
+    expect(isAlive(listener.child.pid!)).toBe(true);
+    expect(serverPids(server.marker)).toEqual([]);
+  }, 60_000);
+
+  it('wrong listener: a relay that is past its start stays, answers calls with the reason, and looks again ever less often', async () => {
+    const env = sharedEnv(configDir(), { MEMORY_BANK_RELAY_YOUNG_MS: '1' });
+    const server = watch(env);
+    fs.mkdirSync(server.indexDir, { recursive: true });
+    const listener = wrongListener(server.socketPath);
+    await listener.up;
+
+    const s = relay(env, projectDir('alpha'));
+    s.post('initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 't', version: '0' } });
+    const refused = await s.request('tools/list', {}, 15_000);
+    expect(refused.error?.code).toBe(-32003);
+    expect(refused.error?.message).toMatch(/not a memory-bank shared server answers on the socket/);
+    // it looks at 0 s, 1 s, 3 s, 7 s, …
+    await waitFor('the third look', () => listener.connections() >= 3 || null, 15_000, 20);
+    // the next look is 4 s away: a call that arrives now is answered now, with the reason — not held until then
+    const asked = Date.now();
+    const again = await s.request('tools/list', {}, 15_000);
+    expect(again.error?.code).toBe(-32003);
+    expect(again.error?.message).toMatch(/not a memory-bank shared server answers on the socket/);
+    expect(Date.now() - asked).toBeLessThan(1_500);
+    await sleep(2_000);
+    expect(listener.connections(), 'three looks in the first five seconds, where the storm made hundreds').toBe(3);
+    expect(s.exit, 'the relay is still there').toBeNull();
+    expect(serverPids(server.marker)).toEqual([]);
+  }, 60_000);
+});
+
 describe('TC-RELAY-003 — watchdog: a connected server that stops answering', () => {
   // SIGSTOP makes a real server silent without killing it; SIGCONT makes the same server "just slow".
   // The thresholds are seconds, not the default 30s — and not less: under the whole suite this process can be
@@ -357,6 +427,12 @@ describe('TC-NEG-002 — server environment: nothing of one session reaches the 
       CLAUDE_PLUGIN_ROOT: REPO,
       MB_TEST_SECRET: 'dummy-shell-e2e',
       SOME_API_KEY: 'key-e2e',
+      // this session's own LLM settings and locale: they go with its connection, not into the server process
+      ANTHROPIC_AUTH_TOKEN: 'llm-token-e2e',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'model-e2e',
+      CLAUDE_CODE_ENTRYPOINT: 'cli',
+      CLAUDECODE: '1',
+      LANG: 'de_DE.UTF-8',
     });
     const server = watch(env);
     const s = relay(env, projectDir('alpha'));
@@ -368,10 +444,11 @@ describe('TC-NEG-002 — server environment: nothing of one session reaches the 
     expect(names.has('MEMORY_BANK_CONFIG_DIR')).toBe(true);
     expect(names.has('PATH')).toBe(true);
     for (const name of ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_MESSAGING_SOCKET', 'CLAUDE_CODE_MESSAGING_TOKEN', 'CLAUDE_PROJECT_DIR',
-      'CLAUDE_PLUGIN_ROOT', 'MB_TEST_SECRET', 'SOME_API_KEY', 'MEMORY_BANK_SHARED_SERVER', 'MEMORY_BANK_RELAY_DEBUG', 'MEMORY_BANK_WRAPPER_NO_NPM', 'PWD']) {
+      'CLAUDE_PLUGIN_ROOT', 'MB_TEST_SECRET', 'SOME_API_KEY', 'MEMORY_BANK_SHARED_SERVER', 'MEMORY_BANK_RELAY_DEBUG', 'MEMORY_BANK_WRAPPER_NO_NPM', 'PWD',
+      'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDECODE', 'LANG']) {
       expect(names.has(name), name).toBe(false);
     }
-    for (const value of ['sess-e2e-secret', 'tok-e2e-secret', 'dummy-shell-e2e', 'key-e2e', '/work/e2e-project']) {
+    for (const value of ['sess-e2e-secret', 'tok-e2e-secret', 'dummy-shell-e2e', 'key-e2e', '/work/e2e-project', 'llm-token-e2e', 'model-e2e', 'de_DE']) {
       expect(shown.includes(value), value).toBe(false);
     }
     // and the server's working directory is not the session's
@@ -379,10 +456,10 @@ describe('TC-NEG-002 — server environment: nothing of one session reaches the 
     expect(cwdOfServer).toBe(server.indexDir);
   }, 60_000);
 
-  it('a session whose settings differ gets a server of its own', async () => {
+  it("a session whose server settings differ gets a server of its own", async () => {
     const dir = configDir();
     const envA = sharedEnv(dir);
-    const envB = sharedEnv(dir, { ANTHROPIC_BASE_URL: 'http://127.0.0.1:10' }); // another LLM endpoint
+    const envB = sharedEnv(dir, { MEMORY_BANK_LLM_RETRIES: '1' }); // a setting the server itself reads
     const a = watch(envA);
     const b = watch(envB);
     expect(a.marker).not.toBe(b.marker);
@@ -391,6 +468,96 @@ describe('TC-NEG-002 — server environment: nothing of one session reaches the 
     expect(serverPids(a.marker)).toHaveLength(1);
     expect(serverPids(b.marker)).toHaveLength(1);
     expect(serverPids(a.marker)[0]).not.toBe(serverPids(b.marker)[0]);
+  }, 60_000);
+});
+
+/**
+ * What is a session's alone — the account, endpoint, model and client options of the LLM child its calls
+ * start, and its locale — is declared with its connection. Counted as part of the server's identity it split
+ * 20 running sessions of one machine over 7 servers (2026-11-14); as a declaration they share one.
+ */
+describe("TC-ENV-004 — session settings: a session's LLM settings and locale travel with its connection", () => {
+  const OTHER_ACCOUNT = {
+    ANTHROPIC_BASE_URL: 'http://127.0.0.1:10',
+    ANTHROPIC_AUTH_TOKEN: 'another-account',
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: 'another-model',
+    API_TIMEOUT_MS: '5000',
+    CLAUDE_CODE_ENTRYPOINT: 'sdk-ts',
+    ENABLE_TOOL_SEARCH: 'false',
+    LANG: 'de_DE.UTF-8',
+  };
+
+  it('session settings: sessions that differ only in them share one server', async () => {
+    const dir = configDir();
+    const envA = sharedEnv(dir);
+    const envB = sharedEnv(dir, { ...OTHER_ACCOUNT, CLAUDE_CONFIG_DIR: path.join(dir, 'claude-other') });
+    const a = watch(envA);
+    const b = watch(envB);
+    expect(b.marker).toBe(a.marker);
+    expect(b.socketPath).toBe(a.socketPath);
+    const [sa, sb] = [relay(envA, projectDir('alpha')), relay(envB, projectDir('bravo'))];
+    await Promise.all([sa.initialize(), sb.initialize()]);
+    expect(await sa.toolNames()).toHaveLength(11);
+    expect(await sb.toolNames()).toHaveLength(11);
+    expect(serverPids(a.marker)).toHaveLength(1);
+    // each kept its own project on the server they share
+    const A = await sa.callTool('search_facts', { query: 'anything' });
+    const B = await sb.callTool('search_facts', { query: 'anything' });
+    expect(projectLine(A.text)).toMatch(/alpha$/);
+    expect(projectLine(B.text)).toMatch(/bravo$/);
+  }, 60_000);
+
+  it('session settings: the relay declares them, its locale and its working directory — and nothing else of the session', async () => {
+    const cwd = fs.realpathSync(projectDir('alpha'));
+    const env = sharedEnv(configDir(), {
+      ...OTHER_ACCOUNT,
+      CLAUDE_CODE_SESSION_ID: 'sess-hello-secret',
+      CLAUDE_CODE_MESSAGING_TOKEN: 'dummy-tok-hello',
+      CLAUDE_PROJECT_DIR: '/work/hello-project',
+      MB_TEST_SECRET: 'dummy-shell-hello',
+    });
+    const server = watch(env);
+    fs.mkdirSync(server.indexDir, { recursive: true });
+    // a stand-in for the server: says yes to the hello and keeps what it was told
+    const hellos: any[] = [];
+    const standIn = net.createServer((c) => {
+      let buf = '';
+      c.on('data', (d) => {
+        buf += d.toString();
+        const nl = buf.indexOf('\n');
+        if (nl < 0 || hellos.length > 0) return;
+        hellos.push(JSON.parse(buf.slice(0, nl)));
+        c.write(JSON.stringify({ mb_relay: 1, ok: true, pid: process.pid, version: server.version }) + '\n');
+      });
+      c.on('error', () => {});
+    });
+    await new Promise<void>((resolve) => standIn.listen(server.socketPath, () => resolve()));
+    try {
+      const s = relay(env, cwd);
+      const hello = await waitFor('the hello', () => hellos[0]);
+      s.kill();
+
+      expect(hello.cwd).toBe(cwd);
+      expect(hello.identity).toBe(server.identity);
+      expect(hello.env).toEqual(childEnvFor(env, cwd).env);
+      expect(hello.env).toMatchObject({ ...OTHER_ACCOUNT, CLAUDE_CONFIG_DIR: env.CLAUDE_CONFIG_DIR });
+      for (const name of Object.keys(hello.env)) {
+        expect(name, 'only names of the LLM child').toMatch(/^(ANTHROPIC_|CLAUDE_|_CLAUDE_|AWS_|GOOGLE_|CLOUD_ML_|VERTEX_|DISABLE_|ENABLE_|LC_)|^(CLAUDECODE|API_TIMEOUT_MS|MAX_THINKING_TOKENS|LANG)$/);
+      }
+      const told = JSON.stringify(hello);
+      for (const secret of ['sess-hello-secret', 'dummy-tok-hello', '/work/hello-project', 'dummy-shell-hello', env.MEMORY_BANK_CONFIG_DIR + '"']) {
+        expect(told.includes(secret), secret).toBe(false);
+      }
+      for (const name of ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_MESSAGING_TOKEN', 'CLAUDE_PROJECT_DIR', 'PATH', 'HOME', 'MEMORY_BANK_CONFIG_DIR']) {
+        expect(hello.env, name).not.toHaveProperty(name);
+      }
+      // the locale is the one this session's own process formats in
+      const own = execFileSync(process.execPath, ['-e', 'process.stdout.write(new Intl.DateTimeFormat().resolvedOptions().locale)'], { env, encoding: 'utf8' });
+      expect(hello.locale).toBe(own);
+      expect(own).toBe('de-DE');
+    } finally {
+      await new Promise<void>((resolve) => standIn.close(() => resolve()));
+    }
   }, 60_000);
 });
 

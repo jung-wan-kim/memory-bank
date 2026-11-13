@@ -43,11 +43,21 @@ function isInside(candidate: string, root: string): boolean {
 
 /**
  * The real path of the conversation file to read for `requestedPath`.
+ *
+ * A relative path is the caller's: it is resolved against `baseDir`, the working directory of the session
+ * that asked — never against the directory of the process this runs in, which for a shared server is the
+ * index dir and nobody's project. With no `baseDir` (the session could not read its own) a relative path is
+ * refused.
+ *
  * Throws: "Invalid file type" (not .jsonl / .jsonl.zst), ACCESS_DENIED_MESSAGE
  * (outside the roots — existing or not), "File not found" (inside, absent).
  */
-export function resolveReadableConversation(requestedPath: string, allowedRoots: string[]): string {
-  const resolvedPath = path.resolve(requestedPath);
+export function resolveReadableConversation(requestedPath: string, allowedRoots: string[], baseDir: string | null = null): string {
+  if (!path.isAbsolute(requestedPath) && baseDir === null) {
+    throw new Error("a relative path cannot be resolved: this session's working directory could not be read — pass the absolute path a search result gave");
+  }
+  // An absolute path resolves to itself (normalized); a relative one against the session's directory.
+  const resolvedPath = path.isAbsolute(requestedPath) ? path.resolve(requestedPath) : path.resolve(baseDir as string, requestedPath);
   if (!resolvedPath.endsWith('.jsonl') && !resolvedPath.endsWith('.jsonl.zst')) {
     throw new Error('Invalid file type: only .jsonl files are supported');
   }

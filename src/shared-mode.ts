@@ -27,10 +27,29 @@ export type SharedMode =
       /** dist/shared-server.js next to the running entry file. */
       serverEntry: string;
     }
-  | { kind: 'session-local'; reason: SessionLocalReason };
+  | { kind: 'session-local'; reason: SessionLocalReason }
+  | { kind: 'broken'; reason: BrokenReason };
 
+/**
+ * Why a session runs a server of its own. Three kinds, and nothing else:
+ *  - the user turned the shared server off (the variable, or the file in the index dir);
+ *  - this way of running has no shared server by design (Windows: no unix sockets; a run from source: there
+ *    is no compiled server to start);
+ *  - a setting makes the socket impossible (a path too long for one; a relative path setting in a session
+ *    that cannot read its own working directory).
+ * A session-local server answers exactly as a shared one does — same database, same tools, same scope rule;
+ * what differs is one process per session. The entry point says which reason applied, on stderr.
+ */
 export type SessionLocalReason =
-  | 'switch-off' | 'switch-off-file' | 'windows' | 'not-built' | 'no-version' | 'relative-path' | 'socket-path-too-long';
+  | 'switch-off' | 'switch-off-file' | 'windows' | 'source-run' | 'relative-path' | 'socket-path-too-long';
+
+/**
+ * An install that cannot run at all the way it was built to: the compiled server is missing next to the
+ * compiled entry, or the package version cannot be read. Not a reason to run some other way — a session that
+ * quietly ran its own server here would hide the broken install and keep one whole server per session. The
+ * entry point exits non-zero and says what is missing; the wrapper above repairs the install and tries again.
+ */
+export type BrokenReason = 'server-file-missing' | 'no-version';
 
 const SWITCH_OFF_RE = /^(0|false|off|no)$/i;
 
@@ -53,16 +72,19 @@ export function sharedMode(o: {
   const entry = fileURLToPath(o.entryUrl);
   const distDir = path.dirname(entry);
   const serverEntry = path.join(distDir, 'shared-server.js');
-  if (path.extname(entry) !== '.js' || !fs.existsSync(serverEntry)) return local('not-built');
+  if (path.extname(entry) !== '.js') return local('source-run');
 
-  const version = o.version === undefined ? ownPackageVersion() : o.version;
-  if (!version) return local('no-version');
-
+  // The user's "off" comes before anything about the install: either form of it is a choice to run without
+  // the parts checked below.
   const serverEnv = serverEnvFor(o.env, o.cwd);
-  if (serverEnv === null) return local('relative-path');
+  const indexDir = serverEnv === null ? null : indexDirOf(serverEnv);
+  if (indexDir !== null && fs.existsSync(path.join(indexDir, SHARED_SWITCH_FILE))) return local('switch-off-file');
 
-  const indexDir = indexDirOf(serverEnv);
-  if (fs.existsSync(path.join(indexDir, SHARED_SWITCH_FILE))) return local('switch-off-file');
+  if (!fs.existsSync(serverEntry)) return { kind: 'broken', reason: 'server-file-missing' };
+  const version = o.version === undefined ? ownPackageVersion() : o.version;
+  if (!version) return { kind: 'broken', reason: 'no-version' };
+
+  if (serverEnv === null || indexDir === null) return local('relative-path');
 
   const identity = sharedServerIdentity({ version, fingerprint: distFingerprint(distDir), serverEnv });
   const socketPath = sharedSocketPathIn(indexDir, version, identity);

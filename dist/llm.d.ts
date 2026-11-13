@@ -25,6 +25,21 @@ export declare const ISOLATED_QUERY_OPTIONS: {
 export declare function llmWorkdir(): string;
 export declare function pruneLlmTranscripts(now?: number): void;
 /**
+ * Options of the API-key fallback client, read from the environment of the call (`llmEnvironment`).
+ *
+ * Left to itself the Anthropic SDK fills the endpoint, the bearer token and the extra headers from the
+ * environment of the process it runs in. In a shared server that is not the calling session's: the session's
+ * key would go to the default endpoint instead of the one that session set. So each is handed over — for a
+ * caller that runs in its own process these are the values the SDK would have read anyway. (The SDK's log
+ * level stays the process's own: that output goes to this process's log, not to a session.)
+ */
+export declare function fallbackClientOptions(apiKey: string, llmEnv: Readonly<Record<string, string | undefined>>, ownBaseUrl: string | undefined): {
+    apiKey: string;
+    authToken: string | null;
+    baseURL?: string;
+    defaultHeaders: Record<string, string>;
+};
+/**
  * Call Haiku via Claude Agent SDK (no API key needed inside Claude Code —
  * billed to the local subscription, NOT a metered API key).
  * Falls back to direct Anthropic SDK only if ANTHROPIC_API_KEY is set
@@ -44,7 +59,11 @@ export declare function pruneLlmTranscripts(now?: number): void;
  *    보류·재시도, deterministic 은 attempt 소모)가 비로소 작동한다 (fail-loud).
  * 호출자 계약: 성공 반환값은 **비어있지 않음이 보장**된다.
  */
-export declare function callHaiku(systemPrompt: string, userMessage: string, maxTokens?: number): Promise<string>;
+export declare function callHaiku(systemPrompt: string, userMessage: string, maxTokens?: number, 
+/** `childEnv`: the calling session's settings for the LLM child, when a shared server makes this call for it. */
+opts?: {
+    childEnv?: Readonly<Record<string, string>> | null;
+}): Promise<string>;
 /**
  * Parse the JSON in an LLM reply. `expect: 'array'` is for callers that need a
  * list (fact extraction, batch classification): a reply that wraps the list in

@@ -5,8 +5,9 @@ import type { SharedMode } from './shared-mode.js';
  *   client (stdio) ⇄ wrapper ⇄ relay (this) ⇄ unix socket ⇄ shared server
  *
  * It passes MCP lines both ways and owns nothing else — no database, no embedding model. What it adds:
- *  - It declares the session to the server (the hello: identity, version, this process's working directory)
- *    and refuses to pass a single client line before the server accepted that.
+ *  - It declares the session to the server (the hello: identity, version, and what is this session's alone —
+ *    its working directory, its settings for the LLM child, its locale) and refuses to pass a single client
+ *    line before the server accepted that.
  *  - When no server answers it starts one (detached, with the allow-list environment), under a lock so a
  *    burst of sessions starts one server, not many.
  *  - When the server goes away it reconnects, starting a new one if need be, and replays the MCP handshake it
@@ -22,6 +23,13 @@ import type { SharedMode } from './shared-mode.js';
 type Shared = Extract<SharedMode, {
     kind: 'shared';
 }>;
+/** What this session declares to the server it connects to — read from this process by the entry point. */
+export interface RelaySession {
+    cwd: string | null;
+    /** The session's settings for the LLM child of its calls (shared-identity.ts childEnvFor). */
+    env: Record<string, string>;
+    locale: string | null;
+}
 /** Run as the relay of one session until its client goes away. Never returns a server of its own. */
-export declare function runRelay(mode: Shared, cwd: string | null): void;
+export declare function runRelay(mode: Shared, session: RelaySession): void;
 export {};

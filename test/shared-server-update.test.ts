@@ -1,9 +1,10 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { sharedLockPath } from '../src/shared-identity.js';
 import {
-  REPO, WRAPPER, createRig, isAlive, makePluginRoot, responsesOf, serverLog, serverPids,
-  setPackageVersion, sharedEnv, sleep, waitFor,
+  REPO, RELAY_ENTRY, WRAPPER, createRig, isAlive, makePluginRoot, responsesOf, serverLog, serverPids,
+  setPackageVersion, sharedEnv, sleep, waitFor, type StdioSession,
 } from './helpers/shared-harness.js';
 
 /**
@@ -180,4 +181,148 @@ describe('TC-NEG-001 — a shared server that cannot start is never papered over
     // the client's handshake was replayed for it: one initialize answer in total
     expect(responsesOf(s).filter((m) => m.result?.serverInfo !== undefined)).toHaveLength(1);
   }, 120_000);
+});
+
+/**
+ * A server that starts, serves, and ends moments later — again and again (a crash in something every start
+ * does). Reconnecting at once each time started a server every 3 s for as long as the session lived: 20
+ * starts in 60 s (level-3 probe A-006, 2026-11-14).
+ */
+describe('TC-NEG-005 — crash loop: a server that keeps ending right after it starts', () => {
+  /** When each line of interest turned up in the relay's stderr, for the 1st, 2nd, … time (looked at every 20 ms). */
+  function clock(s: StdioSession, patterns: Record<'connected' | 'waiting', RegExp>): { at: Record<'connected' | 'waiting', number[]>; stop(): void } {
+    const at = { connected: [] as number[], waiting: [] as number[] };
+    const timer = setInterval(() => {
+      for (const key of ['connected', 'waiting'] as const) {
+        const count = (s.stderr.match(patterns[key]) ?? []).length;
+        while (at[key].length < count) at[key].push(Date.now());
+      }
+    }, 20);
+    return { at, stop: () => clearInterval(timer) };
+  }
+
+  it('crash loop: the first loss reconnects at once, the next ones wait 2 s, 4 s, … and a server that stays is used again', async () => {
+    const plugin = pluginRoot();
+    // the real server, ended 600 ms after it began serving for as long as the flag file is there
+    const flag = path.join(plugin.root, 'end-after-serving');
+    fs.renameSync(plugin.serverFile, path.join(path.dirname(plugin.serverFile), 'shared-server-real.js'));
+    fs.writeFileSync(plugin.serverFile, `
+      import fs from 'node:fs';
+      const serving = () => {
+        try { return fs.readdirSync('.').some((n) => n.endsWith('.pid') && fs.readFileSync(n, 'utf8').trim() === String(process.pid)); } catch { return false; }
+      };
+      const poll = setInterval(() => {
+        if (!serving()) return;
+        clearInterval(poll);
+        if (fs.existsSync(${JSON.stringify(flag)})) setTimeout(() => process.exit(0), 600);
+      }, 20);
+      await import('./shared-server-real.js');
+    `);
+    fs.writeFileSync(flag, '');
+
+    const env = sharedEnv(tmp());
+    const server = watch(env, plugin.entry);
+    const s = session(plugin.entry, env, tmp('mbp-'));
+    const seen = clock(s, {
+      connected: /connected to shared server \d+/g,
+      waiting: /no shared server \(the shared server keeps ending right after it starts\)/g,
+    });
+    try {
+      await s.initialize();
+      // loss 1: back at once. loss 2: the relay says it waits, and the third server comes 2 s later.
+      await waitFor('the third server', () => seen.at.connected.length >= 3 || null, 60_000, 20);
+      expect(s.stderr).toMatch(/the shared server went away — reconnecting/);
+      expect(seen.at.waiting.length).toBeGreaterThanOrEqual(1);
+      expect(seen.at.connected[2] - seen.at.waiting[0], 'started 2 s after the second was lost').toBeGreaterThanOrEqual(1_800);
+
+      // loss 3: a longer wait — and this time a server that stays is what comes back
+      await waitFor('the third loss', () => seen.at.waiting.length >= 2 || null, 60_000, 20);
+      fs.rmSync(flag);
+      await waitFor('the fourth server', () => seen.at.connected.length >= 4 || null, 60_000, 20);
+      expect(seen.at.connected[3] - seen.at.waiting[1], 'started 4 s after the third was lost').toBeGreaterThanOrEqual(3_600);
+    } finally {
+      seen.stop();
+    }
+
+    expect(await s.toolNames()).toHaveLength(11);
+    expect(s.exit, 'the relay never left').toBeNull();
+    const pids = [...s.stderr.matchAll(/connected to shared server (\d+)/g)].map((m) => m[1]);
+    expect(new Set(pids).size, 'four servers in all: three that ended, one that stayed').toBe(4);
+    expect(serverPids(server.marker)).toHaveLength(1);
+    // the client's handshake was answered once, however many servers came and went
+    expect(responsesOf(s).filter((m) => m.result?.serverInfo !== undefined)).toHaveLength(1);
+  }, 120_000);
+});
+
+/**
+ * A relay killed while it held the start lock leaves the file behind. Sessions that find the server answering
+ * never look at it, so the server clears it — at start and on every self-check.
+ */
+describe('TC-NEG-006 — start lock: one left by a relay that is gone', () => {
+  it('start lock: the running server removes an orphan, leaves a held one alone, and a start is not delayed by one', async () => {
+    const env = sharedEnv(tmp()); // self-check every 300 ms
+    const server = watch(env);
+    const lock = sharedLockPath(server.socketPath);
+    const orphan = (): void => {
+      fs.writeFileSync(lock, '999999'); // no such process: macOS and Linux pids stop far below
+      const then = new Date(Date.now() - 5_000);
+      fs.utimesSync(lock, then, then);
+    };
+
+    // before any server: the first relay takes the orphan over instead of waiting for it
+    fs.mkdirSync(server.indexDir, { recursive: true });
+    orphan();
+    const started = Date.now();
+    const s = session(RELAY_ENTRY, env, tmp('mbp-'));
+    await s.initialize();
+    expect(Date.now() - started, 'the start did not wait for the lock to age out').toBeLessThan(15_000);
+    expect(fs.existsSync(lock), 'the relay gave its own lock back').toBe(false);
+
+    // under a running server: gone within a few self-checks
+    orphan();
+    await waitFor('the server to remove the orphan lock', () => !fs.existsSync(lock), 5_000);
+    expect(serverLog(server.indexDir)).toMatch(/removed the start lock of a relay that is gone/);
+
+    // a lock a live process holds is somebody starting a server right now: never removed
+    fs.writeFileSync(lock, String(process.pid));
+    await sleep(1_200);
+    expect(fs.existsSync(lock)).toBe(true);
+    fs.rmSync(lock);
+    expect(await s.toolNames()).toHaveLength(11);
+  }, 60_000);
+});
+
+/**
+ * An install that lacks what the shared server needs is not a reason to run a server per session without a
+ * word: that would hide the broken install for good. The entry exits non-zero and says what is missing.
+ */
+describe('TC-NEG-007 — incomplete install: no quiet fall back to a server per session', () => {
+  const INIT = { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 't', version: '0' } };
+
+  it.each([
+    ['dist/shared-server.js is missing', (plugin: ReturnType<typeof makePluginRoot>) => fs.rmSync(plugin.serverFile), /this install is incomplete: dist\/shared-server\.js is missing/],
+    ['package.json has no version', (plugin: ReturnType<typeof makePluginRoot>) => fs.writeFileSync(plugin.packageJson, '{ "name": "memory-bank" }'), /this install is incomplete: the plugin version .* cannot be read/],
+  ])('incomplete install (%s): exits non-zero, says what is missing, answers nothing', async (_what, breakIt, why) => {
+    const plugin = pluginRoot();
+    breakIt(plugin);
+    const env = sharedEnv(tmp());
+    const s = session(plugin.entry, env, tmp('mbp-'));
+    s.post('initialize', INIT);
+    const exit = await s.waitForExit(20_000);
+    expect(exit.code).toBe(1);
+    expect(s.stderr).toMatch(why);
+    expect(s.stderr).toMatch(/MEMORY_BANK_SHARED_SERVER=0/);
+    expect(s.stderr).not.toMatch(/shared server off|running via stdio/);
+    expect(responsesOf(s)).toEqual([]);
+  }, 60_000);
+
+  it('incomplete install: the switch the message names does run a server per session, and says so', async () => {
+    const plugin = pluginRoot();
+    fs.rmSync(plugin.serverFile);
+    const env = sharedEnv(tmp(), { MEMORY_BANK_SHARED_SERVER: '0' });
+    const s = session(plugin.entry, env, tmp('mbp-'));
+    await s.initialize();
+    expect(await s.toolNames()).toHaveLength(11);
+    expect(s.stderr).toMatch(/shared server off: MEMORY_BANK_SHARED_SERVER is off — this session runs its own server/);
+  }, 60_000);
 });

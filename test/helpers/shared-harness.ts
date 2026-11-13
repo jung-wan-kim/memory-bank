@@ -109,10 +109,13 @@ export const INITIALIZE_PARAMS = {
   clientInfo: { name: 'shared-harness', version: '0.0.0' },
 };
 
-/** hello + MCP initialize on a fresh connection. */
-export async function openSession(socketPath: string, hello: { identity: string; version: string; cwd: string | null }): Promise<LineClient> {
+/** hello + MCP initialize on a fresh connection. `env` / `locale`: what the session declares as its own (default: nothing, no locale). */
+export async function openSession(
+  socketPath: string,
+  hello: { identity: string; version: string; cwd: string | null; env?: Record<string, string>; locale?: string | null },
+): Promise<LineClient> {
   const client = await LineClient.connect(socketPath);
-  client.send({ mb_relay: 1, pid: process.pid, ...hello });
+  client.send({ mb_relay: 1, pid: process.pid, env: {}, locale: null, ...hello });
   const reply = await client.next((m) => m && m.mb_relay === 1);
   if (!reply.ok) throw new Error(`hello refused: ${reply.error}`);
   await client.request('init', 'initialize', INITIALIZE_PARAMS);

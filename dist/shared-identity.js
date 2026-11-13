@@ -8,30 +8,45 @@ import { MAX_UNIX_SOCKET_PATH_BYTES } from './version-guard.js';
  * A session-local server inherits everything its session has: the session id, the messaging socket and token,
  * the project directory, the shell's secrets — and hands all of it on to the LLM child `ask_avatar` starts.
  * A shared server is started by whichever session arrives first, so whatever it inherits is that session's,
- * for every session it later serves. Two rules follow:
+ * for every session it later serves. Three rules follow:
  *
- *  1. A shared server is started with an allow-list environment (serverEnvFor): the settings the server and
- *     its LLM child read, never what belongs to one session.
- *  2. Sessions share a server only when that whole environment is equal (sharedServerIdentity), together with
- *     the code version and the code itself. A setting that differs — another database, another LLM account,
- *     another locale — is another server.
+ *  1. A shared server is started with an allow-list environment (serverEnvFor): the settings the server code
+ *     itself reads, and what the Node runtime of that one process reads when it starts (proxy, CA files, time
+ *     zone). Never what belongs to one session.
+ *  2. Sessions share a server only when that environment is equal (sharedServerIdentity), together with the
+ *     code version and the code itself. Another database or another index dir is another server.
+ *  3. What only the LLM child reads — the account, the endpoint, the model and client settings — and the
+ *     locale a session's output is written in are not the server's: each connection declares its own
+ *     (childEnvFor, and the locale in the hello), as it declares its working directory. The server keeps them
+ *     per connection and uses them for that connection's calls only.
  *
- * A session-specific variable that slips into the allow-list splits sessions onto servers of their own: no
+ * Rule 3 is what makes sharing real. With those values in the identity, the sessions of one machine split by
+ * model override, API timeout, entry point and locale: the 20 sessions running on one machine made 7
+ * servers; with them per connection, 2 — the one setting that still differed was the server's own,
+ * MEMORY_BANK_AGENT_SOURCES (measured 2026-11-14 — docs/plans/2026-11-14-shared-mcp-server.md, Deviations).
+ *
+ * A session-specific variable that slips into the identity list splits sessions onto servers of their own: no
  * sharing, and nothing mixed. test/server-scope-guard.test.ts holds the other side: every variable the server
- * code reads is on the list.
+ * code reads from its process is on the identity list, and nothing on the per-connection list is read there.
  */
-/** Read by the server code or by the LLM child it starts. Equal values are required to share a server. */
-const IDENTITY_PREFIXES = [
-    'MEMORY_BANK_', 'TEST_',
-    'ANTHROPIC_', 'CLAUDE_', '_CLAUDE_', 'AWS_', 'GOOGLE_', 'CLOUD_ML_', 'VERTEX_', 'DISABLE_', 'ENABLE_',
-];
+/** Read by the server code itself, from its own process. Equal values are required to share a server. */
+const IDENTITY_PREFIXES = ['MEMORY_BANK_', 'TEST_'];
 const IDENTITY_NAMES = new Set([
     'HOME', 'XDG_CONFIG_HOME', 'PERSONAL_SUPERPOWERS_DIR', 'CONVERSATION_SEARCH_EXCLUDE_PROJECTS',
-    'CLAUDECODE', 'API_TIMEOUT_MS', 'MAX_THINKING_TOKENS',
+    // Read once by the Node runtime of the server process: they cannot differ per connection.
     'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY', 'ALL_PROXY', 'https_proxy', 'http_proxy', 'no_proxy', 'all_proxy',
     'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
-    // `read` prints dates and numbers in the process locale and time zone
-    'LANG', 'LC_ALL', 'LC_MESSAGES', 'LC_TIME', 'LC_NUMERIC', 'LC_CTYPE', 'LC_COLLATE', 'TZ',
+    'TZ',
+]);
+/**
+ * Read by the LLM child `ask_avatar` starts, never by the server code: the session's account, endpoint, model
+ * and client settings, and its locale. Sent in the hello, kept per connection, given to that connection's
+ * child on top of the server's own environment.
+ */
+const CHILD_PREFIXES = ['ANTHROPIC_', 'CLAUDE_', '_CLAUDE_', 'AWS_', 'GOOGLE_', 'CLOUD_ML_', 'VERTEX_', 'DISABLE_', 'ENABLE_'];
+const CHILD_NAMES = new Set([
+    'CLAUDECODE', 'API_TIMEOUT_MS', 'MAX_THINKING_TOKENS',
+    'LANG', 'LC_ALL', 'LC_MESSAGES', 'LC_TIME', 'LC_NUMERIC', 'LC_CTYPE', 'LC_COLLATE',
 ]);
 /** Belongs to one session, or is read only by the session's own processes (relay, wrapper, hook client). */
 const SESSION_ONLY_NAMES = new Set([
@@ -47,7 +62,10 @@ const PATH_NAMES = new Set([
     'MEMORY_BANK_CONFIG_DIR', 'PERSONAL_SUPERPOWERS_DIR', 'XDG_CONFIG_HOME', 'MEMORY_BANK_DB_PATH',
     'TEST_DB_PATH', 'TEST_ARCHIVE_DIR', 'TEST_PROJECTS_DIR', 'CLAUDE_CONFIG_DIR',
 ]);
-/** How a shared server gets a variable: as part of its identity, as an operating variable, or not at all. */
+/**
+ * How a variable of a session reaches a shared server: as part of the server's identity, as an operating
+ * variable of the process, per connection for the LLM child ('child'), or not at all.
+ */
 export function serverEnvKind(name) {
     if (SESSION_ONLY_NAMES.has(name) || SESSION_ONLY_PREFIXES.some((p) => name.startsWith(p)))
         return null;
@@ -55,7 +73,75 @@ export function serverEnvKind(name) {
         return 'passthrough';
     if (IDENTITY_NAMES.has(name) || IDENTITY_PREFIXES.some((p) => name.startsWith(p)))
         return 'identity';
+    if (CHILD_NAMES.has(name) || CHILD_PREFIXES.some((p) => name.startsWith(p)))
+        return 'child';
     return null;
+}
+/**
+ * The most a connection may declare for its LLM child. The sessions of the machine this was measured on
+ * declare at most 25 names, 1.3 KB in all, the longest value 185 bytes (2026-11-14): the limits leave more
+ * than an order of magnitude. The total is counted as the JSON the hello carries, so it keeps that line under
+ * the server's 64 KB limit whatever the values contain.
+ */
+export const CHILD_ENV_MAX_NAMES = 256;
+export const CHILD_ENV_MAX_VALUE_BYTES = 8 * 1024;
+export const CHILD_ENV_MAX_TOTAL_BYTES = 32 * 1024;
+const jsonBytes = (text) => Buffer.byteLength(JSON.stringify(text));
+/**
+ * What a session declares for the LLM child of its own calls: its variables of the 'child' kind.
+ *
+ * A path setting that is relative means "relative to the session" (the child runs elsewhere), so it is made
+ * absolute against `cwd`. A value that cannot be carried — a NUL, over the limits above, or a relative path
+ * with no working directory to resolve it against — is left out and named in `dropped`: the caller says so
+ * on stderr. One such value must not cost the session its connection, and must not go missing without a
+ * word either.
+ */
+export function childEnvFor(env, cwd) {
+    const out = {};
+    const dropped = [];
+    let total = 0;
+    for (const name of Object.keys(env).sort()) {
+        let value = env[name];
+        if (value === undefined || serverEnvKind(name) !== 'child')
+            continue;
+        if (PATH_NAMES.has(name) && value !== '' && !path.isAbsolute(value)) {
+            if (cwd === null) {
+                dropped.push(name);
+                continue;
+            }
+            value = path.resolve(cwd, value);
+        }
+        const bytes = jsonBytes(name) + jsonBytes(value);
+        const fits = !value.includes('\0')
+            && Buffer.byteLength(value) <= CHILD_ENV_MAX_VALUE_BYTES
+            && Object.keys(out).length < CHILD_ENV_MAX_NAMES
+            && total + bytes <= CHILD_ENV_MAX_TOTAL_BYTES;
+        if (!fits) {
+            dropped.push(name);
+            continue;
+        }
+        out[name] = value;
+        total += bytes;
+    }
+    return { env: out, dropped };
+}
+/** A per-connection child environment as a server accepts it: 'child' names only, string values within the limits. */
+export function validChildEnv(value) {
+    if (typeof value !== 'object' || value === null || Array.isArray(value))
+        return false;
+    const names = Object.keys(value);
+    if (names.length > CHILD_ENV_MAX_NAMES)
+        return false;
+    let total = 0;
+    for (const name of names) {
+        const v = value[name];
+        if (serverEnvKind(name) !== 'child')
+            return false;
+        if (typeof v !== 'string' || v.includes('\0') || Buffer.byteLength(v) > CHILD_ENV_MAX_VALUE_BYTES)
+            return false;
+        total += jsonBytes(name) + jsonBytes(v);
+    }
+    return total <= CHILD_ENV_MAX_TOTAL_BYTES;
 }
 /**
  * The identity part of the environment a shared server runs with: allow-listed names only, path settings
@@ -125,3 +211,50 @@ export const sharedPidPath = (socketPath) => socketPath.replace(/\.sock$/, '.pid
 export const sharedLockPath = (socketPath) => socketPath.replace(/\.sock$/, '.lock');
 /** Marks a shared server on its command line, so a pid read from a file can be checked before it is signalled. */
 export const sharedServerArg = (identity) => `--mb-shared=${identity.slice(0, 8)}`;
+/** Whether a process with this pid exists (one that exists but is not ours to signal counts). */
+export function isAlive(pid) {
+    try {
+        process.kill(pid, 0);
+        return true;
+    }
+    catch (err) {
+        return err.code === 'EPERM';
+    }
+}
+/** A lock file whose holder is gone is nobody's once it is this old: before that its pid may not be written yet. */
+const ORPHAN_LOCK_MIN_AGE_MS = 1_000;
+/**
+ * The start lock as it is on disk: whether the process named in it exists, how old the file is, and whether
+ * it is an orphan (no holder, and not brand new). null when there is no lock file.
+ *
+ * A relay takes the lock to start a server and gives it back when the server answers. One that is killed in
+ * between cannot give it back — both sides read that state through here: the next relay that needs to start
+ * a server (it replaces an orphan), and a server that is already serving (it removes one, since sessions that
+ * find a server answering never look at the lock).
+ */
+export function startLockHolder(lockPath) {
+    let ageMs;
+    let text;
+    try {
+        ageMs = Date.now() - fs.statSync(lockPath).mtimeMs;
+        text = fs.readFileSync(lockPath, 'utf8');
+    }
+    catch {
+        return null;
+    }
+    const holder = Number(text.trim());
+    const alive = Number.isInteger(holder) && holder > 1 && isAlive(holder);
+    return { alive, ageMs, orphan: !alive && ageMs > ORPHAN_LOCK_MIN_AGE_MS };
+}
+/** Remove the start lock when it is an orphan. true when a file was removed. */
+export function removeOrphanStartLock(lockPath) {
+    if (startLockHolder(lockPath)?.orphan !== true)
+        return false;
+    try {
+        fs.unlinkSync(lockPath);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
