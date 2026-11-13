@@ -138,10 +138,11 @@ async function main() {
     };
     clearOrphanLock();
     setInterval(clearOrphanLock, tickMs).unref();
-    // Prompt injection has one socket per (index dir, version), while servers are one per identity. When
-    // another process of this version holds that socket, the hooks of this server's sessions are answered
-    // there — with that process's settings. Nothing else shows it, so it is written down when it becomes
-    // true and when it ends (not on every check).
+    // Prompt injection has one socket per (index dir, version), while servers are one per identity. A server
+    // that does not hold that socket does not answer the hooks of its own sessions: the process that holds it
+    // does, with that process's settings — or, when no process holds it, each hook computes on its own.
+    // Nothing else shows which side a server is on, so it is written down when it changes (not on every
+    // check). The line states what was observed (holding it or not), not who else holds it.
     if (inject.injectSocketPath() !== null) {
         let answersHooks = null;
         const noteInjectOwner = () => {
@@ -151,7 +152,7 @@ async function main() {
             answersHooks = owning;
             log(owning
                 ? 'prompt injection: this server answers the hooks of this index dir'
-                : "prompt injection: another memory-bank process holds the inject socket of this index dir — the hooks of this server's sessions are answered there, with that process's settings");
+                : "prompt injection: this server does not hold the inject socket of this index dir — when another memory-bank process holds it, the hooks of this server's sessions are answered there, with that process's settings; when no process does, each hook computes on its own");
         };
         setTimeout(noteInjectOwner, Math.min(tickMs, 2_000)).unref();
         setInterval(noteInjectOwner, tickMs).unref();

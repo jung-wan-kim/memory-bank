@@ -474,9 +474,9 @@ describe('TC-NEG-002 — server environment: nothing of one session reaches the 
     const [pidA, pidB] = [serverPids(a.marker)[0], serverPids(b.marker)[0]];
     const said = (pid: number, re: RegExp) => serverLog(a.indexDir).split('\n').some((line) => line.includes(`[shared-server ${pid}]`) && re.test(line));
     await waitFor('the first server to say it answers the hooks', () => said(pidA, /prompt injection: this server answers the hooks/), 10_000);
-    await waitFor('the second server to say another process answers its hooks', () => said(pidB, /prompt injection: another memory-bank process holds the inject socket/), 10_000);
+    await waitFor('the second server to say it does not hold the inject socket', () => said(pidB, /prompt injection: this server does not hold the inject socket/), 10_000);
     expect(said(pidB, /this server answers the hooks/)).toBe(false);
-    expect(said(pidA, /another memory-bank process holds the inject socket/)).toBe(false);
+    expect(said(pidA, /this server does not hold the inject socket/)).toBe(false);
   }, 60_000);
 });
 

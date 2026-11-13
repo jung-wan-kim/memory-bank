@@ -51,7 +51,10 @@ export function readHello(line, own) {
     if (!('cwd' in h) || (h.cwd !== null && !validSessionCwd(h.cwd)))
         return { error: 'bad-cwd' };
     // So must what else is the session's alone. A hello without them is not "use the server's": the server
-    // has no account, model setting or locale of its own to lend.
+    // has no account or model setting of its own to lend. `locale: null` is a statement too — a session with
+    // no locale variables — and such a session gets the runtime's default formatting: the server process is
+    // started without locale variables (they are session settings, `serverEnvFor` leaves them out), so that
+    // default is never another session's choice.
     if (!validChildEnv(h.env))
         return { error: 'bad-env' };
     if (!validChildEnvMissing(h.envMissing, h.env))
