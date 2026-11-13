@@ -1,0 +1,398 @@
+{
+  "contract_type": "hard",
+  "source_scope": "feature",
+  "release": "1.9.0",
+  "plan": "docs/qa-test-plan.md",
+  "requirements": "docs/plans/2026-11-14-shared-mcp-server.md",
+  "surface": "headless — MCP stdio + unix socket (no UI change)",
+  "status": "ready",
+  "blocker_count": 0,
+  "blockers": [],
+  "totals": {
+    "tc": 25,
+    "e2e": 1,
+    "neg": 3,
+    "h": 8,
+    "a": 6
+  },
+  "e2e": {
+    "required": true,
+    "targets": [
+      "test environment (temp plugin root)",
+      "installed plugin on this machine (post-release)"
+    ],
+    "screenshot_compare": {
+      "not_applicable": true,
+      "reason": "no UI surface changes — evidence is stdout JSON and process listing"
+    }
+  },
+  "scenarios": [
+    {
+      "id": "TC-SCOPE-001",
+      "title": "두 세션이 한 서버를 써도 기본 범위가 섞이지 않는다",
+      "level": 1,
+      "grade": "CRITICAL",
+      "class": "SCOPE",
+      "commands": [
+        "npx vitest run test/shared-server-scope.test.ts"
+      ]
+    },
+    {
+      "id": "TC-SCOPE-002",
+      "title": "프로젝트 기본값은 한 도우미에서만 나오고, 작업 폴더를 모르면 그 호출만 실패한다",
+      "level": 1,
+      "grade": "CRITICAL",
+      "class": "SCOPE",
+      "commands": [
+        "npx vitest run test/session-context.test.ts test/shared-server-hello.test.ts -t \"cwd\""
+      ]
+    },
+    {
+      "id": "TC-SCOPE-003",
+      "title": "공용 서버에서 닿는 모듈은 서버의 작업 폴더를 읽지 않는다",
+      "level": 1,
+      "grade": "CRITICAL",
+      "class": "SCOPE",
+      "commands": [
+        "npx vitest run test/server-scope-guard.test.ts -t \"process.cwd\""
+      ]
+    },
+    {
+      "id": "TC-SCOPE-004",
+      "title": "주입 요청은 작업 폴더가 없으면 계산하지 않는다",
+      "level": 1,
+      "grade": "HIGH",
+      "class": "SCOPE",
+      "commands": [
+        "npx vitest run test/inject-daemon-protocol.test.ts -t \"cwd\""
+      ]
+    },
+    {
+      "id": "TC-ENV-001",
+      "title": "서버가 읽는 환경변수 이름은 전부 허용 목록에 있다",
+      "level": 1,
+      "grade": "CRITICAL",
+      "class": "ENV",
+      "commands": [
+        "npx vitest run test/server-scope-guard.test.ts -t \"environment\""
+      ]
+    },
+    {
+      "id": "TC-ENV-002",
+      "title": "서버 환경은 세션 고유 값을 싣지 않고, 값이 다르면 신원이 다르다",
+      "level": 1,
+      "grade": "CRITICAL",
+      "class": "ENV",
+      "commands": [
+        "npx vitest run test/shared-identity.test.ts"
+      ]
+    },
+    {
+      "id": "TC-ENV-003",
+      "title": "공용 서버를 쓸 수 없는 조건은 이유와 함께 세션별 방식으로 판정된다",
+      "level": 1,
+      "grade": "HIGH",
+      "class": "ENV",
+      "commands": [
+        "npx vitest run test/shared-identity.test.ts -t \"mode\""
+      ]
+    },
+    {
+      "id": "TC-SRV-001",
+      "title": "첫 줄(hello)이 맞지 않는 접속은 도구에 닿지 못한다",
+      "level": 1,
+      "grade": "CRITICAL",
+      "class": "SRV",
+      "commands": [
+        "npx vitest run test/shared-server-hello.test.ts -t \"hello\""
+      ]
+    },
+    {
+      "id": "TC-SRV-002",
+      "title": "한 이름에는 서버가 하나뿐이다",
+      "level": 1,
+      "grade": "HIGH",
+      "class": "SRV",
+      "commands": [
+        "npx vitest run test/shared-server-hello.test.ts -t \"one server\""
+      ]
+    },
+    {
+      "id": "TC-SRV-003",
+      "title": "접속이 없는 서버는 유휴 시간 뒤 끝난다 — 훅 요청이 있어도",
+      "level": 1,
+      "grade": "HIGH",
+      "class": "SRV",
+      "commands": [
+        "npx vitest run test/shared-server-hello.test.ts -t \"idle\"",
+        "npx vitest run test/shared-server-e2e.test.ts -t \"idle\""
+      ]
+    },
+    {
+      "id": "TC-SRV-004",
+      "title": "이름을 잃은 서버는 후임의 파일을 지우지 않고 끝난다",
+      "level": 1,
+      "grade": "HIGH",
+      "class": "SRV",
+      "commands": [
+        "npx vitest run test/shared-server-hello.test.ts -t \"lost its name\""
+      ]
+    },
+    {
+      "id": "TC-SRV-005",
+      "title": "디스크의 버전이나 코드가 바뀌면 서버가 은퇴한다",
+      "level": 1,
+      "grade": "MEDIUM",
+      "class": "SRV",
+      "commands": [
+        "npx vitest run test/shared-server-update.test.ts -t \"retire\""
+      ]
+    },
+    {
+      "id": "TC-RELAY-001",
+      "title": "세션 여럿이 서버 하나를 쓴다 — 동시에 시작해도",
+      "level": 1,
+      "grade": "CRITICAL",
+      "class": "RELAY",
+      "commands": [
+        "npx vitest run test/shared-server-e2e.test.ts -t \"one shared server\""
+      ]
+    },
+    {
+      "id": "TC-RELAY-002",
+      "title": "서버가 죽어도 세션은 이어진다",
+      "level": 1,
+      "grade": "CRITICAL",
+      "class": "RELAY",
+      "commands": [
+        "npx vitest run test/shared-server-e2e.test.ts -t \"reconnect\""
+      ]
+    },
+    {
+      "id": "TC-RELAY-003",
+      "title": "응답하지 않는 서버는 끝내고 새로 띄운다",
+      "level": 1,
+      "grade": "HIGH",
+      "class": "RELAY",
+      "commands": [
+        "npx vitest run test/shared-server-e2e.test.ts -t \"unresponsive\""
+      ]
+    },
+    {
+      "id": "TC-RELAY-004",
+      "title": "끄면 지금까지처럼 세션마다 서버가 돈다",
+      "level": 1,
+      "grade": "HIGH",
+      "class": "RELAY",
+      "commands": [
+        "npx vitest run test/shared-server-e2e.test.ts -t \"session-local\"",
+        "npx vitest run test/inject-daemon-long-socket-path.test.ts"
+      ]
+    },
+    {
+      "id": "TC-RELAY-005",
+      "title": "세션이 끝나도 서버는 다른 세션을 위해 남는다",
+      "level": 1,
+      "grade": "HIGH",
+      "class": "RELAY",
+      "commands": [
+        "npx vitest run test/shared-server-e2e.test.ts -t \"session ends\""
+      ]
+    },
+    {
+      "id": "TC-UPD-001",
+      "title": "1.8.0 실행기가 새 dist 를 띄워도 동작한다",
+      "level": 1,
+      "grade": "CRITICAL",
+      "class": "UPD",
+      "commands": [
+        "npx vitest run test/shared-server-update.test.ts -t \"1.8.0 wrapper\""
+      ]
+    },
+    {
+      "id": "TC-UPD-002",
+      "title": "버전이 바뀌면 세션이 새 서버로 옮겨 간다",
+      "level": 1,
+      "grade": "CRITICAL",
+      "class": "UPD",
+      "commands": [
+        "npx vitest run test/shared-server-update.test.ts -t \"version\""
+      ]
+    },
+    {
+      "id": "TC-NEG-001",
+      "title": "서버를 못 띄울 때 조용히 다른 방식으로 넘어가지 않는다",
+      "level": 1,
+      "grade": "CRITICAL",
+      "class": "NEG",
+      "commands": [
+        "npx vitest run test/shared-server-e2e.test.ts -t \"cannot start\""
+      ]
+    },
+    {
+      "id": "TC-NEG-002",
+      "title": "남의 세션 값이 서버에 들어가지 않는다",
+      "level": 1,
+      "grade": "HIGH",
+      "class": "NEG",
+      "commands": [
+        "npx vitest run test/shared-server-e2e.test.ts -t \"server environment\""
+      ]
+    },
+    {
+      "id": "TC-NEG-003",
+      "title": "범위 규칙이 범위 없는 도구를 건드리지 않는다",
+      "level": 1,
+      "grade": "HIGH",
+      "class": "NEG",
+      "commands": [
+        "npx vitest run test/mcp-server-stdio.test.ts"
+      ]
+    },
+    {
+      "id": "TC-BUILD-001",
+      "title": "빌드·전체 테스트 통과, 남는 프로세스 없음",
+      "level": 1,
+      "grade": "CRITICAL",
+      "class": "BUILD",
+      "commands": [
+        "npm run build",
+        "npm test",
+        "npm run build && npm test"
+      ]
+    },
+    {
+      "id": "TC-REL-001",
+      "title": "버전·문서가 1.9.0 구조를 말한다",
+      "level": 1,
+      "grade": "HIGH",
+      "class": "REL",
+      "commands": [
+        "npx vitest run test/version-consistency.test.ts test/project-profile-tools.test.ts test/mcp-tool-names.test.ts",
+        "gh release view v1.9.0"
+      ]
+    },
+    {
+      "id": "TC-E2E-001",
+      "title": "설치된 모양 그대로 — 실행기에서 공용 서버까지, 죽었다 살아나고 끝날 때까지",
+      "level": 1,
+      "grade": "CRITICAL",
+      "class": "E2E",
+      "commands": [
+        "npx vitest run test/shared-server-e2e.test.ts -t \"journey\""
+      ]
+    },
+    {
+      "id": "H-001",
+      "title": "실패 메시지가 원인과 다음 행동을 말하는가",
+      "level": 2,
+      "grade": "HIGH",
+      "class": "heuristic",
+      "commands": []
+    },
+    {
+      "id": "H-002",
+      "title": "종료 코드가 계약대로인가",
+      "level": 2,
+      "grade": "HIGH",
+      "class": "heuristic",
+      "commands": []
+    },
+    {
+      "id": "H-003",
+      "title": "이상한 첫 줄·끊긴 접속에 서버가 버티는가",
+      "level": 2,
+      "grade": "HIGH",
+      "class": "heuristic",
+      "commands": []
+    },
+    {
+      "id": "H-004",
+      "title": "한 세션의 무거운 호출이 다른 세션을 얼마나 늦추는가",
+      "level": 2,
+      "grade": "HIGH",
+      "class": "heuristic",
+      "commands": []
+    },
+    {
+      "id": "H-005",
+      "title": "빈 상태·잠긴 상태에서 첫 호출",
+      "level": 2,
+      "grade": "MEDIUM",
+      "class": "heuristic",
+      "commands": []
+    },
+    {
+      "id": "H-006",
+      "title": "비정상 종료 뒤 남는 것",
+      "level": 2,
+      "grade": "HIGH",
+      "class": "heuristic",
+      "commands": []
+    },
+    {
+      "id": "H-007",
+      "title": "문서와 실제가 같은가",
+      "level": 2,
+      "grade": "MEDIUM",
+      "class": "heuristic",
+      "commands": []
+    },
+    {
+      "id": "H-008",
+      "title": "줄어든 만큼이 실제로 줄었는가",
+      "level": 2,
+      "grade": "MEDIUM",
+      "class": "heuristic",
+      "commands": []
+    },
+    {
+      "id": "A-001",
+      "title": "다른 사용자·다른 프로세스가 소켓에 붙을 수 있는가",
+      "level": 3,
+      "grade": "CRITICAL",
+      "class": "adversarial",
+      "commands": []
+    },
+    {
+      "id": "A-002",
+      "title": "신원이 다른데 같은 서버에 붙는 길이 있는가",
+      "level": 3,
+      "grade": "HIGH",
+      "class": "adversarial",
+      "commands": []
+    },
+    {
+      "id": "A-003",
+      "title": "서버가 뜨기 전에 그 이름을 선점하면",
+      "level": 3,
+      "grade": "HIGH",
+      "class": "adversarial",
+      "commands": []
+    },
+    {
+      "id": "A-004",
+      "title": "pid 파일을 속이면 엉뚱한 프로세스를 끝내는가",
+      "level": 3,
+      "grade": "HIGH",
+      "class": "adversarial",
+      "commands": []
+    },
+    {
+      "id": "A-005",
+      "title": "기동 잠금을 쥔 채 죽거나, 수십 개가 한꺼번에 시작하면",
+      "level": 3,
+      "grade": "HIGH",
+      "class": "adversarial",
+      "commands": []
+    },
+    {
+      "id": "A-006",
+      "title": "서버가 뜨자마자 계속 죽으면",
+      "level": 3,
+      "grade": "MEDIUM",
+      "class": "adversarial",
+      "commands": []
+    }
+  ]
+}
