@@ -147,7 +147,7 @@
 - Given: 소켓 이름을 쥐고 접속은 받지만 답하지 않는 가짜 서버(명령줄에 `shared-server.js` 와 `--mb-shared=<신원8>`), pid 파일에 그 pid
 - When: 중계를 띄워 `initialize` 를 보낸다(hello 기한은 테스트용으로 짧게)
 - Then: 기한 뒤 가짜 서버가 끝나고, 새 서버가 떠서 `initialize` 가 성공한다. pid 파일이 명령줄이 다른 프로세스를 가리키면 그 프로세스는 끝내지 않는다
-- verify: `npx vitest run test/shared-server-e2e.test.ts -t "unresponsive"` / evidence: 테스트 이름
+- verify: `npx vitest run test/shared-server-e2e.test.ts -t "unresponsive"` 와 `npx vitest run test/shared-server-e2e.test.ts -t "watchdog"` / evidence: 테스트 이름
 
 #### TC-RELAY-004: 끄면 지금까지처럼 세션마다 서버가 돈다
 **심각도**: HIGH

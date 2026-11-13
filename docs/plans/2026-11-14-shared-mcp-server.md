@@ -72,7 +72,7 @@
   - verify: `npx vitest run test/shared-server-update.test.ts -t "cannot start"` → exit 0
   - evidence: `shared-e2e.log`
 - AC-013: 응답하지 않는 서버가 이름을 쥐고 있으면, 중계는 기한 뒤 그 서버(pid 파일 + 명령줄 확인)를 끝내고 새 서버를 띄워 붙는다.
-  - verify: `npx vitest run test/shared-server-e2e.test.ts -t "unresponsive"` → exit 0
+  - verify: `npx vitest run test/shared-server-e2e.test.ts -t "unresponsive"` 와 `npx vitest run test/shared-server-e2e.test.ts -t "watchdog"` → 둘 다 exit 0
   - evidence: `shared-e2e.log`
 - AC-014: 빌드와 기존 테스트 전건이 통과하고, 테스트가 끝난 뒤 이 저장소 경로의 서버·중계 프로세스가 남지 않는다.
   - verify: `npm run build` → exit 0, `npm test` → exit 0 (실패 0), `ps` 조회 0건
@@ -277,6 +277,7 @@ export function runRelay(mode: Extract<SharedMode, { kind: 'shared' }>, cwd: str
 - [ ] 세션당 프로세스 2개(실행기 + 중계) → 1개 — 실행기가 중계를 겸하면 버전이 바뀐 뒤에도 옛 중계 코드가 남는다. 졸업 트리거: 실행기가 자기 자신을 새 코드로 다시 실행하는 방법을 검증한 뒤.
 - [ ] 신원이 갈리는 설정 차이를 줄이기 — LLM 환경을 접속별로 넘기면 Claude Code 세션과 Codex 세션이 한 서버를 쓸 수 있다. 졸업 트리거: 서버 수가 다시 문제가 될 때.
 - [ ] Windows 에서 공용 서버(이름 있는 파이프) — 졸업 트리거: Windows 검증 환경.
+- [ ] `runRelay`(230줄)·`startSharedServer`(204줄)를 상태를 필드로 가진 객체로 바꾸기(Replace Function with Command) — 졸업 트리거: 중계·서버 수명 규칙을 다음에 고칠 때(그때 구조 변경을 먼저 한 커밋으로).
 - [ ] 드리프트 정리(`WORKER_RE`)에 공용 서버 포함 — 지금은 서버가 스스로 은퇴한다. 졸업 트리거: 은퇴하지 않고 남는 서버가 관측될 때.
 
 ## Deviations
@@ -292,6 +293,12 @@ export function runRelay(mode: Extract<SharedMode, { kind: 'shared' }>, cwd: str
 - (추가) 세션별 방식 사유 `relative-path`(상대 경로 설정인데 작업 폴더를 못 읽음), 진단용 `MEMORY_BANK_RELAY_DEBUG=1`(중계가 접속 이벤트를 stderr 에 적는다 — 서버에는 넘기지 않는다).
 - (검증 명령 정정) AC-011·AC-012 와 QA 계획서 TC-SCOPE-002·TC-ENV-003·TC-SRV-005·TC-NEG-001 의 검증 명령을 실제 테스트 위치·이름으로 고쳤다 — TC-NEG-001 의 명령은 테스트 0건에 걸리는 헛검증이었다(전건 실행 대조: 명령 26개 중 1개). 시나리오의 Given/When/Then 은 그대로이고, TC-ENV-003 의 이유 목록에 `relative-path` 를, H-002 의 기대 코드를 76·75·70 으로 맞췄다.
 - (S8) `mcp-server-stdio` 를 두 방식으로 돌린다(TC-NEG-003, 방식당 28건) · 배포 꾸러미 테스트가 두 서버 진입 파일의 import 폐쇄 전체를 확인한다 · 이관 가드의 프로세스 판정 테스트에 공용 서버를 넣었다 · 실 훅 E2E 스크립트는 자기 서버(짧은 유휴 시간 = 다른 신원)를 띄우고 그 서버가 끝난 것까지 확인한다 · 소켓 한도를 넘는 설정 폴더의 실행 테스트를 추가했다(AC-011 의 세 조건 전부 실행으로 확인).
+- (S10 구조 리뷰 — 범위 76파일, 소스 15개) 새 냄새 4 · 기존 2.
+  - [새] Duplicated Code · `src/relay.ts`·`src/shared-server.ts` 의 `positiveMs` 동일 본문 → Move Function(`shared-protocol.ts`) 으로 고쳤다.
+  - [새] Duplicated Code · `test/shared-server-e2e.test.ts`·`test/shared-server-update.test.ts` 의 "시작한 것 추적 + 정리" 묶음 → Extract Function(`createRig()`) 으로 고쳤다.
+  - [새] Long Function · `src/relay.ts` `runRelay`(230줄) · `src/shared-server-core.ts` `startSharedServer`(204줄) — 고치지 않았다. 둘 다 접속 상태기계 하나를 클로저 변수로 가진 함수이고 안쪽은 이름 붙은 함수(각 50줄 미만)로 나뉘어 있다. 처방(Replace Function with Command)은 재접속·재생·종료의 순서에 기대는 코드를 통째로 옮기는 일이라 릴리스 직전에는 얻는 것보다 회귀 위험이 크다고 판단했다 — Open Questions 에 올렸다.
+  - [기존] Long Function · `src/server-core.ts` 의 도구 처리기(옮기기만 했다) · `src/inject-daemon.ts` `startInjectDaemon` — 보고만.
+- (S10 리뷰 중 발견한 동작 결함) 중계의 침묵 시계가 요청을 보낼 때 갱신되지 않았다 — "한가하면 시계를 다시 맞춘다"는 줄이 요청을 기록한 **뒤**에 실행돼 요청에는 늘 거짓이었다. 그래서 오래 쉰 세션의 첫 호출에 곧바로 ping 이 나갔다(서버가 살아 있으면 pong 으로 끝나 해는 없었지만, 5초짜리 동기 구간에 걸리면 감시가 의도보다 일찍 움직인다). 시계를 요청 기록 **전에** 맞추게 고치고, 실행 테스트가 없던 감시 경로에 테스트 3건을 넣었다(쉬다 온 호출엔 ping 없음 — 수정 전 코드에서 실패 확인 / 바쁜 서버는 pong 으로 남는다 / 멈춘 서버는 끝내고 새 서버로 잇는다).
 - (사용자 제약) 단계 push 는 기능 브랜치(`feat/shared-server`)로 한다 — `main` push 는 떠 있는 세션에 곧바로 배포되므로 레벨3 까지 통과한 뒤 Phase 5 에서 한다.
 
 P3_SNAPSHOT: /private/tmp/claude-501/-Users-jung-wankim-Project-Claude-memory-bank-cloud/ea9a737f-ad52-45f6-992d-30c071014ff0/scratchpad/mbproc/p3-snapshot.json

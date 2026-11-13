@@ -278,6 +278,67 @@ describe('TC-RELAY-003 — unresponsive: a server that holds the name but does n
   }, 60_000);
 });
 
+describe('TC-RELAY-003 — watchdog: a connected server that stops answering', () => {
+  // SIGSTOP makes a real server silent without killing it; SIGCONT makes the same server "just slow".
+  const pingLine = /\[memory-bank relay\] ping \d+ — no answer for \d+ms/;
+
+  it('watchdog: a call after a long quiet spell is not pinged — the silence clock starts with the call', async () => {
+    const env = sharedEnv(configDir(), { MEMORY_BANK_RELAY_PING_AFTER_MS: '1500', MEMORY_BANK_SHARED_IDLE_MS: '60000' });
+    const server = watch(env);
+    const s = relay(env, projectDir('quiet'));
+    await s.initialize();
+    const [pid] = serverPids(server.marker);
+    await sleep(2_500);                 // quiet for longer than the ping threshold, nothing outstanding
+
+    process.kill(pid, 'SIGSTOP');       // the answer to the next call takes 600ms — well inside the threshold
+    const call = s.post('tools/list');
+    await sleep(600);
+    process.kill(pid, 'SIGCONT');
+    expect((await s.response(call)).result.tools).toHaveLength(11);
+    expect(s.stderr).not.toMatch(pingLine);
+    expect(serverPids(server.marker)).toEqual([pid]);
+  }, 60_000);
+
+  it('watchdog: a server that is only busy answers the ping and is left alone', async () => {
+    const env = sharedEnv(configDir(), { MEMORY_BANK_RELAY_PING_AFTER_MS: '1000', MEMORY_BANK_SHARED_IDLE_MS: '60000' });
+    const server = watch(env);
+    const s = relay(env, projectDir('busy'));
+    await s.initialize();
+    const [pid] = serverPids(server.marker);
+
+    process.kill(pid, 'SIGSTOP');
+    const call = s.post('tools/list');
+    await s.waitForStderr(pingLine, 10_000); // silent past the threshold: the relay asks
+    process.kill(pid, 'SIGCONT');            // …and the server turns out to be alive
+    expect((await s.response(call)).result.tools).toHaveLength(11);
+    await sleep(1_500);                      // longer than the wait for a pong
+    expect(s.stderr).not.toMatch(/does not answer — ending it/);
+    expect(serverPids(server.marker)).toEqual([pid]);
+    expect(await s.toolNames()).toHaveLength(11);
+  }, 60_000);
+
+  it('watchdog: a server that never answers the ping is ended; the call fails, the session goes on with a new server', async () => {
+    const env = sharedEnv(configDir(), { MEMORY_BANK_RELAY_PING_AFTER_MS: '400' });
+    const server = watch(env);
+    const s = relay(env, projectDir('stuck'));
+    await s.initialize();
+    const [stuck] = serverPids(server.marker);
+
+    process.kill(stuck, 'SIGSTOP');
+    const call = s.post('tools/list');
+    const aborted = await s.response(call, 30_000);
+    expect(aborted.error?.code).toBe(-32001);
+    expect(s.stderr).toMatch(pingLine);
+    expect(s.stderr).toMatch(new RegExp(`shared server ${stuck} does not answer — ending it`));
+    await waitFor('the stuck server to be gone', () => !isAlive(stuck), 10_000);
+
+    expect(await s.toolNames()).toHaveLength(11);
+    const [replacement] = serverPids(server.marker);
+    expect(replacement).not.toBe(stuck);
+    expect(responsesOf(s).filter((m) => m.result?.serverInfo !== undefined)).toHaveLength(1);
+  }, 90_000);
+});
+
 describe('TC-NEG-002 — server environment: nothing of one session reaches the shared server', () => {
   it('server environment: allow-listed settings only — no session id, no messaging token, no shell secret', async () => {
     const env = sharedEnv(configDir(), {

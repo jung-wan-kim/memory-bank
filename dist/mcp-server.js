@@ -517,10 +517,10 @@ function runRelay(mode, cwd) {
   };
   const toServer = (line) => {
     if (link === null) return;
-    if (state.idle()) quietSince = Date.now();
     link.socket.write(line + "\n");
   };
   const flushPending = () => {
+    quietSince = Date.now();
     for (const line of pending.splice(0)) toServer(line);
   };
   const failPending = (why) => {
@@ -703,6 +703,7 @@ function runRelay(mode, cwd) {
       if (now - quietSince < t.pingAfterMs) return;
       pingSentAt = now;
       link.socket.write(JSON.stringify({ mb_relay: 1, ping: ++pingSeq }) + "\n");
+      debug(`ping ${pingSeq} \u2014 no answer for ${now - quietSince}ms`);
       return;
     }
     if (now - pingSentAt < t.pingAfterMs) return;
@@ -721,6 +722,7 @@ function runRelay(mode, cwd) {
   process.stdin.on("data", (chunk) => {
     for (const line of clientSplit.push(chunk)) {
       if (line === "") continue;
+      if (state.idle()) quietSince = Date.now();
       state.onClientLine(line);
       if (phase === "up") {
         toServer(line);
@@ -808,4 +810,4 @@ main().catch((error) => {
   console.error("Server error:", error);
   process.exit(1);
 });
-// memory-bank-bundle-stamp v1 inputs=f830a82e5d7d72f207b2034594a44b5bffa35fe04c9fcebb4217a225b646a4a2 body=ccc55064e902635e109167acfe8a611ee170297b0f0424b519912cb7f9c2f98c
+// memory-bank-bundle-stamp v1 inputs=b94b7906b655fdd7c1e0a03306a9ea52828778b4e389833cabae1845ddbc805b body=65b05fe306eb7eb37f091e420c81828f6481e2a8be3ed740983350e2925dce3a

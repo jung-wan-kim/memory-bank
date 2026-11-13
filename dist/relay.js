@@ -273,11 +273,11 @@ export function runRelay(mode, cwd) {
     const toServer = (line) => {
         if (link === null)
             return;
-        if (state.idle())
-            quietSince = Date.now();
         link.socket.write(line + '\n');
     };
     const flushPending = () => {
+        // The silence the watchdog measures starts now, not when these lines were queued.
+        quietSince = Date.now();
         for (const line of pending.splice(0))
             toServer(line);
     };
@@ -483,6 +483,7 @@ export function runRelay(mode, cwd) {
                 return;
             pingSentAt = now;
             link.socket.write(JSON.stringify({ mb_relay: 1, ping: ++pingSeq }) + '\n');
+            debug(`ping ${pingSeq} — no answer for ${now - quietSince}ms`);
             return;
         }
         if (now - pingSentAt < t.pingAfterMs)
@@ -504,6 +505,10 @@ export function runRelay(mode, cwd) {
         for (const line of clientSplit.push(chunk)) {
             if (line === '')
                 continue;
+            // A server that had nothing to answer is not "silent": the watchdog's clock starts with this line.
+            // (Read before the line is recorded — afterwards the session is no longer idle.)
+            if (state.idle())
+                quietSince = Date.now();
             state.onClientLine(line);
             if (phase === 'up') {
                 toServer(line);
