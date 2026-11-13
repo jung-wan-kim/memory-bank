@@ -199,7 +199,15 @@ describe('TC-SCOPE-005 — a server does not lend a session its own process defa
     expect(callers.sort()).toEqual(['src/avatar-responder.ts', 'src/llm.ts']);
     expect(fs.readFileSync(src('avatar-responder.ts'), 'utf8')).toContain('{ childEnv: opts.childEnv ?? null }');
     expect(core.match(/\baskAvatar\(/g)).toHaveLength(1);
-    expect(core).toContain('askAvatar(db, params.question, project, { childEnv: ctx.childEnv ?? null })');
+    // through the one check that refuses a session whose settings did not all arrive — not straight off the context
+    expect(core).toContain('const llmEnv = sessionLlmEnv(ctx);');
+    expect(core).toContain('askAvatar(db, params.question, project, { childEnv: llmEnv })');
+    // who reads a session's LLM settings at all (comment lines aside): the check, the copy made for a new server,
+    // and the two modules the checked value is handed down through
+    const codeOf = (file: string) => fs.readFileSync(file, 'utf8').split('\n').filter((line) => !/^\s*(\*|\/\/|\/\*)/.test(line)).join('\n');
+    const readers = closure.filter((f) => /\.childEnv\b/.test(codeOf(f))).map(rel).sort();
+    expect(readers).toEqual(['src/avatar-responder.ts', 'src/llm.ts', 'src/server-core.ts', 'src/session-context.ts']);
+    expect(codeOf(src('server-core.ts')).match(/\.childEnv\b/g)).toHaveLength(1); // the copy in createMemoryBankServer
   });
 
   /** A call that formats or orders text in the default locale of the process it runs in. */

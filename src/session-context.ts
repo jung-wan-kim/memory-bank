@@ -17,6 +17,14 @@ export interface SessionContext {
    */
   readonly childEnv?: Readonly<Record<string, string>> | null;
   /**
+   * Names of the session's LLM settings that could not be carried to this server (over the limits, or a
+   * relative path the session had no working directory to resolve). Not empty → no LLM child is started
+   * for this session: `sessionLlmEnv()` throws, so a call that needs the child fails and names them. A
+   * child started with the rest (a key without its endpoint, say) would send the session's request
+   * somewhere the session did not choose.
+   */
+  readonly childEnvMissing?: readonly string[];
+  /**
    * The locale this session's output is written in — dates, numbers, the order of names (a BCP 47 tag).
    * Absent when the process is the session's own, or the session could not tell: the process default.
    */
@@ -54,7 +62,7 @@ export function validSessionLocale(value: unknown): value is string {
 /** The context of one session. Anything but an absolute path or null is refused — never repaired. */
 export function sessionContext(
   cwd: unknown,
-  rest: { childEnv?: Readonly<Record<string, string>> | null; locale?: string } = {},
+  rest: { childEnv?: Readonly<Record<string, string>> | null; childEnvMissing?: readonly string[]; locale?: string } = {},
 ): SessionContext {
   if (cwd !== null && !validSessionCwd(cwd)) {
     throw new Error('memory-bank: a session must declare its working directory as an absolute path');
@@ -65,8 +73,28 @@ export function sessionContext(
   return {
     cwd,
     ...(rest.childEnv ? { childEnv: rest.childEnv } : {}),
+    ...(rest.childEnvMissing && rest.childEnvMissing.length > 0 ? { childEnvMissing: [...rest.childEnvMissing] } : {}),
     ...(rest.locale !== undefined ? { locale: rest.locale } : {}),
   };
+}
+
+/**
+ * The environment the LLM child of this session's call gets on top of the server's own (null: the process is
+ * the session's own, the child inherits it) — the only way server code reads `childEnv`.
+ *
+ * Throws when the session could not hand all of its LLM settings over. The call fails and says which; it is
+ * not run with the settings that did fit.
+ */
+export function sessionLlmEnv(ctx: SessionContext): Readonly<Record<string, string>> | null {
+  const missing = ctx.childEnvMissing ?? [];
+  if (missing.length > 0) {
+    throw new Error(
+      `this session's LLM settings could not be passed to the shared server (${missing.join(', ')}: over the size limits, `
+      + 'or a relative path with no working directory), so no LLM call is made for it — shorten or unset them, '
+      + 'or set MEMORY_BANK_SHARED_SERVER=0 to run a server per session',
+    );
+  }
+  return ctx.childEnv ?? null;
 }
 
 /**

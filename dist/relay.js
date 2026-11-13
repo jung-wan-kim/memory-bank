@@ -67,7 +67,7 @@ function attemptConnection(mode, session, helloMs) {
         socket.on('connect', () => {
             const hello = {
                 mb_relay: 1, identity: mode.identity, version: mode.version,
-                cwd: session.cwd, env: session.env, locale: session.locale, pid: process.pid,
+                cwd: session.cwd, env: session.env, envMissing: session.envMissing, locale: session.locale, pid: process.pid,
             };
             socket.write(JSON.stringify(hello) + '\n');
         });

@@ -15,6 +15,7 @@ import {
   spawnEnvFor,
   startLockHolder,
   validChildEnv,
+  validChildEnvMissing,
 } from '../src/shared-identity.js';
 import { sharedMode } from '../src/shared-mode.js';
 import { injectSocketPathIn } from '../src/version-guard.js';
@@ -168,6 +169,18 @@ describe("childEnvFor — what a session declares for the LLM child of its own c
     expect(Buffer.byteLength(JSON.stringify(bounded.env))).toBeLessThanOrEqual(CHILD_ENV_MAX_TOTAL_BYTES + 12 * 4);
     expect(validChildEnv(bounded.env)).toBe(true);
     expect(validChildEnv(many)).toBe(false);
+  });
+
+  it('validChildEnvMissing: what childEnvFor dropped is a list a server accepts; anything else is not', () => {
+    const big = 'x'.repeat(CHILD_ENV_MAX_VALUE_BYTES + 1);
+    const { env, dropped } = childEnvFor({ ANTHROPIC_API_KEY: 'k', ANTHROPIC_CUSTOM_HEADERS: big, CLAUDE_CONFIG_DIR: 'relative' }, null);
+    expect(dropped).toEqual(['ANTHROPIC_CUSTOM_HEADERS', 'CLAUDE_CONFIG_DIR']);
+    expect(validChildEnvMissing(dropped, env)).toBe(true);
+    expect(validChildEnvMissing([], env)).toBe(true);
+    for (const bad of [undefined, null, 'ANTHROPIC_BASE_URL', {}, [1], ['PATH'], ['MEMORY_BANK_DB_PATH'], ['HOME'], ['CLAUDE_CODE_SESSION_ID'],
+      ['ANTHROPIC_BASE_URL', 'ANTHROPIC_BASE_URL'], ['ANTHROPIC_API_KEY'], Array.from({ length: 257 }, (_, i) => `CLAUDE_X_${i}`)]) {
+      expect(validChildEnvMissing(bad, env), JSON.stringify(bad)?.slice(0, 60)).toBe(false);
+    }
   });
 
   it('validChildEnv refuses whatever a relay would not have sent', () => {

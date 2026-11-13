@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { sessionContext, sessionProject, validSessionCwd, validSessionLocale } from '../src/session-context.js';
+import { sessionContext, sessionLlmEnv, sessionProject, validSessionCwd, validSessionLocale } from '../src/session-context.js';
 
 // TC-SCOPE-002 — the project a tool falls back to comes from the session the call belongs to, through one
 // helper. A missing value must never reach a scope filter: several of them read an empty project as "every
@@ -46,6 +46,31 @@ describe("what else a session declares as its own: the LLM child's settings and 
 
   it('an empty declaration is still a declaration: the child must not fall back to inheriting the server', () => {
     expect(sessionContext('/x', { childEnv: {} })).toEqual({ cwd: '/x', childEnv: {} });
+  });
+
+  it('sessionLlmEnv: the settings of the LLM child — or an error when the session could not hand all of them over', () => {
+    const env = { ANTHROPIC_API_KEY: 'k' };
+    expect(sessionLlmEnv(sessionContext('/x', { childEnv: env }))).toEqual(env);
+    expect(sessionLlmEnv(sessionContext('/x', { childEnv: {} }))).toEqual({});
+    // the session's own process: nothing to hand over, the child inherits it
+    expect(sessionLlmEnv(sessionContext('/x'))).toBeNull();
+    expect(sessionLlmEnv(sessionContext('/x', { childEnv: env, childEnvMissing: [] }))).toEqual(env);
+
+    const partial = sessionContext('/x', { childEnv: env, childEnvMissing: ['ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS'] });
+    expect(partial).toEqual({ cwd: '/x', childEnv: env, childEnvMissing: ['ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS'] });
+    // the key fits, its endpoint did not: the call is refused and names what is missing — never made with the key alone
+    expect(() => sessionLlmEnv(partial)).toThrow(/ANTHROPIC_BASE_URL, ANTHROPIC_CUSTOM_HEADERS.*no LLM call is made/);
+    expect(() => sessionLlmEnv(partial)).toThrow(/MEMORY_BANK_SHARED_SERVER=0/);
+  });
+
+  it('server code reads the LLM settings of a session through sessionLlmEnv only', () => {
+    const core = fs.readFileSync(path.join(REPO, 'src', 'server-core.ts'), 'utf8');
+    // one place hands them on to a tool (through the check); one copies the context for the server it makes
+    expect(core.match(/sessionLlmEnv\(ctx\)/g) ?? []).toHaveLength(1);
+    const code = core.split('\n').filter((line) => !/^\s*(\*|\/\/|\/\*)/.test(line)).join('\n');
+    expect((code.match(/\.childEnv\b/g) ?? [])).toHaveLength(1);
+    expect(core).toMatch(/sessionContext\(ctx\.cwd, \{ childEnv: ctx\.childEnv \?\? null, childEnvMissing: ctx\.childEnvMissing, locale: ctx\.locale \}\)/);
+    expect(core).toMatch(/askAvatar\(db, params\.question, project, \{ childEnv: llmEnv \}\)/);
   });
 
   it('a locale is a language tag this runtime accepts, or it is refused — never repaired', () => {

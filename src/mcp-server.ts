@@ -47,9 +47,12 @@ async function main(): Promise<void> {
     // What is this session's alone goes to the server with the connection, never into the server's own environment.
     const child = childEnvFor(process.env, cwd);
     if (child.dropped.length > 0) {
-      console.error(`[memory-bank] not passed on to the LLM child of this session's calls (too long, or a relative path with no working directory): ${child.dropped.join(', ')}`);
+      // Not "continue with the rest": the server is told, and answers this session's LLM calls with an error.
+      console.error(`[memory-bank] these LLM settings of this session cannot be passed to the shared server (over the size limits, or a relative path with no working directory): ${child.dropped.join(', ')}. `
+        + 'ask_avatar answers with an error in this session until they are shortened or unset; the other tools work. '
+        + 'Set MEMORY_BANK_SHARED_SERVER=0 to run a server per session instead.');
     }
-    runRelay(mode, { cwd, env: child.env, locale: ownLocale() });
+    runRelay(mode, { cwd, env: child.env, envMissing: child.dropped, locale: ownLocale() });
     return;
   }
   console.error(`[memory-bank] shared server off: ${WHY_SESSION_LOCAL[mode.reason]} — this session runs its own server`);

@@ -78,9 +78,9 @@ export function serverEnvKind(name) {
     return null;
 }
 /**
- * The most a connection may declare for its LLM child. The sessions of the machine this was measured on
- * declare at most 25 names, 1.3 KB in all, the longest value 185 bytes (2026-11-14): the limits leave more
- * than an order of magnitude. The total is counted as the JSON the hello carries, so it keeps that line under
+ * The most a connection may declare for its LLM child. The 19 sessions open on the machine this was measured
+ * on declare at most 26 names, 1.3 KB in all, the longest value 185 bytes (2026-11-14): the limits leave
+ * more than an order of magnitude. The total is counted as the JSON the hello carries, so it keeps that line under
  * the server's 64 KB limit whatever the values contain.
  */
 export const CHILD_ENV_MAX_NAMES = 256;
@@ -92,9 +92,10 @@ const jsonBytes = (text) => Buffer.byteLength(JSON.stringify(text));
  *
  * A path setting that is relative means "relative to the session" (the child runs elsewhere), so it is made
  * absolute against `cwd`. A value that cannot be carried — a NUL, over the limits above, or a relative path
- * with no working directory to resolve it against — is left out and named in `dropped`: the caller says so
- * on stderr. One such value must not cost the session its connection, and must not go missing without a
- * word either.
+ * with no working directory to resolve it against — is left out and named in `dropped`. The session
+ * declares those names with its connection (`envMissing`), and the server then makes no LLM call for it:
+ * one such value does not cost the session its other tools, and the LLM child is never started with only
+ * part of the session's settings.
  */
 export function childEnvFor(env, cwd) {
     const out = {};
@@ -142,6 +143,18 @@ export function validChildEnv(value) {
         total += jsonBytes(name) + jsonBytes(v);
     }
     return total <= CHILD_ENV_MAX_TOTAL_BYTES;
+}
+/** The names a connection declares as not carried: 'child' names only, none of them also in `env`, no repeats. */
+export function validChildEnvMissing(value, env) {
+    if (!Array.isArray(value) || value.length > CHILD_ENV_MAX_NAMES)
+        return false;
+    const seen = new Set();
+    for (const name of value) {
+        if (typeof name !== 'string' || serverEnvKind(name) !== 'child' || seen.has(name) || Object.hasOwn(env, name))
+            return false;
+        seen.add(name);
+    }
+    return true;
 }
 /**
  * The identity part of the environment a shared server runs with: allow-listed names only, path settings

@@ -14,7 +14,7 @@ import { LineClient, openSession, shortTmpDir, sleep, toolText, waitFor } from '
 
 const IDENTITY = 'a1b2c3d4' + '0'.repeat(56);
 const VERSION = '9.9.9';
-const HELLO = { identity: IDENTITY, version: VERSION, env: {}, locale: null };
+const HELLO = { identity: IDENTITY, version: VERSION, env: {}, envMissing: [], locale: null };
 
 interface Call { cwd: string | null; tool: string }
 
@@ -100,8 +100,10 @@ describe('readHello', () => {
   it('refuses a hello that does not state them, or states something that is not a session setting', () => {
     const { env: _noEnv, ...withoutEnv } = { mb_relay: 1, pid: 1, ...HELLO, cwd: '/work/a' };
     const { locale: _noLocale, ...withoutLocale } = { mb_relay: 1, pid: 1, ...HELLO, cwd: '/work/a' };
+    const { envMissing: _noMissing, ...withoutMissing } = { mb_relay: 1, pid: 1, ...HELLO, cwd: '/work/a' };
     expect(readHello(JSON.stringify(withoutEnv), own)).toEqual({ error: 'bad-env' });
     expect(readHello(JSON.stringify(withoutLocale), own)).toEqual({ error: 'bad-env' });
+    expect(readHello(JSON.stringify(withoutMissing), own)).toEqual({ error: 'bad-env' });
     const notSettings: unknown[] = [
       null, 'ANTHROPIC_BASE_URL=x', ['ANTHROPIC_BASE_URL'], 7,
       { PATH: '/evil/bin' },                         // an operating variable of the server process
@@ -114,10 +116,27 @@ describe('readHello', () => {
     ];
     for (const env of notSettings) expect(readHello(hello({ env }), own), JSON.stringify(env).slice(0, 60)).toEqual({ error: 'bad-env' });
     // __proto__ as a key (JSON.parse makes it an own property) is not a setting either
-    expect(readHello(`{"mb_relay":1,"pid":1,"identity":"${IDENTITY}","version":"${VERSION}","cwd":"/work/a","locale":null,"env":{"__proto__":{"ANTHROPIC_BASE_URL":"x"}}}`, own)).toEqual({ error: 'bad-env' });
+    expect(readHello(`{"mb_relay":1,"pid":1,"identity":"${IDENTITY}","version":"${VERSION}","cwd":"/work/a","locale":null,"envMissing":[],"env":{"__proto__":{"ANTHROPIC_BASE_URL":"x"}}}`, own)).toEqual({ error: 'bad-env' });
     for (const locale of ['', 7, ['ko-KR'], {}, 'not a locale', 'x'.repeat(65), 'ko_KR.UTF-8']) {
       expect(readHello(hello({ locale }), own), JSON.stringify(locale)).toEqual({ error: 'bad-env' });
     }
+  });
+
+  it('carries the names of the LLM settings the session could not hand over — and refuses a list that is not one', () => {
+    const env = { ANTHROPIC_API_KEY: 'k' };
+    expect(readHello(hello({ env, envMissing: ['ANTHROPIC_CUSTOM_HEADERS', 'CLAUDE_CONFIG_DIR'] }), own))
+      .toEqual({ ctx: { cwd: '/work/a', childEnv: env, childEnvMissing: ['ANTHROPIC_CUSTOM_HEADERS', 'CLAUDE_CONFIG_DIR'] } });
+    // nothing left out: the field is absent from the context, not an empty list a reader could skip checking
+    expect(readHello(hello({ env, envMissing: [] }), own)).toEqual({ ctx: { cwd: '/work/a', childEnv: env } });
+    const notLists: unknown[] = [
+      null, 'ANTHROPIC_BASE_URL', { ANTHROPIC_BASE_URL: true }, 7,
+      [7], [null], [['ANTHROPIC_BASE_URL']],
+      ['PATH'], ['MEMORY_BANK_DB_PATH'], ['CLAUDE_CODE_SESSION_ID'], ['NOT_A_SETTING'], // not a session's LLM setting
+      ['ANTHROPIC_BASE_URL', 'ANTHROPIC_BASE_URL'],                                    // stated twice
+      ['ANTHROPIC_API_KEY'],                                                           // both carried and "not carried"
+      Array.from({ length: 257 }, (_, i) => `CLAUDE_X_${i}`),
+    ];
+    for (const envMissing of notLists) expect(readHello(hello({ env, envMissing }), own), JSON.stringify(envMissing).slice(0, 60)).toEqual({ error: 'bad-env' });
   });
 
   it('refuses a working directory that is missing, empty, relative or not a string', () => {

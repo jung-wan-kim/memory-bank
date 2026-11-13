@@ -28,6 +28,8 @@ export interface RelaySession {
     cwd: string | null;
     /** The session's settings for the LLM child of its calls (shared-identity.ts childEnvFor). */
     env: Record<string, string>;
+    /** Names of such settings that could not be carried (childEnvFor's `dropped`): the server then makes no LLM call for this session. */
+    envMissing: string[];
     locale: string | null;
 }
 /** Run as the relay of one session until its client goes away. Never returns a server of its own. */

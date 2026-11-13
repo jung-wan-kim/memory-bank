@@ -2,7 +2,7 @@ import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import { sessionContext, validSessionCwd, validSessionLocale } from './session-context.js';
-import { sharedPidPath, validChildEnv } from './shared-identity.js';
+import { sharedPidPath, validChildEnv, validChildEnvMissing } from './shared-identity.js';
 import { CONTROL_PREFIX } from './shared-protocol.js';
 import { SocketTransport } from './socket-transport.js';
 import { nameExists, probeSocket, removeIfDead, socketIdentity } from './unix-socket.js';
@@ -54,9 +54,11 @@ export function readHello(line, own) {
     // has no account, model setting or locale of its own to lend.
     if (!validChildEnv(h.env))
         return { error: 'bad-env' };
+    if (!validChildEnvMissing(h.envMissing, h.env))
+        return { error: 'bad-env' };
     if (!('locale' in h) || (h.locale !== null && !validSessionLocale(h.locale)))
         return { error: 'bad-env' };
-    return { ctx: sessionContext(h.cwd, { childEnv: h.env, ...(h.locale === null ? {} : { locale: h.locale }) }) };
+    return { ctx: sessionContext(h.cwd, { childEnv: h.env, childEnvMissing: h.envMissing, ...(h.locale === null ? {} : { locale: h.locale }) }) };
 }
 /**
  * The first line of a connection may be this long. A hello is a few hundred bytes plus the session's child

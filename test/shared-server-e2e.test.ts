@@ -5,7 +5,7 @@ import path from 'node:path';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { childEnvFor, sharedPidPath } from '../src/shared-identity.js';
 import {
-  REPO, RELAY_ENTRY, WRAPPER, StdioSession, cleanup, createRig, expectedServer, isAlive, killAll, responsesOf, serverPids,
+  REPO, RELAY_ENTRY, WRAPPER, StdioSession, cleanup, createRig, expectedServer, isAlive, killAll, responsesOf, serverLog, serverPids,
   sharedEnv, shortTmpDir, sleep, waitFor,
 } from './helpers/shared-harness.js';
 
@@ -468,6 +468,15 @@ describe('TC-NEG-002 — server environment: nothing of one session reaches the 
     expect(serverPids(a.marker)).toHaveLength(1);
     expect(serverPids(b.marker)).toHaveLength(1);
     expect(serverPids(a.marker)[0]).not.toBe(serverPids(b.marker)[0]);
+
+    // The two servers share one index dir, and prompt injection has one socket there: one of them answers the
+    // hooks of both. That is a stated limit — and each server writes down which side of it it is on.
+    const [pidA, pidB] = [serverPids(a.marker)[0], serverPids(b.marker)[0]];
+    const said = (pid: number, re: RegExp) => serverLog(a.indexDir).split('\n').some((line) => line.includes(`[shared-server ${pid}]`) && re.test(line));
+    await waitFor('the first server to say it answers the hooks', () => said(pidA, /prompt injection: this server answers the hooks/), 10_000);
+    await waitFor('the second server to say another process answers its hooks', () => said(pidB, /prompt injection: another memory-bank process holds the inject socket/), 10_000);
+    expect(said(pidB, /this server answers the hooks/)).toBe(false);
+    expect(said(pidA, /another memory-bank process holds the inject socket/)).toBe(false);
   }, 60_000);
 });
 
@@ -555,9 +564,37 @@ describe("TC-ENV-004 — session settings: a session's LLM settings and locale t
       const own = execFileSync(process.execPath, ['-e', 'process.stdout.write(new Intl.DateTimeFormat().resolvedOptions().locale)'], { env, encoding: 'utf8' });
       expect(hello.locale).toBe(own);
       expect(own).toBe('de-DE');
+      // everything fitted: nothing is declared as left out
+      expect(hello.envMissing).toEqual([]);
     } finally {
       await new Promise<void>((resolve) => standIn.close(() => resolve()));
     }
+  }, 60_000);
+
+  it('session settings: one that cannot be carried is declared — the session is told, keeps its tools, and its ask_avatar is an error', async () => {
+    const env = sharedEnv(configDir(), {
+      ANTHROPIC_API_KEY: 'dummy-key-partial',
+      ANTHROPIC_CUSTOM_HEADERS: `x-pad: ${'h'.repeat(9_000)}`, // over the per-value limit of a hello
+    });
+    const server = watch(env);
+    const s = relay(env, projectDir('alpha'));
+    await s.initialize();
+    expect(s.stderr).toMatch(/these LLM settings of this session cannot be passed to the shared server .*: ANTHROPIC_CUSTOM_HEADERS\. ask_avatar answers with an error in this session/);
+    expect(await s.toolNames()).toHaveLength(11);
+    const facts = await s.callTool('search_facts', { query: 'anything' });
+    expect(facts.isError, facts.text.slice(0, 200)).toBe(false);
+    expect(projectLine(facts.text)).toMatch(/alpha$/);
+
+    // the key alone would reach the default endpoint without the headers the session set: the call is not made
+    const started = Date.now();
+    const asked = await s.callTool('ask_avatar', { question: 'which deploy habit applies?' });
+    expect(asked.isError, asked.text.slice(0, 300)).toBe(true);
+    expect(asked.text).toMatch(/LLM settings could not be passed to the shared server \(ANTHROPIC_CUSTOM_HEADERS/);
+    expect(asked.text).toMatch(/no LLM call is made/);
+    expect(asked.text).not.toContain('dummy-key-partial');
+    expect(Date.now() - started, 'answered at once: no child was started and waited for').toBeLessThan(3_000);
+    expect(serverPids(server.marker)).toHaveLength(1);
+    expect(serverLog(server.indexDir)).not.toMatch(/ask_avatar: LLM call failed/);
   }, 60_000);
 });
 

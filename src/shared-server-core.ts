@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { sessionContext, validSessionCwd, validSessionLocale, type SessionContext } from './session-context.js';
-import { sharedPidPath, validChildEnv } from './shared-identity.js';
+import { sharedPidPath, validChildEnv, validChildEnvMissing } from './shared-identity.js';
 import { CONTROL_PREFIX, type HelloError, type HelloReply } from './shared-protocol.js';
 import { SocketTransport } from './socket-transport.js';
 import { nameExists, probeSocket, removeIfDead, socketIdentity } from './unix-socket.js';
@@ -51,8 +51,9 @@ export function readHello(line: string, own: { identity: string; version: string
   // So must what else is the session's alone. A hello without them is not "use the server's": the server
   // has no account, model setting or locale of its own to lend.
   if (!validChildEnv(h.env)) return { error: 'bad-env' };
+  if (!validChildEnvMissing(h.envMissing, h.env)) return { error: 'bad-env' };
   if (!('locale' in h) || (h.locale !== null && !validSessionLocale(h.locale))) return { error: 'bad-env' };
-  return { ctx: sessionContext(h.cwd, { childEnv: h.env, ...(h.locale === null ? {} : { locale: h.locale as string }) }) };
+  return { ctx: sessionContext(h.cwd, { childEnv: h.env, childEnvMissing: h.envMissing, ...(h.locale === null ? {} : { locale: h.locale as string }) }) };
 }
 
 export interface SharedServerOptions {

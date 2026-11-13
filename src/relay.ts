@@ -37,6 +37,8 @@ export interface RelaySession {
   cwd: string | null;
   /** The session's settings for the LLM child of its calls (shared-identity.ts childEnvFor). */
   env: Record<string, string>;
+  /** Names of such settings that could not be carried (childEnvFor's `dropped`): the server then makes no LLM call for this session. */
+  envMissing: string[];
   locale: string | null;
 }
 
@@ -122,7 +124,7 @@ function attemptConnection(mode: Shared, session: RelaySession, helloMs: number)
     socket.on('connect', () => {
       const hello: RelayHello = {
         mb_relay: 1, identity: mode.identity, version: mode.version,
-        cwd: session.cwd, env: session.env, locale: session.locale, pid: process.pid,
+        cwd: session.cwd, env: session.env, envMissing: session.envMissing, locale: session.locale, pid: process.pid,
       };
       socket.write(JSON.stringify(hello) + '\n');
     });

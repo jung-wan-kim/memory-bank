@@ -82,7 +82,7 @@ async function main(): Promise<void> {
   }
 
   const packageJson = path.join(distDir, '..', 'package.json');
-  let daemon: { close(): Promise<void> } | null = null;
+  let daemon: { owning(): boolean; close(): Promise<void> } | null = null;
   const tickMs = positiveMs(process.env.MEMORY_BANK_SHARED_TICK_MS, 45_000);
 
   // Until the listener is bound nothing holds this process's event loop: the waits inside the bind are
@@ -143,6 +143,24 @@ async function main(): Promise<void> {
   };
   clearOrphanLock();
   setInterval(clearOrphanLock, tickMs).unref();
+
+  // Prompt injection has one socket per (index dir, version), while servers are one per identity. When
+  // another process of this version holds that socket, the hooks of this server's sessions are answered
+  // there — with that process's settings. Nothing else shows it, so it is written down when it becomes
+  // true and when it ends (not on every check).
+  if (inject.injectSocketPath() !== null) {
+    let answersHooks: boolean | null = null;
+    const noteInjectOwner = (): void => {
+      const owning = daemon !== null && daemon.owning();
+      if (owning === answersHooks) return;
+      answersHooks = owning;
+      log(owning
+        ? 'prompt injection: this server answers the hooks of this index dir'
+        : "prompt injection: another memory-bank process holds the inject socket of this index dir — the hooks of this server's sessions are answered there, with that process's settings");
+    };
+    setTimeout(noteInjectOwner, Math.min(tickMs, 2_000)).unref();
+    setInterval(noteInjectOwner, tickMs).unref();
+  }
 
   const shutdown = (signal: string): void => {
     log(`${signal} received`);

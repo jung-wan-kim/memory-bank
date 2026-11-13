@@ -138,6 +138,24 @@ async function main() {
     };
     clearOrphanLock();
     setInterval(clearOrphanLock, tickMs).unref();
+    // Prompt injection has one socket per (index dir, version), while servers are one per identity. When
+    // another process of this version holds that socket, the hooks of this server's sessions are answered
+    // there — with that process's settings. Nothing else shows it, so it is written down when it becomes
+    // true and when it ends (not on every check).
+    if (inject.injectSocketPath() !== null) {
+        let answersHooks = null;
+        const noteInjectOwner = () => {
+            const owning = daemon !== null && daemon.owning();
+            if (owning === answersHooks)
+                return;
+            answersHooks = owning;
+            log(owning
+                ? 'prompt injection: this server answers the hooks of this index dir'
+                : "prompt injection: another memory-bank process holds the inject socket of this index dir — the hooks of this server's sessions are answered there, with that process's settings");
+        };
+        setTimeout(noteInjectOwner, Math.min(tickMs, 2_000)).unref();
+        setInterval(noteInjectOwner, tickMs).unref();
+    }
     const shutdown = (signal) => {
         log(`${signal} received`);
         void handle.close();

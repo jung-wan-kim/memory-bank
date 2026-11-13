@@ -403,6 +403,7 @@ function attemptConnection(mode, session, helloMs) {
         version: mode.version,
         cwd: session.cwd,
         env: session.env,
+        envMissing: session.envMissing,
         locale: session.locale,
         pid: process.pid
       };
@@ -893,9 +894,9 @@ async function main() {
   if (mode.kind === "shared") {
     const child = childEnvFor(process.env, cwd);
     if (child.dropped.length > 0) {
-      console.error(`[memory-bank] not passed on to the LLM child of this session's calls (too long, or a relative path with no working directory): ${child.dropped.join(", ")}`);
+      console.error(`[memory-bank] these LLM settings of this session cannot be passed to the shared server (over the size limits, or a relative path with no working directory): ${child.dropped.join(", ")}. ask_avatar answers with an error in this session until they are shortened or unset; the other tools work. Set MEMORY_BANK_SHARED_SERVER=0 to run a server per session instead.`);
     }
-    runRelay(mode, { cwd, env: child.env, locale: ownLocale() });
+    runRelay(mode, { cwd, env: child.env, envMissing: child.dropped, locale: ownLocale() });
     return;
   }
   console.error(`[memory-bank] shared server off: ${WHY_SESSION_LOCAL[mode.reason]} \u2014 this session runs its own server`);
@@ -908,4 +909,4 @@ main().catch((error) => {
   console.error("Server error:", error);
   process.exit(1);
 });
-// memory-bank-bundle-stamp v1 inputs=ede88bd38e0e8450413aea4e34daf1bdaaf86e796d494d2226f9390332e1c74f body=14c050bcfc25cf80c8af25011a158aa6abc518131d38cff30bfa7bbe63f70470
+// memory-bank-bundle-stamp v1 inputs=d46f58df49f24df406e85de2ceae8ad78c28930d6555e45611073308d5e5ea05 body=d66bb15a3861798b0f88305c1f84f01c61c02264770af292e58f4aed43086616

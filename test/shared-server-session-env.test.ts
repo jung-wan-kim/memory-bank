@@ -45,7 +45,7 @@ const clients: LineClient[] = [];
 const prev = { db: process.env.MEMORY_BANK_DB_PATH, archive: process.env.TEST_ARCHIVE_DIR };
 const serverCwd = process.cwd();
 
-async function session(hello: { cwd: string | null; env?: Record<string, string>; locale?: string | null }): Promise<LineClient> {
+async function session(hello: { cwd: string | null; env?: Record<string, string>; envMissing?: string[]; locale?: string | null }): Promise<LineClient> {
   const c = await openSession(socketPath, { identity: IDENTITY, version: VERSION, ...hello });
   clients.push(c);
   return c;
@@ -144,6 +144,45 @@ describe('the LLM child of a call gets the calling session settings', () => {
     expect(forPlain.env, 'an explicit environment, not "inherit whatever the server has"').toBeDefined();
     for (const name of [...Object.keys(ENV_A), ...Object.keys(ENV_B)]) expect(forPlain.env![name], name).toBe(process.env[name]);
     for (const name of Object.keys(ENV_A)) expect(process.env[name], `${name} written into the server`).not.toBe(ENV_A[name as keyof typeof ENV_A]);
+  });
+});
+
+describe('a session that could not hand all of its LLM settings over', () => {
+  it('its ask_avatar is answered with an error that names them, and no LLM child is started — with part of its settings or any', async () => {
+    // the key fits; the endpoint it belongs to did not: a call made with the key alone would go to the default endpoint
+    const partial = await session({ cwd: '/work/project-a', env: { ANTHROPIC_API_KEY: 'key-of-partial' }, envMissing: ['ANTHROPIC_BASE_URL', 'ANTHROPIC_CUSTOM_HEADERS'] });
+    const whole = await session({ cwd: '/work/project-b', env: ENV_B });
+    llmCalls.length = 0;
+    const [refused, answered] = await Promise.all([
+      call(partial, 'ask_avatar', { question: 'PARTIAL which deploy habit applies?' }),
+      call(whole, 'ask_avatar', { question: 'WHOLE which deploy habit applies?' }),
+    ]);
+    expect(refused.isError, refused.text.slice(0, 200)).toBe(true);
+    expect(refused.text).toMatch(/LLM settings could not be passed to the shared server \(ANTHROPIC_BASE_URL, ANTHROPIC_CUSTOM_HEADERS/);
+    expect(refused.text).toMatch(/no LLM call is made/);
+    expect(refused.text).not.toContain('key-of-partial');
+    // the neighbour on the same server is served as before, with its own settings
+    expect(answered.isError, answered.text.slice(0, 200)).toBe(false);
+    expect(answered.text).toContain('answer to WHOLE');
+    expect(llmCalls.map((c) => c.question.split(' ')[0])).toEqual(['WHOLE']);
+    expect(llmCalls[0].env).toMatchObject(ENV_B);
+    expect(llmCalls[0].env!.ANTHROPIC_API_KEY, 'the refused session left nothing behind').toBe(ENV_B.ANTHROPIC_API_KEY);
+  });
+
+  it('keeps its other tools: only the calls that need the LLM child fail', async () => {
+    const partial = await session({ cwd: '/work/project-a', envMissing: ['CLAUDE_CONFIG_DIR'], locale: 'en-US' });
+    llmCalls.length = 0;
+    const tags = await call(partial, 'list_tags', {});
+    expect(tags.isError, tags.text.slice(0, 200)).toBe(false);
+    expect(tags.text).toContain('Project: /work/project-a');
+    const stats = await call(partial, 'graph_stats', {});
+    expect(stats.isError, stats.text.slice(0, 200)).toBe(false);
+    for (let round = 0; round < 3; round++) {
+      const again = await call(partial, 'ask_avatar', { question: `AGAIN-${round} which deploy habit applies?` });
+      expect(again.isError).toBe(true);
+      expect(again.text).toContain('CLAUDE_CONFIG_DIR');
+    }
+    expect(llmCalls).toEqual([]);
   });
 });
 

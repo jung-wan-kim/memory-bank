@@ -43,7 +43,7 @@ import path from 'path';
 import os from 'os';
 import { resolveReadableConversation, ACCESS_DENIED_MESSAGE } from './read-guard.js';
 import { getArchiveDir } from './paths.js';
-import { sessionContext, sessionProject, type SessionContext } from './session-context.js';
+import { sessionContext, sessionLlmEnv, sessionProject, type SessionContext } from './session-context.js';
 
 // Zod Schemas for Input Validation
 
@@ -744,10 +744,12 @@ async function handleCallTool(ctx: SessionContext, request: CallToolRequest) {
     if (name === 'ask_avatar') {
       const params = AskAvatarInputSchema.parse(args) as AskAvatarInput;
       const project = sessionProject(ctx, params.project);
+      // Before any work: a session that could not hand its LLM settings over gets an error, not a call made with part of them.
+      const llmEnv = sessionLlmEnv(ctx);
 
       const db = initDatabase();
       try {
-        const result = await askAvatar(db, params.question, project, { childEnv: ctx.childEnv ?? null });
+        const result = await askAvatar(db, params.question, project, { childEnv: llmEnv });
 
         const confidenceLabel =
           result.confidence >= 0.9
@@ -963,7 +965,7 @@ async function handleCallTool(ctx: SessionContext, request: CallToolRequest) {
  * calls start (`ctx.childEnv`) and the locale its output is written in (`ctx.locale`).
  */
 export function createMemoryBankServer(ctx: SessionContext): Server {
-  const session = sessionContext(ctx.cwd, { childEnv: ctx.childEnv ?? null, locale: ctx.locale });
+  const session = sessionContext(ctx.cwd, { childEnv: ctx.childEnv ?? null, childEnvMissing: ctx.childEnvMissing, locale: ctx.locale });
   const server = new Server(
     {
       name: 'memory-bank',
