@@ -189,3 +189,37 @@ describe('실제 데몬 — 요청 처리', () => {
     }
   });
 });
+
+// TC-SCOPE-004 — the daemon may serve prompts of many sessions (one process holds the socket). The project a
+// prompt is searched under is the cwd the request carries; the daemon's own working directory is some other
+// session's. A request without a usable cwd is answered {ok:false} (the client then computes in its own
+// process, with its own cwd) — it is never searched under the daemon's directory.
+describe('실제 데몬 — 요청의 cwd', () => {
+  it('cwd 가 절대 경로면 그 값 그대로 계산에 넘긴다', async () => {
+    compute.mockResolvedValueOnce({ context: 'B', ledgerKeys: [] });
+    const { lines } = await exchange([JSON.stringify({ prompt: PROMPT, cwd: '/Users/a/한글 project' }) + '\n']);
+    expect(lines.at(-1)).toMatchObject({ ok: true });
+    expect(compute.mock.calls.at(-1)![1]).toBe('/Users/a/한글 project');
+  });
+
+  it('cwd 가 없거나 비었거나 상대 경로거나 문자열이 아니면 계산하지 않고 ok:false 로 답한다', async () => {
+    for (const cwd of [undefined, null, '', 'relative/dir', './here', 42, { path: '/x' }]) {
+      const before = compute.mock.calls.length;
+      const body = cwd === undefined ? { prompt: PROMPT } : { prompt: PROMPT, cwd };
+      const { lines, closedBy } = await exchange([JSON.stringify(body) + '\n']);
+      expect(lines, JSON.stringify(cwd)).toEqual([{ ok: false, error: 'bad-cwd' }]);
+      expect(closedBy, JSON.stringify(cwd)).toBe('server');
+      expect(compute.mock.calls.length, `${JSON.stringify(cwd)} — 데몬의 폴더로 대신 계산하지 않는다`).toBe(before);
+    }
+  });
+
+  it('모델이 준비 중이어도 cwd 가 틀린 요청에는 warming 을 보내지 않는다 (곧바로 ok:false)', async () => {
+    state.ready = false;
+    try {
+      const { lines } = await exchange([JSON.stringify({ prompt: PROMPT }) + '\n']);
+      expect(lines).toEqual([{ ok: false, error: 'bad-cwd' }]);
+    } finally {
+      state.ready = true;
+    }
+  });
+});

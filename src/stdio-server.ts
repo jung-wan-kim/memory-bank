@@ -4,6 +4,7 @@
  */
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { startInjectDaemon } from './inject-daemon.js';
+import { ownCwd } from './own-cwd.js';
 import { createMemoryBankServer } from './server-core.js';
 
 export async function runStdioServer(): Promise<void> {
@@ -16,5 +17,6 @@ export async function runStdioServer(): Promise<void> {
   // (best-effort, unref'd — adds no lifecycle and never blocks MCP traffic).
   startInjectDaemon();
   const transport = new StdioServerTransport();
-  await createMemoryBankServer().connect(transport);
+  // This process belongs to one session: its working directory is that session's.
+  await createMemoryBankServer({ cwd: ownCwd() }).connect(transport);
 }

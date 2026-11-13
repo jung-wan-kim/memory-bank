@@ -6,6 +6,8 @@ import { computeInjectResult } from './inject-core.js';
 import { initEmbeddings, embeddingsReady } from './embeddings.js';
 import { injectionQuery } from './prompt-gate.js';
 import { injectSocketPathIn, ownPackageVersion, MAX_UNIX_SOCKET_PATH_BYTES } from './version-guard.js';
+import { validSessionCwd } from './session-context.js';
+import { nameExists, removeIfDead, socketIdentity } from './unix-socket.js';
 
 /**
  * Warm inject daemon — a unix-socket sidecar inside the long-lived MCP server.
@@ -103,60 +105,6 @@ const RECLAIM_MS = reclaimIntervalMs(process.env.MEMORY_BANK_INJECT_RECLAIM_MS);
 const OWN_SOCKET_MIN_AGE_MS = 2_000;
 /** Another version's socket: left alone for a minute after it appears, dead or not. */
 const OTHER_SOCKET_MIN_AGE_MS = 60_000;
-const PROBE_TIMEOUT_MS = 500;
-/**
- * How long after a first ECONNREFUSED a socket is probed again before it counts as dead. macOS answers
- * ECONNREFUSED for a live listener too while its accept queue is full (measured: queue of 1, server in a
- * synchronous stretch — 1 connect accepted, 11 of 12 simultaneous ones refused); by the second look the
- * stretch (embedding inference, a sqlite search: tens of ms) is over. Nobody waits for this — a dead file
- * costs a prompt nothing, a removed live one costs that session its fast path.
- */
-const DEAD_CONFIRM_MS = 1_000;
-
-/** inode + times of a socket file — "is this still the file I probed". null when absent or not a socket. */
-function socketIdentity(p: string): { ino: number; ctimeMs: number; mtimeMs: number } | null {
-  try {
-    const st = fs.lstatSync(p);
-    return st.isSocket() ? { ino: st.ino, ctimeMs: st.ctimeMs, mtimeMs: st.mtimeMs } : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Who is behind a socket path: 'alive' (a connect was accepted), 'dead'
- * (ECONNREFUSED — a file with no listener), 'absent' (no file), 'unknown'
- * (anything else, no answer in time included — never treated as dead).
- */
-function probeSocket(p: string): Promise<'alive' | 'dead' | 'absent' | 'unknown'> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const done = (v: 'alive' | 'dead' | 'absent' | 'unknown') => {
-      if (settled) return;
-      settled = true;
-      probe.destroy();
-      resolve(v);
-    };
-    const probe = net.connect(p);
-    probe.setTimeout(PROBE_TIMEOUT_MS, () => done('unknown'));
-    probe.on('connect', () => done('alive'));
-    probe.on('error', (err: NodeJS.ErrnoException) => done(err.code === 'ECONNREFUSED' ? 'dead' : err.code === 'ENOENT' ? 'absent' : 'unknown'));
-  });
-}
-
-/** The same file as `before`, old enough, and nobody answers on it twice: then (and only then) it may be unlinked. */
-async function removeIfDead(p: string, minAgeMs: number): Promise<boolean> {
-  const before = socketIdentity(p);
-  if (!before || Date.now() - before.mtimeMs < minAgeMs) return false;
-  if ((await probeSocket(p)) !== 'dead') return false;
-  // unref: this wait must not keep the MCP server's process alive.
-  await new Promise<void>((resolve) => { setTimeout(resolve, DEAD_CONFIRM_MS).unref(); });
-  if ((await probeSocket(p)) !== 'dead') return false;
-  const now = socketIdentity(p);
-  if (!now || now.ino !== before.ino || now.ctimeMs !== before.ctimeMs) return false; // replaced meanwhile
-  try { fs.unlinkSync(p); return true; } catch { return false; }
-}
-
 /** Index dirs a sweep is in flight for in this process — a second one would only double the connects sent to each socket. */
 const sweeping = new Set<string>();
 
@@ -197,11 +145,6 @@ export interface InjectDaemonHandle {
 /** This server's socket path, or null when the index dir is too deep for a unix socket (no daemon then). */
 export function injectSocketPath(): string | null {
   return injectSocketPathIn(getIndexDir(), ownPackageVersion());
-}
-
-/** Is the name itself there — a dangling symlink is still a name (existsSync follows the link and would say "gone"). */
-function nameExists(p: string): boolean {
-  try { fs.lstatSync(p); return true; } catch { return false; }
 }
 
 export function startInjectDaemon(): InjectDaemonHandle {
@@ -245,14 +188,21 @@ export function startInjectDaemon(): InjectDaemonHandle {
       void (async () => {
         try {
           const req = JSON.parse(line) as {
-            prompt?: string; cwd?: string; session_id?: string; client?: string; entrypoint?: string; req_id?: string; client_impl?: string;
+            prompt?: string; cwd?: unknown; session_id?: string; client?: string; entrypoint?: string; req_id?: string; client_impl?: string;
           };
+          // The project comes from the request alone. This process may be serving other sessions, so its own
+          // working directory is never a stand-in: the client that gets ok:false computes in its own process.
+          const cwd = req.cwd;
+          if (!validSessionCwd(cwd)) {
+            reply({ ok: false, error: 'bad-cwd' });
+            return;
+          }
           if (!embeddingsReady() && injectionQuery(String(req.prompt ?? '')).reason === null) {
             conn.write(JSON.stringify({ warming: true }) + '\n');
           }
           const { context, ledgerKeys, failed } = await computeInjectResult(
             String(req.prompt ?? ''),
-            String(req.cwd ?? process.cwd()),
+            cwd,
             'daemon',
             req.session_id ? String(req.session_id) : undefined,
             {

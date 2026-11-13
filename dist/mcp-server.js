@@ -3261,8 +3261,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path17) {
-      let input2 = path17;
+    function removeDotSegments(path18) {
+      let input2 = path18;
       const output2 = [];
       let nextSlash = -1;
       let len = 0;
@@ -3336,11 +3336,11 @@ var require_utils = __commonJS({
       }
       return output2.join("");
     }
-    function removeDotSegmentsRelative(path17) {
-      if (path17 === "" || path17[0] === "/") {
-        return removeDotSegments(path17);
+    function removeDotSegmentsRelative(path18) {
+      if (path18 === "" || path18[0] === "/") {
+        return removeDotSegments(path18);
       }
-      const segments = path17.split("/");
+      const segments = path18.split("/");
       const last = segments.length - 1;
       const output2 = [];
       let trailingDirectory = false;
@@ -3703,8 +3703,8 @@ var require_schemes = __commonJS({
       }
       if (wsComponent.resourceName) {
         const queryIndex = wsComponent.resourceName.indexOf("?");
-        const path17 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
-        wsComponent.path = path17 && path17 !== "/" ? path17 : void 0;
+        const path18 = queryIndex === -1 ? wsComponent.resourceName : wsComponent.resourceName.slice(0, queryIndex);
+        wsComponent.path = path18 && path18 !== "/" ? path18 : void 0;
         wsComponent.query = queryIndex === -1 ? void 0 : wsComponent.resourceName.slice(queryIndex + 1);
         wsComponent.resourceName = void 0;
       }
@@ -7241,12 +7241,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs19, exportName) {
+    function addFormats(ajv, list, fs20, exportName) {
       var _a4;
       var _b;
       (_a4 = (_b = ajv.opts.code).formats) !== null && _a4 !== void 0 ? _a4 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs19[f]);
+        ajv.addFormat(f, fs20[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -8160,17 +8160,17 @@ var node_exports = {};
 __export(node_exports, {
   child_process: () => child_process,
   crypto: () => crypto,
-  fs: () => fs13,
+  fs: () => fs14,
   os: () => os4,
-  path: () => path11,
+  path: () => path12,
   stream: () => stream,
   util: () => util
 });
 import * as child_process from "node:child_process";
 import * as crypto from "node:crypto";
-import * as fs13 from "node:fs";
+import * as fs14 from "node:fs";
 import * as os4 from "node:os";
-import * as path11 from "node:path";
+import * as path12 from "node:path";
 import * as stream from "node:stream";
 import * as util from "node:util";
 var init_node = __esm({
@@ -8236,15 +8236,15 @@ function redactSensitive(body) {
   }
   return null;
 }
-async function checkCredentialsFileSafety(path17, onWarn = (m2) => console.warn(`anthropic-sdk: ${m2}`)) {
+async function checkCredentialsFileSafety(path18, onWarn = (m2) => console.warn(`anthropic-sdk: ${m2}`)) {
   if (typeof process === "undefined" || process.platform === "win32")
     return;
-  const { fs: fs19 } = await Promise.resolve().then(() => (init_node(), node_exports));
-  let resolved = path17;
+  const { fs: fs20 } = await Promise.resolve().then(() => (init_node(), node_exports));
+  let resolved = path18;
   let st;
   try {
-    resolved = await fs19.promises.realpath(path17);
-    st = await fs19.promises.stat(resolved);
+    resolved = await fs20.promises.realpath(path18);
+    st = await fs20.promises.stat(resolved);
   } catch {
     return;
   }
@@ -8260,26 +8260,26 @@ async function checkCredentialsFileSafety(path17, onWarn = (m2) => console.warn(
   }
 }
 async function writeCredentialsFileAtomic(targetPath, data) {
-  const { fs: fs19, path: path17 } = await Promise.resolve().then(() => (init_node(), node_exports));
-  const dir = path17.dirname(targetPath);
-  await fs19.promises.mkdir(dir, { recursive: true, mode: 448 });
+  const { fs: fs20, path: path18 } = await Promise.resolve().then(() => (init_node(), node_exports));
+  const dir = path18.dirname(targetPath);
+  await fs20.promises.mkdir(dir, { recursive: true, mode: 448 });
   const tmpPath = `${targetPath}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
   try {
-    const fh = await fs19.promises.open(tmpPath, "w", 384);
+    const fh = await fs20.promises.open(tmpPath, "w", 384);
     try {
       await fh.writeFile(JSON.stringify(data, null, 2));
       await fh.sync();
     } finally {
       await fh.close();
     }
-    await fs19.promises.rename(tmpPath, targetPath);
+    await fs20.promises.rename(tmpPath, targetPath);
   } catch (err) {
-    await fs19.promises.unlink(tmpPath).catch(() => {
+    await fs20.promises.unlink(tmpPath).catch(() => {
     });
     throw err;
   }
   try {
-    const dirFh = await fs19.promises.open(dir, "r");
+    const dirFh = await fs20.promises.open(dir, "r");
     try {
       await dirFh.sync();
     } finally {
@@ -8681,11 +8681,11 @@ var init_credentials = __esm({
         return null;
       }
       validateProfileName(profileName);
-      const { fs: fs19, path: path17 } = await Promise.resolve().then(() => (init_node(), node_exports));
-      const configPath = path17.join(rootConfigPath, "configs", `${profileName}.json`);
+      const { fs: fs20, path: path18 } = await Promise.resolve().then(() => (init_node(), node_exports));
+      const configPath = path18.join(rootConfigPath, "configs", `${profileName}.json`);
       let configRaw;
       try {
-        configRaw = await fs19.promises.readFile(configPath, "utf-8");
+        configRaw = await fs20.promises.readFile(configPath, "utf-8");
       } catch (err) {
         if (err?.code !== "ENOENT") {
           throw new Error(`failed to read config file ${configPath}: ${err}`);
@@ -8766,14 +8766,14 @@ var init_credentials = __esm({
         return null;
       }
       validateProfileName(profileName);
-      const { path: path17 } = await Promise.resolve().then(() => (init_node(), node_exports));
-      return path17.join(rootConfigPath, "credentials", `${profileName}.json`);
+      const { path: path18 } = await Promise.resolve().then(() => (init_node(), node_exports));
+      return path18.join(rootConfigPath, "credentials", `${profileName}.json`);
     };
     getRootConfigPath = async () => {
       if (!supportsLocalConfigFiles()) {
         return null;
       }
-      const { path: path17 } = await Promise.resolve().then(() => (init_node(), node_exports));
+      const { path: path18 } = await Promise.resolve().then(() => (init_node(), node_exports));
       const configDir = readEnv("ANTHROPIC_CONFIG_DIR");
       if (configDir) {
         return configDir;
@@ -8782,21 +8782,21 @@ var init_credentials = __esm({
       if (os7 === "Windows") {
         const appData = readEnv("APPDATA");
         if (appData) {
-          return path17.join(appData, "Anthropic");
+          return path18.join(appData, "Anthropic");
         }
         const userProfile = readEnv("USERPROFILE");
         if (userProfile) {
-          return path17.join(userProfile, "AppData", "Roaming", "Anthropic");
+          return path18.join(userProfile, "AppData", "Roaming", "Anthropic");
         }
         return null;
       }
       const xdgConfigHome = readEnv("XDG_CONFIG_HOME");
       if (xdgConfigHome) {
-        return path17.join(xdgConfigHome, "anthropic");
+        return path18.join(xdgConfigHome, "anthropic");
       }
       const home = readEnv("HOME");
       if (home) {
-        return path17.join(home, ".config", "anthropic");
+        return path18.join(home, ".config", "anthropic");
       }
       return null;
     };
@@ -8813,10 +8813,10 @@ var init_credentials = __esm({
       if (profileName) {
         return profileName;
       }
-      const { fs: fs19, path: path17 } = await Promise.resolve().then(() => (init_node(), node_exports));
-      const filePath = path17.join(rootConfigPath, "active_config");
+      const { fs: fs20, path: path18 } = await Promise.resolve().then(() => (init_node(), node_exports));
+      const filePath = path18.join(rootConfigPath, "active_config");
       try {
-        return (await fs19.promises.readFile(filePath, "utf-8")).trim() || "default";
+        return (await fs20.promises.readFile(filePath, "utf-8")).trim() || "default";
       } catch (err) {
         if (err?.code !== "ENOENT") {
           throw new Error(`failed to read ${filePath}: ${err}`);
@@ -8828,21 +8828,21 @@ var init_credentials = __esm({
 });
 
 // node_modules/@anthropic-ai/sdk/lib/credentials/identity-token.mjs
-function identityTokenFromFile(path17) {
-  if (!path17) {
+function identityTokenFromFile(path18) {
+  if (!path18) {
     throw new AnthropicError("Identity token file path is empty");
   }
   return async () => {
-    const { fs: fs19 } = await Promise.resolve().then(() => (init_node(), node_exports));
+    const { fs: fs20 } = await Promise.resolve().then(() => (init_node(), node_exports));
     let content;
     try {
-      content = await fs19.promises.readFile(path17, "utf-8");
+      content = await fs20.promises.readFile(path18, "utf-8");
     } catch (err) {
-      throw new AnthropicError(`Failed to read identity token file at ${path17}: ${err}`);
+      throw new AnthropicError(`Failed to read identity token file at ${path18}: ${err}`);
     }
     const token = content.trim();
     if (!token) {
-      throw new AnthropicError(`Identity token file at ${path17} is empty`);
+      throw new AnthropicError(`Identity token file at ${path18} is empty`);
     }
     return token;
   };
@@ -8927,11 +8927,11 @@ var init_oidc_federation = __esm({
 // node_modules/@anthropic-ai/sdk/lib/credentials/user-oauth.mjs
 function userOAuthProvider(config2) {
   return async (opts) => {
-    const { fs: fs19 } = await Promise.resolve().then(() => (init_node(), node_exports));
+    const { fs: fs20 } = await Promise.resolve().then(() => (init_node(), node_exports));
     await checkCredentialsFileSafety(config2.credentialsPath, config2.onSafetyWarning);
     let raw;
     try {
-      raw = await fs19.promises.readFile(config2.credentialsPath, "utf-8");
+      raw = await fs20.promises.readFile(config2.credentialsPath, "utf-8");
     } catch (err) {
       throw new WorkloadIdentityError(`Credentials file not found at ${config2.credentialsPath}: ${err}`);
     }
@@ -9103,11 +9103,11 @@ function resolveIdentityTokenProvider(auth) {
 }
 function cachedExchangeProvider(exchange, credentialsPath, onCacheWriteError, onSafetyWarning) {
   return async (opts) => {
-    const { fs: fs19 } = await Promise.resolve().then(() => (init_node(), node_exports));
+    const { fs: fs20 } = await Promise.resolve().then(() => (init_node(), node_exports));
     await checkCredentialsFileSafety(credentialsPath, onSafetyWarning);
     let existing;
     try {
-      const raw = await fs19.promises.readFile(credentialsPath, "utf-8");
+      const raw = await fs20.promises.readFile(credentialsPath, "utf-8");
       existing = JSON.parse(raw);
       const token = existing?.["access_token"];
       if (token && !opts?.forceRefresh) {
@@ -10164,17 +10164,17 @@ var init_headers = __esm({
 function encodeURIPath(str) {
   return str.replace(/[^A-Za-z0-9\-._~!$&'()*+,;=:@]+/g, encodeURIComponent);
 }
-var EMPTY, createPathTagFunction, path12;
+var EMPTY, createPathTagFunction, path13;
 var init_path = __esm({
   "node_modules/@anthropic-ai/sdk/internal/utils/path.mjs"() {
     init_error();
     EMPTY = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.create(null));
-    createPathTagFunction = (pathEncoder = encodeURIPath) => function path17(statics, ...params) {
+    createPathTagFunction = (pathEncoder = encodeURIPath) => function path18(statics, ...params) {
       if (statics.length === 1)
         return statics[0];
       let postPath = false;
       const invalidSegments = [];
-      const path18 = statics.reduce((previousValue, currentValue, index) => {
+      const path19 = statics.reduce((previousValue, currentValue, index) => {
         if (/[?#]/.test(currentValue)) {
           postPath = true;
         }
@@ -10191,7 +10191,7 @@ var init_path = __esm({
         }
         return previousValue + currentValue + (index === params.length ? "" : encoded);
       }, "");
-      const pathOnly = path18.split(/[?#]/, 1)[0];
+      const pathOnly = path19.split(/[?#]/, 1)[0];
       const invalidSegmentPattern = /(?<=^|\/)(?:\.|%2e){1,2}(?=\/|$)/gi;
       let match;
       while ((match = invalidSegmentPattern.exec(pathOnly)) !== null) {
@@ -10212,12 +10212,12 @@ var init_path = __esm({
         }, "");
         throw new AnthropicError(`Path parameters result in path with invalid segments:
 ${invalidSegments.map((e) => e.error).join("\n")}
-${path18}
+${path19}
 ${underline}`);
       }
-      return path18;
+      return path19;
     };
-    path12 = /* @__PURE__ */ createPathTagFunction(encodeURIPath);
+    path13 = /* @__PURE__ */ createPathTagFunction(encodeURIPath);
   }
 });
 
@@ -10243,7 +10243,7 @@ var init_deployment_runs = __esm({
        */
       retrieve(deploymentRunID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.get(path12`/v1/deployment_runs/${deploymentRunID}?beta=true`, {
+        return this._client.get(path13`/v1/deployment_runs/${deploymentRunID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10343,7 +10343,7 @@ var init_deployments = __esm({
        */
       retrieve(deploymentID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.get(path12`/v1/deployments/${deploymentID}?beta=true`, {
+        return this._client.get(path13`/v1/deployments/${deploymentID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10367,7 +10367,7 @@ var init_deployments = __esm({
        */
       update(deploymentID, params, options) {
         const { betas, workspace_id, ...body } = params;
-        return this._client.post(path12`/v1/deployments/${deploymentID}?beta=true`, {
+        return this._client.post(path13`/v1/deployments/${deploymentID}?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -10417,7 +10417,7 @@ var init_deployments = __esm({
        */
       archive(deploymentID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.post(path12`/v1/deployments/${deploymentID}/archive?beta=true`, {
+        return this._client.post(path13`/v1/deployments/${deploymentID}/archive?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10441,7 +10441,7 @@ var init_deployments = __esm({
        */
       pause(deploymentID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.post(path12`/v1/deployments/${deploymentID}/pause?beta=true`, {
+        return this._client.post(path13`/v1/deployments/${deploymentID}/pause?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10465,7 +10465,7 @@ var init_deployments = __esm({
        */
       run(deploymentID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.post(path12`/v1/deployments/${deploymentID}/run?beta=true`, {
+        return this._client.post(path13`/v1/deployments/${deploymentID}/run?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10489,7 +10489,7 @@ var init_deployments = __esm({
        */
       unpause(deploymentID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.post(path12`/v1/deployments/${deploymentID}/unpause?beta=true`, {
+        return this._client.post(path13`/v1/deployments/${deploymentID}/unpause?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10566,7 +10566,7 @@ var init_dreams = __esm({
        */
       retrieve(dreamID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.get(path12`/v1/dreams/${dreamID}?beta=true`, {
+        return this._client.get(path13`/v1/dreams/${dreamID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10629,7 +10629,7 @@ var init_dreams = __esm({
        */
       archive(dreamID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.post(path12`/v1/dreams/${dreamID}/archive?beta=true`, {
+        return this._client.post(path13`/v1/dreams/${dreamID}/archive?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10661,7 +10661,7 @@ var init_dreams = __esm({
        */
       cancel(dreamID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.post(path12`/v1/dreams/${dreamID}/cancel?beta=true`, {
+        return this._client.post(path13`/v1/dreams/${dreamID}/cancel?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10782,7 +10782,7 @@ var init_files = __esm({
        */
       delete(fileID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.delete(path12`/v1/files/${fileID}?beta=true`, {
+        return this._client.delete(path13`/v1/files/${fileID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10808,7 +10808,7 @@ var init_files = __esm({
        */
       download(fileID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.get(path12`/v1/files/${fileID}/content?beta=true`, {
+        return this._client.get(path13`/v1/files/${fileID}/content?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10832,7 +10832,7 @@ var init_files = __esm({
        */
       retrieveMetadata(fileID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.get(path12`/v1/files/${fileID}?beta=true`, {
+        return this._client.get(path13`/v1/files/${fileID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10896,7 +10896,7 @@ var init_models = __esm({
        */
       retrieve(modelID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.get(path12`/v1/models/${modelID}?beta=true`, {
+        return this._client.get(path13`/v1/models/${modelID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -10984,7 +10984,7 @@ var init_user_profiles = __esm({
        */
       retrieve(userProfileID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.get(path12`/v1/user_profiles/${userProfileID}?beta=true`, {
+        return this._client.get(path13`/v1/user_profiles/${userProfileID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -11008,7 +11008,7 @@ var init_user_profiles = __esm({
        */
       update(userProfileID, params, options) {
         const { betas, workspace_id, ...body } = params;
-        return this._client.post(path12`/v1/user_profiles/${userProfileID}?beta=true`, {
+        return this._client.post(path13`/v1/user_profiles/${userProfileID}?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -11058,7 +11058,7 @@ var init_user_profiles = __esm({
        */
       createEnrollmentURL(userProfileID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.post(path12`/v1/user_profiles/${userProfileID}/enrollment_url?beta=true`, {
+        return this._client.post(path13`/v1/user_profiles/${userProfileID}/enrollment_url?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -11919,7 +11919,7 @@ var init_versions = __esm({
        */
       list(agentID, params = {}, options) {
         const { betas, workspace_id, ...query2 } = params ?? {};
-        return this._client.getAPIList(path12`/v1/agents/${agentID}/versions?beta=true`, PageCursor, {
+        return this._client.getAPIList(path13`/v1/agents/${agentID}/versions?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -11990,7 +11990,7 @@ var init_agents = __esm({
          */
         retrieve(agentID, params = {}, options) {
           const { betas, workspace_id, ...query2 } = params ?? {};
-          return this._client.get(path12`/v1/agents/${agentID}?beta=true`, {
+          return this._client.get(path13`/v1/agents/${agentID}?beta=true`, {
             query: query2,
             ...options,
             headers: buildHeaders([
@@ -12016,7 +12016,7 @@ var init_agents = __esm({
          */
         update(agentID, params, options) {
           const { betas, workspace_id, ...body } = params;
-          return this._client.post(path12`/v1/agents/${agentID}?beta=true`, {
+          return this._client.post(path13`/v1/agents/${agentID}?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -12066,7 +12066,7 @@ var init_agents = __esm({
          */
         archive(agentID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.post(path12`/v1/agents/${agentID}/archive?beta=true`, {
+          return this._client.post(path13`/v1/agents/${agentID}/archive?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -13041,12 +13041,12 @@ var init_promise = __esm({
 
 // node_modules/@anthropic-ai/sdk/tools/agent-toolset/fs-util.mjs
 function isWithin(root, p) {
-  const rel = path11.relative(root, p);
-  return rel === "" || !rel.startsWith(".." + path11.sep) && rel !== ".." && !path11.isAbsolute(rel);
+  const rel = path12.relative(root, p);
+  return rel === "" || !rel.startsWith(".." + path12.sep) && rel !== ".." && !path12.isAbsolute(rel);
 }
 async function containingRoot(roots, target) {
   for (const root of roots) {
-    if (isWithin(await canonicalize(path11.resolve(root)), target))
+    if (isWithin(await canonicalize(path12.resolve(root)), target))
       return root;
   }
   return void 0;
@@ -13062,19 +13062,19 @@ async function canonicalize(abs) {
   for (; ; ) {
     let real;
     try {
-      real = await fs14.realpath(prefix);
+      real = await fs15.realpath(prefix);
     } catch (realpathErr) {
       let isLink;
       try {
-        isLink = (await fs14.lstat(prefix)).isSymbolicLink();
+        isLink = (await fs15.lstat(prefix)).isSymbolicLink();
       } catch (lstatErr) {
         const code = errnoCode(lstatErr);
         if (code !== "ENOENT" && code !== "ENOTDIR")
           throw lstatErr;
-        const parent = path11.dirname(prefix);
+        const parent = path12.dirname(prefix);
         if (parent === prefix)
           throw lstatErr;
-        tail.push(path11.basename(prefix));
+        tail.push(path12.basename(prefix));
         prefix = parent;
         continue;
       }
@@ -13083,18 +13083,18 @@ async function canonicalize(abs) {
       if (++hops > MAX_SYMLINK_HOPS) {
         throw Object.assign(new Error("too many levels of symbolic links"), { code: "ELOOP" });
       }
-      prefix = path11.resolve(path11.dirname(prefix), await fs14.readlink(prefix));
+      prefix = path12.resolve(path12.dirname(prefix), await fs15.readlink(prefix));
       continue;
     }
-    return tail.length ? path11.join(real, ...tail.reverse()) : real;
+    return tail.length ? path12.join(real, ...tail.reverse()) : real;
   }
 }
 async function confineToRoot(root, p, opts) {
   const allowedRoots = opts?.allowedRoots ?? [];
-  const realRoot = await canonicalize(path11.resolve(root));
+  const realRoot = await canonicalize(path12.resolve(root));
   let real;
   try {
-    real = await canonicalize(path11.resolve(realRoot, p));
+    real = await canonicalize(path12.resolve(realRoot, p));
   } catch (err) {
     throw new ToolError(fsErrorMessage(err, `path ${JSON.stringify(p)}`));
   }
@@ -13105,24 +13105,24 @@ async function confineToRoot(root, p, opts) {
   throw new ToolError(`path ${JSON.stringify(p)} is outside ${permitted}`);
 }
 async function atomicWriteFile(targetPath, content) {
-  const dir = path11.dirname(targetPath);
-  const tempPath = path11.join(dir, `.tmp-${process.pid}-${crypto.randomUUID()}`);
-  const existingMode = await fs14.stat(targetPath).then((st) => st.mode & 511, () => void 0);
+  const dir = path12.dirname(targetPath);
+  const tempPath = path12.join(dir, `.tmp-${process.pid}-${crypto.randomUUID()}`);
+  const existingMode = await fs15.stat(targetPath).then((st) => st.mode & 511, () => void 0);
   let handle;
   try {
-    handle = await fs14.open(tempPath, "wx", FILE_CREATE_MODE);
+    handle = await fs15.open(tempPath, "wx", FILE_CREATE_MODE);
     if (existingMode !== void 0)
       await handle.chmod(existingMode);
     await handle.writeFile(content, "utf-8");
     await handle.sync();
     await handle.close();
     handle = void 0;
-    await fs14.rename(tempPath, targetPath);
+    await fs15.rename(tempPath, targetPath);
   } catch (err) {
     if (handle)
       await handle.close().catch(() => {
       });
-    await fs14.unlink(tempPath).catch(() => {
+    await fs15.unlink(tempPath).catch(() => {
     });
     throw err;
   }
@@ -13152,12 +13152,12 @@ function fsErrorMessage(err, file2) {
       return `${file2}: ${code !== void 0 ? `i/o error (${code})` : "i/o error"}`;
   }
 }
-var fs14, DIR_CREATE_MODE, FILE_CREATE_MODE, MAX_SYMLINK_HOPS;
+var fs15, DIR_CREATE_MODE, FILE_CREATE_MODE, MAX_SYMLINK_HOPS;
 var init_fs_util = __esm({
   "node_modules/@anthropic-ai/sdk/tools/agent-toolset/fs-util.mjs"() {
     init_node();
     init_ToolError();
-    fs14 = fs13.promises;
+    fs15 = fs14.promises;
     DIR_CREATE_MODE = 448;
     FILE_CREATE_MODE = 384;
     MAX_SYMLINK_HOPS = 40;
@@ -13179,16 +13179,16 @@ async function setupSkills(ctx) {
     log.warn("AgentToolContext.sessionId is deprecated and costs an extra session fetch; fetch the session once and set `session` instead", { component: "agent-tool-context" });
     session = await client.beta.sessions.retrieve(sessionId);
   }
-  const skillsRoot = path11.resolve(ctx.workdir, "skills");
+  const skillsRoot = path12.resolve(ctx.workdir, "skills");
   const created = [];
   for (const skill of session.agent.skills) {
     try {
       const version2 = await client.beta.skills.versions.retrieve(skill.version, { skill_id: skill.skill_id });
-      let dirname2 = path11.basename(version2.name.trim());
+      let dirname2 = path12.basename(version2.name.trim());
       if (dirname2 === "" || dirname2 === "." || dirname2 === "..")
         dirname2 = skill.skill_id;
-      const dest = path11.resolve(skillsRoot, dirname2);
-      if (dest !== skillsRoot && !dest.startsWith(skillsRoot + path11.sep)) {
+      const dest = path12.resolve(skillsRoot, dirname2);
+      if (dest !== skillsRoot && !dest.startsWith(skillsRoot + path12.sep)) {
         log.warn("skill name escapes the skills dir; skipping", {
           component: "agent-tool-context",
           name: version2.name
@@ -13196,8 +13196,8 @@ async function setupSkills(ctx) {
         continue;
       }
       const resp = await client.beta.skills.versions.download(version2.id, { skill_id: skill.skill_id });
-      await fs15.rm(dest, { recursive: true, force: true });
-      await fs15.mkdir(dest, { recursive: true, mode: DIR_CREATE_MODE });
+      await fs16.rm(dest, { recursive: true, force: true });
+      await fs16.mkdir(dest, { recursive: true, mode: DIR_CREATE_MODE });
       created.push(dest);
       await extractSkillArchive(resp, dest);
       log.info("downloaded skill", {
@@ -13216,7 +13216,7 @@ async function setupSkills(ctx) {
   }
   return async () => {
     for (const dest of created) {
-      await fs15.rm(dest, { recursive: true, force: true }).catch((e) => {
+      await fs16.rm(dest, { recursive: true, force: true }).catch((e) => {
         log.warn("failed to clean up skill", { component: "agent-tool-context", dest, error: String(e) });
       });
     }
@@ -13227,7 +13227,7 @@ function assertSafeMemberNames(names) {
     const entry = raw.trim();
     if (!entry)
       continue;
-    if (path11.isAbsolute(entry) || entry.split(/[\\/]/).includes("..")) {
+    if (path12.isAbsolute(entry) || entry.split(/[\\/]/).includes("..")) {
       throw new AnthropicError(`refusing to extract unsafe archive member: ${entry}`);
     }
   }
@@ -13261,9 +13261,9 @@ function classifyArchiveListing(cmd, names, typed) {
   return { plain, special };
 }
 async function assertOnlyPlainEntries(dir) {
-  for (const entry of await fs15.readdir(dir, { withFileTypes: true })) {
+  for (const entry of await fs16.readdir(dir, { withFileTypes: true })) {
     if (entry.isDirectory())
-      await assertOnlyPlainEntries(path11.join(dir, entry.name));
+      await assertOnlyPlainEntries(path12.join(dir, entry.name));
     else if (!entry.isFile())
       throw new AnthropicError(INCONSISTENT_LISTING);
   }
@@ -13297,13 +13297,13 @@ function archiveTopDir(names) {
   return top !== void 0 && nested ? top : "";
 }
 async function extractSkillArchive(resp, dest) {
-  const tmp = path11.join(dest, `.skill-archive-${process.pid}-${Date.now()}`);
+  const tmp = path12.join(dest, `.skill-archive-${process.pid}-${Date.now()}`);
   if (!resp.body) {
     throw new AnthropicError("skill download response had no body");
   }
-  await stream.promises.pipeline(stream.Readable.fromWeb(resp.body), fs13.createWriteStream(tmp));
-  const stage = path11.join(path11.dirname(dest), `.skill-stage-${process.pid}-${Date.now()}`);
-  const excludeFile = path11.join(path11.dirname(dest), `.skill-exclude-${process.pid}-${Date.now()}`);
+  await stream.promises.pipeline(stream.Readable.fromWeb(resp.body), fs14.createWriteStream(tmp));
+  const stage = path12.join(path12.dirname(dest), `.skill-stage-${process.pid}-${Date.now()}`);
+  const excludeFile = path12.join(path12.dirname(dest), `.skill-exclude-${process.pid}-${Date.now()}`);
   try {
     const head = await readHead(tmp, 4);
     const isZip = head.length >= 4 && head[0] === 80 && head[1] === 75 && head[2] === 3 && head[3] === 4;
@@ -13313,22 +13313,22 @@ async function extractSkillArchive(resp, dest) {
     const { plain, special } = classifyArchiveListing(archiveCmd, names, typed);
     assertSafeMemberNames([...plain, ...special]);
     const top = archiveTopDir(plain);
-    await fs15.mkdir(stage, { recursive: true, mode: DIR_CREATE_MODE });
+    await fs16.mkdir(stage, { recursive: true, mode: DIR_CREATE_MODE });
     if (plain.length > 0) {
       await runArchiveTool(archiveCmd, await extractArgs(archiveCmd, tmp, stage, special, excludeFile));
     }
     await assertOnlyPlainEntries(stage);
-    const srcRoot = top ? path11.join(stage, top) : stage;
-    const entries = await fs15.readdir(srcRoot).catch((e) => {
+    const srcRoot = top ? path12.join(stage, top) : stage;
+    const entries = await fs16.readdir(srcRoot).catch((e) => {
       throw errnoCode(e) === "ENOENT" ? new AnthropicError(INCONSISTENT_LISTING) : e;
     });
     for (const entry of entries) {
-      await fs15.rename(path11.join(srcRoot, entry), path11.join(dest, entry));
+      await fs16.rename(path12.join(srcRoot, entry), path12.join(dest, entry));
     }
   } finally {
-    await fs15.rm(tmp, { force: true });
-    await fs15.rm(excludeFile, { force: true });
-    await fs15.rm(stage, { recursive: true, force: true });
+    await fs16.rm(tmp, { force: true });
+    await fs16.rm(excludeFile, { force: true });
+    await fs16.rm(stage, { recursive: true, force: true });
   }
 }
 async function extractArgs(cmd, archive, stage, special, excludeFile) {
@@ -13338,11 +13338,11 @@ async function extractArgs(cmd, archive, stage, special, excludeFile) {
   }
   if (patterns.length === 0)
     return ["-xf", archive, "-C", stage];
-  await fs15.writeFile(excludeFile, patterns.join("\n") + "\n", { flag: "wx", mode: 384 });
+  await fs16.writeFile(excludeFile, patterns.join("\n") + "\n", { flag: "wx", mode: 384 });
   return ["-xf", archive, "-C", stage, "-X", excludeFile];
 }
 async function readHead(file2, n) {
-  const handle = await fs15.open(file2, "r");
+  const handle = await fs16.open(file2, "r");
   try {
     const buf = Buffer.alloc(n);
     const { bytesRead } = await handle.read(buf, 0, n, 0);
@@ -13351,14 +13351,14 @@ async function readHead(file2, n) {
     await handle.close();
   }
 }
-var fs15, execFileAsync, INCONSISTENT_LISTING, PLAIN_TYPE_CHARS;
+var fs16, execFileAsync, INCONSISTENT_LISTING, PLAIN_TYPE_CHARS;
 var init_skills = __esm({
   "node_modules/@anthropic-ai/sdk/tools/agent-toolset/skills.mjs"() {
     init_node();
     init_error();
     init_log();
     init_fs_util();
-    fs15 = fs13.promises;
+    fs16 = fs14.promises;
     execFileAsync = util.promisify(child_process.execFile);
     INCONSISTENT_LISTING = "skill archive listing is inconsistent; refusing to extract";
     PLAIN_TYPE_CHARS = { unzip: /* @__PURE__ */ new Set(["-", "d", "?"]), tar: /* @__PURE__ */ new Set(["-", "d", "C"]) };
@@ -13385,7 +13385,7 @@ async function makeDirAndAncestors(dir) {
         throw e;
     }
     missing.push(current);
-    const parent = path11.dirname(current);
+    const parent = path12.dirname(current);
     if (parent === current)
       break;
     current = parent;
@@ -13400,12 +13400,12 @@ async function makeDirAndAncestors(dir) {
   }
 }
 async function makeDirsBelowRoot(root, dir) {
-  const below = path11.relative(root, dir);
+  const below = path12.relative(root, dir);
   if (below === "")
     return;
   let current = root;
-  for (const part of below.split(path11.sep)) {
-    current = path11.join(current, part);
+  for (const part of below.split(path12.sep)) {
+    current = path12.join(current, part);
     try {
       await fsp.mkdir(current, { mode: OWNER_ONLY_DIR_MODE2 });
     } catch (e) {
@@ -13416,7 +13416,7 @@ async function makeDirsBelowRoot(root, dir) {
 }
 async function replaceViaTemp(dest, data, isExecutable) {
   const mode = isExecutable ? OWNER_ONLY_EXEC_MODE : OWNER_ONLY_FILE_MODE2;
-  const tmp = path11.join(path11.dirname(dest), `.fs-${crypto.randomBytes(8).toString("hex")}.tmp`);
+  const tmp = path12.join(path12.dirname(dest), `.fs-${crypto.randomBytes(8).toString("hex")}.tmp`);
   let handle;
   try {
     handle = await fsp.open(tmp, C2.O_WRONLY | C2.O_CREAT | C2.O_EXCL | O_NOFOLLOW, mode);
@@ -13457,7 +13457,7 @@ async function openRegularFile(relPath, dest) {
 }
 async function hashFile(full) {
   const digest = crypto.createHash("sha256");
-  const handle = await openRegularFile(path11.basename(full), full);
+  const handle = await openRegularFile(path12.basename(full), full);
   const buf = new Uint8Array(1024 * 1024);
   try {
     for (; ; ) {
@@ -13477,13 +13477,13 @@ async function filenamesInDir(root, under, base) {
   const out = [];
   await walk(base, (full, entry) => {
     if (entry.isFile())
-      out.push([path11.relative(root, full).split(path11.sep).join("/"), full]);
+      out.push([path12.relative(root, full).split(path12.sep).join("/"), full]);
   });
   out.sort();
   return out;
 }
 async function symlinksInDir(root, under, base) {
-  const relOf = (full) => path11.relative(root, full).split(path11.sep).join("/");
+  const relOf = (full) => path12.relative(root, full).split(path12.sep).join("/");
   let st;
   try {
     st = await fsp.lstat(base, { bigint: true });
@@ -13531,7 +13531,7 @@ async function walk(base, visit2) {
       throw e;
     }
     for (const entry of entries) {
-      const full = path11.join(dir, entry.name);
+      const full = path12.join(dir, entry.name);
       visit2(full, entry);
       if (entry.isDirectory() && !entry.isSymbolicLink())
         stack.push(full);
@@ -13550,8 +13550,8 @@ var init_file_store = __esm({
   "node_modules/@anthropic-ai/sdk/internal/file-store.mjs"() {
     init_node();
     init_bytes();
-    fsp = fs13.promises;
-    C2 = fs13.constants;
+    fsp = fs14.promises;
+    C2 = fs14.constants;
     OWNER_ONLY_DIR_MODE2 = 448;
     OWNER_ONLY_FILE_MODE2 = 384;
     OWNER_ONLY_EXEC_MODE = 448;
@@ -13596,7 +13596,7 @@ var init_file_store = __esm({
               throw e;
             removedOnDispose = true;
           }
-          return new FileStore2(path11.resolve(root), removedOnDispose, opts?.utf8 ?? false);
+          return new FileStore2(path12.resolve(root), removedOnDispose, opts?.utf8 ?? false);
         }
         /** Create the root directory and any missing ancestors; already existing is fine. */
         async createRoot() {
@@ -13631,7 +13631,7 @@ var init_file_store = __esm({
           const dest = this.resolveUnderRoot(relPath);
           const payload = typeof data === "string" ? encodeUTF8(data) : data;
           this.requireUtf8(relPath, payload);
-          await makeDirsBelowRoot(this.rootPath, path11.dirname(dest));
+          await makeDirsBelowRoot(this.rootPath, path12.dirname(dest));
           await replaceViaTemp(dest, payload, opts?.executable ?? false);
         }
         /** The file's bytes; `null` when absent. */
@@ -13700,7 +13700,7 @@ var init_file_store = __esm({
             throw new FileStoreError(FileStoreError.IS_A_SYMLINK, relPath);
           if (!st.isFile())
             throw new FileStoreError(FileStoreError.NOT_A_FILE, relPath);
-          const rel = path11.relative(this.rootPath, dest).split(path11.sep).join("/");
+          const rel = path12.relative(this.rootPath, dest).split(path12.sep).join("/");
           return this.hashViaCache(rel, dest, _internals.nowNs());
         }
         /**
@@ -13715,7 +13715,7 @@ var init_file_store = __esm({
           const dstExists = await fsp.stat(d2).then(() => true, () => false);
           if (dstExists)
             throw new FileStoreError(FileStoreError.MOVE_DESTINATION_EXISTS, dst);
-          await makeDirsBelowRoot(this.rootPath, path11.dirname(d2));
+          await makeDirsBelowRoot(this.rootPath, path12.dirname(d2));
           await fsp.rename(s, d2);
         }
         /** Delete a file or subtree; absent — and the banned store root — do nothing. */
@@ -13745,10 +13745,10 @@ var init_file_store = __esm({
         resolveUnderRoot(relPath) {
           const norm = relPath.replace(/\\/g, "/").replace(/^\/+/, "");
           const parts = norm.split("/").filter((p) => p !== "" && p !== ".");
-          if (path11.posix.isAbsolute(norm) || parts.includes("..")) {
+          if (path12.posix.isAbsolute(norm) || parts.includes("..")) {
             throw new FileStoreError(FileStoreError.ESCAPES_ROOT, relPath);
           }
-          return parts.length === 0 ? this.rootPath : path11.join(this.rootPath, ...parts);
+          return parts.length === 0 ? this.rootPath : path12.join(this.rootPath, ...parts);
         }
         requireUtf8(relPath, data) {
           if (!this.decoder)
@@ -14056,7 +14056,7 @@ var init_memories = __esm({
           }
           return resource.mount_path;
         }
-        return path11.join(__classPrivateFieldGet(this, _SessionMemoryStores_workdir, "f"), "memory", resource.name || resource.memory_store_id);
+        return path12.join(__classPrivateFieldGet(this, _SessionMemoryStores_workdir, "f"), "memory", resource.name || resource.memory_store_id);
       }, _SessionMemoryStores_scanMarker = async function _SessionMemoryStores_scanMarker2(store) {
         const local = await store.files.hashtree();
         const marker = local[MARKER_PATH];
@@ -14552,9 +14552,9 @@ __export(node_exports2, {
   resolvePath: () => resolvePath,
   setupSkills: () => setupSkills
 });
-import * as fs16 from "node:fs/promises";
+import * as fs17 from "node:fs/promises";
 import * as fssync from "node:fs";
-import * as path13 from "node:path";
+import * as path14 from "node:path";
 import * as cp from "node:child_process";
 import * as crypto2 from "node:crypto";
 import * as readline3 from "node:readline";
@@ -14677,7 +14677,7 @@ function betaReadTool(ctx) {
       }
       let data;
       try {
-        const st = await fs16.stat(abs);
+        const st = await fs17.stat(abs);
         if (!st.isFile()) {
           throw new ToolError(`read: ${file_path} is not a regular file`);
         }
@@ -14689,7 +14689,7 @@ function betaReadTool(ctx) {
           const [startLine2, endLine2] = view_range;
           return await readRangeStreaming(abs, file_path, startLine2, endLine2, limit2);
         }
-        data = await fs16.readFile(abs, "utf8");
+        data = await fs17.readFile(abs, "utf8");
       } catch (e) {
         if (e instanceof ToolError)
           throw e;
@@ -14740,7 +14740,7 @@ function betaWriteTool(ctx) {
         throw new ToolError(`write: ${file_path} is inside read-only directory ${ro}`);
       }
       try {
-        await fs16.mkdir(path13.dirname(abs), { recursive: true, mode: DIR_CREATE_MODE });
+        await fs17.mkdir(path14.dirname(abs), { recursive: true, mode: DIR_CREATE_MODE });
         await atomicWriteFile(abs, content ?? "");
       } catch (e) {
         throw new ToolError(`write: ${fsErrorMessage(e, file_path)}`);
@@ -14776,7 +14776,7 @@ function betaEditTool(ctx) {
       }
       let data;
       try {
-        const st = await fs16.stat(abs);
+        const st = await fs17.stat(abs);
         if (!st.isFile()) {
           throw new ToolError(`edit: ${file_path} is not a regular file`);
         }
@@ -14784,7 +14784,7 @@ function betaEditTool(ctx) {
         if (limit2 !== null && st.size > limit2) {
           throw new ToolError(`edit: ${file_path} is ${st.size} bytes, exceeds ${limit2}-byte limit. The edit tool loads the whole file and cannot modify a file this large.`);
         }
-        data = await fs16.readFile(abs, "utf8");
+        data = await fs17.readFile(abs, "utf8");
       } catch (e) {
         if (e instanceof ToolError)
           throw e;
@@ -14829,13 +14829,13 @@ function betaGlobTool(ctx) {
     run: async ({ pattern, path: searchPath }) => {
       if (!pattern)
         throw new ToolError("glob: pattern is required");
-      if (path13.isAbsolute(pattern)) {
+      if (path14.isAbsolute(pattern)) {
         throw new ToolError("glob: absolute pattern not permitted; pass a relative pattern (and optionally path)");
       }
       if (patternCanAscend(pattern)) {
         throw new ToolError('glob: ".." is not permitted in the pattern');
       }
-      const root = searchPath ? await resolvePath(ctx, searchPath) : path13.resolve(ctx.workdir);
+      const root = searchPath ? await resolvePath(ctx, searchPath) : path14.resolve(ctx.workdir);
       const realRoot = searchPath ? root : await canonicalize(root);
       const matches = [];
       let remaining = WALK_MAX_ENTRIES;
@@ -14849,10 +14849,10 @@ function betaGlobTool(ctx) {
             break;
           if (!entry.isFile())
             continue;
-          const full = path13.join(entry.parentPath, entry.name);
+          const full = path14.join(entry.parentPath, entry.name);
           let real;
           try {
-            real = await fs16.realpath(full);
+            real = await fs17.realpath(full);
           } catch {
             continue;
           }
@@ -14860,7 +14860,7 @@ function betaGlobTool(ctx) {
             continue;
           let mtime = 0;
           try {
-            mtime = (await fs16.stat(full)).mtimeMs;
+            mtime = (await fs17.stat(full)).mtimeMs;
           } catch {
           }
           matches.push({ path: full, mtime });
@@ -14888,7 +14888,7 @@ function betaGrepTool(ctx) {
     run: async ({ pattern, path: p }, context) => {
       if (!pattern)
         throw new ToolError("grep: pattern is required");
-      let searchPath = path13.resolve(ctx.workdir);
+      let searchPath = path14.resolve(ctx.workdir);
       if (p)
         searchPath = await resolvePath(ctx, p);
       const rg = await findRg();
@@ -14952,11 +14952,11 @@ async function runWalkGrep(pattern, root, signal) {
     hits.push(line);
     return true;
   };
-  const stat3 = await fs16.stat(root).catch(() => null);
+  const stat3 = await fs17.stat(root).catch(() => null);
   if (stat3?.isFile()) {
     await grepFile(root, re2, push);
   } else {
-    await walk2(root, "", (rel) => grepFile(path13.join(root, rel), re2, push), signal);
+    await walk2(root, "", (rel) => grepFile(path14.join(root, rel), re2, push), signal);
   }
   if (signal?.aborted)
     throw new ToolError("grep: aborted");
@@ -14991,7 +14991,7 @@ async function walk2(root, rel, fn, signal) {
       return false;
     let entries;
     try {
-      entries = await fs16.readdir(path13.join(root, rel2), { withFileTypes: true });
+      entries = await fs17.readdir(path14.join(root, rel2), { withFileTypes: true });
     } catch {
       return true;
     }
@@ -15002,7 +15002,7 @@ async function walk2(root, rel, fn, signal) {
         return false;
       if (signal?.aborted)
         return false;
-      const childRel = rel2 ? path13.join(rel2, e.name) : e.name;
+      const childRel = rel2 ? path14.join(rel2, e.name) : e.name;
       if (e.isDirectory()) {
         if (!await inner(childRel, depth + 1))
           return false;
@@ -15016,11 +15016,11 @@ async function walk2(root, rel, fn, signal) {
   await inner(rel, 0);
 }
 async function findRg() {
-  const dirs = (process.env["PATH"] ?? "").split(path13.delimiter);
+  const dirs = (process.env["PATH"] ?? "").split(path14.delimiter);
   for (const d2 of dirs) {
-    const candidate = path13.join(d2, "rg");
+    const candidate = path14.join(d2, "rg");
     try {
-      await fs16.access(candidate, fssync.constants.X_OK);
+      await fs17.access(candidate, fssync.constants.X_OK);
       return candidate;
     } catch {
     }
@@ -15054,7 +15054,7 @@ var init_node2 = __esm({
       }
     };
     ANSI_RE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
-    fsGlob = fs16.glob;
+    fsGlob = fs17.glob;
     BashSession = /* @__PURE__ */ (() => {
       class BashSession2 {
         constructor(dir, env = scrubbedShellEnv()) {
@@ -15698,7 +15698,7 @@ var init_work = __esm({
          */
         retrieve(workID, params, options) {
           const { environment_id, betas, workspace_id } = params;
-          return this._client.get(path12`/v1/environments/${environment_id}/work/${workID}?beta=true`, {
+          return this._client.get(path13`/v1/environments/${environment_id}/work/${workID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -15728,7 +15728,7 @@ var init_work = __esm({
          */
         update(workID, params, options) {
           const { environment_id, betas, workspace_id, ...body } = params;
-          return this._client.post(path12`/v1/environments/${environment_id}/work/${workID}?beta=true`, {
+          return this._client.post(path13`/v1/environments/${environment_id}/work/${workID}?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -15760,7 +15760,7 @@ var init_work = __esm({
          */
         list(environmentID, params = {}, options) {
           const { betas, ...query2 } = params ?? {};
-          return this._client.getAPIList(path12`/v1/environments/${environmentID}/work?beta=true`, PageCursor, {
+          return this._client.getAPIList(path13`/v1/environments/${environmentID}/work?beta=true`, PageCursor, {
             query: query2,
             ...options,
             headers: buildHeaders([
@@ -15788,7 +15788,7 @@ var init_work = __esm({
          */
         ack(workID, params, options) {
           const { environment_id, betas } = params;
-          return this._client.post(path12`/v1/environments/${environment_id}/work/${workID}/ack?beta=true`, {
+          return this._client.post(path13`/v1/environments/${environment_id}/work/${workID}/ack?beta=true`, {
             ...options,
             headers: buildHeaders([
               { "anthropic-beta": [...betas ?? [], "managed-agents-2026-04-01"].toString() },
@@ -15814,7 +15814,7 @@ var init_work = __esm({
          */
         heartbeat(workID, params, options) {
           const { environment_id, desired_ttl_seconds, expected_last_heartbeat, betas } = params;
-          return this._client.post(path12`/v1/environments/${environment_id}/work/${workID}/heartbeat?beta=true`, {
+          return this._client.post(path13`/v1/environments/${environment_id}/work/${workID}/heartbeat?beta=true`, {
             query: { desired_ttl_seconds, expected_last_heartbeat },
             ...options,
             headers: buildHeaders([
@@ -15841,7 +15841,7 @@ var init_work = __esm({
          */
         poll(environmentID, params = {}, options) {
           const { betas, "Anthropic-Worker-ID": anthropicWorkerID, ...query2 } = params ?? {};
-          return this._client.get(path12`/v1/environments/${environmentID}/work/poll?beta=true`, {
+          return this._client.get(path13`/v1/environments/${environmentID}/work/poll?beta=true`, {
             query: query2,
             ...options,
             headers: buildHeaders([
@@ -15866,7 +15866,7 @@ var init_work = __esm({
          */
         stats(environmentID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.get(path12`/v1/environments/${environmentID}/work/stats?beta=true`, {
+          return this._client.get(path13`/v1/environments/${environmentID}/work/stats?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -15895,7 +15895,7 @@ var init_work = __esm({
          */
         stop(workID, params, options) {
           const { environment_id, betas, workspace_id, ...body } = params;
-          return this._client.post(path12`/v1/environments/${environment_id}/work/${workID}/stop?beta=true`, {
+          return this._client.post(path13`/v1/environments/${environment_id}/work/${workID}/stop?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -15991,7 +15991,7 @@ var init_environments = __esm({
          */
         retrieve(environmentID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.get(path12`/v1/environments/${environmentID}?beta=true`, {
+          return this._client.get(path13`/v1/environments/${environmentID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -16015,7 +16015,7 @@ var init_environments = __esm({
          */
         update(environmentID, params, options) {
           const { betas, workspace_id, ...body } = params;
-          return this._client.post(path12`/v1/environments/${environmentID}?beta=true`, {
+          return this._client.post(path13`/v1/environments/${environmentID}?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -16065,7 +16065,7 @@ var init_environments = __esm({
          */
         delete(environmentID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.delete(path12`/v1/environments/${environmentID}?beta=true`, {
+          return this._client.delete(path13`/v1/environments/${environmentID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -16090,7 +16090,7 @@ var init_environments = __esm({
          */
         archive(environmentID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.post(path12`/v1/environments/${environmentID}/archive?beta=true`, {
+          return this._client.post(path13`/v1/environments/${environmentID}/archive?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -16131,7 +16131,7 @@ var init_memories2 = __esm({
        */
       create(memoryStoreID, params, options) {
         const { view, betas, workspace_id, ...body } = params;
-        return this._client.post(path12`/v1/memory_stores/${memoryStoreID}/memories?beta=true`, {
+        return this._client.post(path13`/v1/memory_stores/${memoryStoreID}/memories?beta=true`, {
           query: { view },
           body,
           ...options,
@@ -16158,7 +16158,7 @@ var init_memories2 = __esm({
        */
       retrieve(memoryID, params, options) {
         const { memory_store_id, betas, workspace_id, ...query2 } = params;
-        return this._client.get(path12`/v1/memory_stores/${memory_store_id}/memories/${memoryID}?beta=true`, {
+        return this._client.get(path13`/v1/memory_stores/${memory_store_id}/memories/${memoryID}?beta=true`, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -16184,7 +16184,7 @@ var init_memories2 = __esm({
        */
       update(memoryID, params, options) {
         const { memory_store_id, view, betas, workspace_id, ...body } = params;
-        return this._client.post(path12`/v1/memory_stores/${memory_store_id}/memories/${memoryID}?beta=true`, {
+        return this._client.post(path13`/v1/memory_stores/${memory_store_id}/memories/${memoryID}?beta=true`, {
           query: { view },
           body,
           ...options,
@@ -16212,7 +16212,7 @@ var init_memories2 = __esm({
        */
       list(memoryStoreID, params = {}, options) {
         const { betas, workspace_id, ...query2 } = params ?? {};
-        return this._client.getAPIList(path12`/v1/memory_stores/${memoryStoreID}/memories?beta=true`, PageCursor, {
+        return this._client.getAPIList(path13`/v1/memory_stores/${memoryStoreID}/memories?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -16238,7 +16238,7 @@ var init_memories2 = __esm({
        */
       delete(memoryID, params, options) {
         const { memory_store_id, expected_content_sha256, betas, workspace_id } = params;
-        return this._client.delete(path12`/v1/memory_stores/${memory_store_id}/memories/${memoryID}?beta=true`, {
+        return this._client.delete(path13`/v1/memory_stores/${memory_store_id}/memories/${memoryID}?beta=true`, {
           query: { expected_content_sha256 },
           ...options,
           headers: buildHeaders([
@@ -16277,7 +16277,7 @@ var init_memory_versions = __esm({
        */
       retrieve(memoryVersionID, params, options) {
         const { memory_store_id, betas, workspace_id, ...query2 } = params;
-        return this._client.get(path12`/v1/memory_stores/${memory_store_id}/memory_versions/${memoryVersionID}?beta=true`, {
+        return this._client.get(path13`/v1/memory_stores/${memory_store_id}/memory_versions/${memoryVersionID}?beta=true`, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -16304,7 +16304,7 @@ var init_memory_versions = __esm({
        */
       list(memoryStoreID, params = {}, options) {
         const { betas, workspace_id, ...query2 } = params ?? {};
-        return this._client.getAPIList(path12`/v1/memory_stores/${memoryStoreID}/memory_versions?beta=true`, PageCursor, {
+        return this._client.getAPIList(path13`/v1/memory_stores/${memoryStoreID}/memory_versions?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -16330,7 +16330,7 @@ var init_memory_versions = __esm({
        */
       redact(memoryVersionID, params, options) {
         const { memory_store_id, betas, workspace_id } = params;
-        return this._client.post(path12`/v1/memory_stores/${memory_store_id}/memory_versions/${memoryVersionID}/redact?beta=true`, {
+        return this._client.post(path13`/v1/memory_stores/${memory_store_id}/memory_versions/${memoryVersionID}/redact?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -16400,7 +16400,7 @@ var init_memory_stores = __esm({
          */
         retrieve(memoryStoreID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.get(path12`/v1/memory_stores/${memoryStoreID}?beta=true`, {
+          return this._client.get(path13`/v1/memory_stores/${memoryStoreID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -16422,7 +16422,7 @@ var init_memory_stores = __esm({
          */
         update(memoryStoreID, params, options) {
           const { betas, workspace_id, ...body } = params;
-          return this._client.post(path12`/v1/memory_stores/${memoryStoreID}?beta=true`, {
+          return this._client.post(path13`/v1/memory_stores/${memoryStoreID}?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -16470,7 +16470,7 @@ var init_memory_stores = __esm({
          */
         delete(memoryStoreID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.delete(path12`/v1/memory_stores/${memoryStoreID}?beta=true`, {
+          return this._client.delete(path13`/v1/memory_stores/${memoryStoreID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -16492,7 +16492,7 @@ var init_memory_stores = __esm({
          */
         archive(memoryStoreID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.post(path12`/v1/memory_stores/${memoryStoreID}/archive?beta=true`, {
+          return this._client.post(path13`/v1/memory_stores/${memoryStoreID}/archive?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -16634,7 +16634,7 @@ var init_batches = __esm({
        */
       retrieve(messageBatchID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.get(path12`/v1/messages/batches/${messageBatchID}?beta=true`, {
+        return this._client.get(path13`/v1/messages/batches/${messageBatchID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -16693,7 +16693,7 @@ var init_batches = __esm({
        */
       delete(messageBatchID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.delete(path12`/v1/messages/batches/${messageBatchID}?beta=true`, {
+        return this._client.delete(path13`/v1/messages/batches/${messageBatchID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -16728,7 +16728,7 @@ var init_batches = __esm({
        */
       cancel(messageBatchID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.post(path12`/v1/messages/batches/${messageBatchID}/cancel?beta=true`, {
+        return this._client.post(path13`/v1/messages/batches/${messageBatchID}/cancel?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -17812,7 +17812,7 @@ var init_api_keys = __esm({
        * ```
        */
       retrieve(apiKeyID, options) {
-        return this._client.get(path12`/v1/organizations/api_keys/${apiKeyID}?beta=true`, options);
+        return this._client.get(path13`/v1/organizations/api_keys/${apiKeyID}?beta=true`, options);
       }
       /**
        * Update API Key
@@ -17826,7 +17826,7 @@ var init_api_keys = __esm({
        * ```
        */
       update(apiKeyID, body, options) {
-        return this._client.post(path12`/v1/organizations/api_keys/${apiKeyID}?beta=true`, { body, ...options });
+        return this._client.post(path13`/v1/organizations/api_keys/${apiKeyID}?beta=true`, { body, ...options });
       }
       /**
        * List API Keys
@@ -18404,7 +18404,7 @@ var init_external_keys = __esm({
        * ```
        */
       retrieve(externalKeyID, options) {
-        return this._client.get(path12`/v1/organizations/external_keys/${externalKeyID}?beta=true`, options);
+        return this._client.get(path13`/v1/organizations/external_keys/${externalKeyID}?beta=true`, options);
       }
       /**
        * Partially update an external key config. Omitted fields are left unchanged.
@@ -18422,7 +18422,7 @@ var init_external_keys = __esm({
        * ```
        */
       update(externalKeyID, body, options) {
-        return this._client.post(path12`/v1/organizations/external_keys/${externalKeyID}?beta=true`, {
+        return this._client.post(path13`/v1/organizations/external_keys/${externalKeyID}?beta=true`, {
           body,
           ...options
         });
@@ -18461,7 +18461,7 @@ var init_external_keys = __esm({
        * ```
        */
       delete(externalKeyID, options) {
-        return this._client.delete(path12`/v1/organizations/external_keys/${externalKeyID}?beta=true`, options);
+        return this._client.delete(path13`/v1/organizations/external_keys/${externalKeyID}?beta=true`, options);
       }
       /**
        * Validate an external key config against the customer's KMS.
@@ -18480,7 +18480,7 @@ var init_external_keys = __esm({
        * ```
        */
       validate(externalKeyID, options) {
-        return this._client.post(path12`/v1/organizations/external_keys/${externalKeyID}/validate?beta=true`, options);
+        return this._client.post(path13`/v1/organizations/external_keys/${externalKeyID}/validate?beta=true`, options);
       }
     };
   }
@@ -18551,7 +18551,7 @@ var init_issuers = __esm({
        */
       retrieve(federationIssuerID, params = {}, options) {
         const { betas } = params ?? {};
-        return this._client.get(path12`/v1/organizations/federation_issuers/${federationIssuerID}?beta=true`, {
+        return this._client.get(path13`/v1/organizations/federation_issuers/${federationIssuerID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -18583,7 +18583,7 @@ var init_issuers = __esm({
        */
       update(federationIssuerID, params, options) {
         const { betas, ...body } = params;
-        return this._client.post(path12`/v1/organizations/federation_issuers/${federationIssuerID}?beta=true`, {
+        return this._client.post(path13`/v1/organizations/federation_issuers/${federationIssuerID}?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -18644,7 +18644,7 @@ var init_issuers = __esm({
        */
       archive(federationIssuerID, params = {}, options) {
         const { betas } = params ?? {};
-        return this._client.post(path12`/v1/organizations/federation_issuers/${federationIssuerID}/archive?beta=true`, {
+        return this._client.post(path13`/v1/organizations/federation_issuers/${federationIssuerID}/archive?beta=true`, {
           ...options,
           headers: buildHeaders([
             { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -18691,7 +18691,7 @@ var init_workspaces = __esm({
        */
       list(federationRuleID, params = {}, options) {
         const { betas, ...query2 } = params ?? {};
-        return this._client.getAPIList(path12`/v1/organizations/federation_rules/${federationRuleID}/workspaces?beta=true`, PageCursor, {
+        return this._client.getAPIList(path13`/v1/organizations/federation_rules/${federationRuleID}/workspaces?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -18727,7 +18727,7 @@ var init_workspaces = __esm({
        */
       add(federationRuleID, params, options) {
         const { betas, ...body } = params;
-        return this._client.post(path12`/v1/organizations/federation_rules/${federationRuleID}/workspaces?beta=true`, {
+        return this._client.post(path13`/v1/organizations/federation_rules/${federationRuleID}/workspaces?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -18759,7 +18759,7 @@ var init_workspaces = __esm({
        */
       remove(workspaceID, params, options) {
         const { federation_rule_id, betas } = params;
-        return this._client.delete(path12`/v1/organizations/federation_rules/${federation_rule_id}/workspaces/${workspaceID}?beta=true`, {
+        return this._client.delete(path13`/v1/organizations/federation_rules/${federation_rule_id}/workspaces/${workspaceID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -18852,7 +18852,7 @@ var init_rules = __esm({
          */
         retrieve(federationRuleID, params = {}, options) {
           const { betas } = params ?? {};
-          return this._client.get(path12`/v1/organizations/federation_rules/${federationRuleID}?beta=true`, {
+          return this._client.get(path13`/v1/organizations/federation_rules/${federationRuleID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -18893,7 +18893,7 @@ var init_rules = __esm({
          */
         update(federationRuleID, params, options) {
           const { betas, ...body } = params;
-          return this._client.post(path12`/v1/organizations/federation_rules/${federationRuleID}?beta=true`, {
+          return this._client.post(path13`/v1/organizations/federation_rules/${federationRuleID}?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -18957,7 +18957,7 @@ var init_rules = __esm({
          */
         archive(federationRuleID, params = {}, options) {
           const { betas } = params ?? {};
-          return this._client.post(path12`/v1/organizations/federation_rules/${federationRuleID}/archive?beta=true`, {
+          return this._client.post(path13`/v1/organizations/federation_rules/${federationRuleID}/archive?beta=true`, {
             ...options,
             headers: buildHeaders([
               { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -19036,7 +19036,7 @@ var init_invites = __esm({
        * ```
        */
       retrieve(inviteID, options) {
-        return this._client.get(path12`/v1/organizations/invites/${inviteID}?beta=true`, options);
+        return this._client.get(path13`/v1/organizations/invites/${inviteID}?beta=true`, options);
       }
       /**
        * List the organization's invites.
@@ -19067,7 +19067,7 @@ var init_invites = __esm({
        * ```
        */
       delete(inviteID, options) {
-        return this._client.delete(path12`/v1/organizations/invites/${inviteID}?beta=true`, options);
+        return this._client.delete(path13`/v1/organizations/invites/${inviteID}?beta=true`, options);
       }
     };
   }
@@ -19107,7 +19107,7 @@ var init_plugin_marketplaces = __esm({
        */
       retrieve(marketplaceID, params = {}, options) {
         const { betas, ...query2 } = params ?? {};
-        return this._client.get(path12`/v1/organizations/plugin_marketplaces/${marketplaceID}?beta=true`, {
+        return this._client.get(path13`/v1/organizations/plugin_marketplaces/${marketplaceID}?beta=true`, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -19144,7 +19144,7 @@ var init_plugin_marketplaces = __esm({
        */
       update(marketplaceID, params, options) {
         const { betas, ...body } = params;
-        return this._client.post(path12`/v1/organizations/plugin_marketplaces/${marketplaceID}?beta=true`, {
+        return this._client.post(path13`/v1/organizations/plugin_marketplaces/${marketplaceID}?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -19354,7 +19354,7 @@ var init_users2 = __esm({
        * ```
        */
       retrieve(userID, options) {
-        return this._client.get(path12`/v1/organizations/users/${userID}?beta=true`, options);
+        return this._client.get(path13`/v1/organizations/users/${userID}?beta=true`, options);
       }
       /**
        * Update a member's organization role.
@@ -19368,7 +19368,7 @@ var init_users2 = __esm({
        * ```
        */
       update(userID, body, options) {
-        return this._client.post(path12`/v1/organizations/users/${userID}?beta=true`, { body, ...options });
+        return this._client.post(path13`/v1/organizations/users/${userID}?beta=true`, { body, ...options });
       }
       /**
        * List the organization's members.
@@ -19398,7 +19398,7 @@ var init_users2 = __esm({
        * ```
        */
       remove(userID, options) {
-        return this._client.delete(path12`/v1/organizations/users/${userID}?beta=true`, options);
+        return this._client.delete(path13`/v1/organizations/users/${userID}?beta=true`, options);
       }
     };
   }
@@ -19444,7 +19444,7 @@ var init_installation_settings = __esm({
        */
       list(pluginID, params = {}, options) {
         const { betas, ...query2 } = params ?? {};
-        return this._client.getAPIList(path12`/v1/organizations/plugins/${pluginID}/installation_settings?beta=true`, PageCursor, {
+        return this._client.getAPIList(path13`/v1/organizations/plugins/${pluginID}/installation_settings?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -19493,7 +19493,7 @@ var init_installation_settings = __esm({
        */
       remove(target, params, options) {
         const { plugin_id, betas } = params;
-        return this._client.delete(path12`/v1/organizations/plugins/${plugin_id}/installation_settings/${target}?beta=true`, {
+        return this._client.delete(path13`/v1/organizations/plugins/${plugin_id}/installation_settings/${target}?beta=true`, {
           ...options,
           headers: buildHeaders([
             { "anthropic-beta": [...betas ?? [], "ce-plugins-2026-09-01"].toString() },
@@ -19539,7 +19539,7 @@ var init_installation_settings = __esm({
        */
       set(target, params, options) {
         const { plugin_id, betas, ...body } = params;
-        return this._client.post(path12`/v1/organizations/plugins/${plugin_id}/installation_settings/${target}?beta=true`, {
+        return this._client.post(path13`/v1/organizations/plugins/${plugin_id}/installation_settings/${target}?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -19594,7 +19594,7 @@ var init_shares = __esm({
        */
       list(pluginID, params = {}, options) {
         const { betas, ...query2 } = params ?? {};
-        return this._client.getAPIList(path12`/v1/organizations/plugins/${pluginID}/shares?beta=true`, PageCursor, {
+        return this._client.getAPIList(path13`/v1/organizations/plugins/${pluginID}/shares?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -19660,7 +19660,7 @@ var init_versions2 = __esm({
        */
       create(pluginID, params, options) {
         const { betas, ...body } = params;
-        return this._client.post(path12`/v1/organizations/plugins/${pluginID}/versions?beta=true`, multipartFormRequestOptions({
+        return this._client.post(path13`/v1/organizations/plugins/${pluginID}/versions?beta=true`, multipartFormRequestOptions({
           body,
           ...options,
           headers: buildHeaders([
@@ -19694,7 +19694,7 @@ var init_versions2 = __esm({
        */
       retrieve(version2, params, options) {
         const { plugin_id, betas, ...query2 } = params;
-        return this._client.get(path12`/v1/organizations/plugins/${plugin_id}/versions/${version2}?beta=true`, {
+        return this._client.get(path13`/v1/organizations/plugins/${plugin_id}/versions/${version2}?beta=true`, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -19732,7 +19732,7 @@ var init_versions2 = __esm({
        */
       list(pluginID, params = {}, options) {
         const { betas, ...query2 } = params ?? {};
-        return this._client.getAPIList(path12`/v1/organizations/plugins/${pluginID}/versions?beta=true`, PageCursor, {
+        return this._client.getAPIList(path13`/v1/organizations/plugins/${pluginID}/versions?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -19785,7 +19785,7 @@ var init_versions2 = __esm({
        */
       download(version2, params, options) {
         const { plugin_id, betas, ...query2 } = params;
-        return this._client.get(path12`/v1/organizations/plugins/${plugin_id}/versions/${version2}/content?beta=true`, {
+        return this._client.get(path13`/v1/organizations/plugins/${plugin_id}/versions/${version2}/content?beta=true`, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -19906,7 +19906,7 @@ var init_plugins2 = __esm({
          */
         retrieve(pluginID, params = {}, options) {
           const { betas, ...query2 } = params ?? {};
-          return this._client.get(path12`/v1/organizations/plugins/${pluginID}?beta=true`, {
+          return this._client.get(path13`/v1/organizations/plugins/${pluginID}?beta=true`, {
             query: query2,
             ...options,
             headers: buildHeaders([
@@ -19962,7 +19962,7 @@ var init_plugins2 = __esm({
          */
         update(pluginID, params, options) {
           const { betas, ...body } = params;
-          return this._client.post(path12`/v1/organizations/plugins/${pluginID}?beta=true`, {
+          return this._client.post(path13`/v1/organizations/plugins/${pluginID}?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -20044,7 +20044,7 @@ var init_plugins2 = __esm({
          */
         delete(pluginID, params = {}, options) {
           const { betas } = params ?? {};
-          return this._client.delete(path12`/v1/organizations/plugins/${pluginID}?beta=true`, {
+          return this._client.delete(path13`/v1/organizations/plugins/${pluginID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               { "anthropic-beta": [...betas ?? [], "ce-plugins-2026-09-01"].toString() },
@@ -20085,7 +20085,7 @@ var init_members = __esm({
        * ```
        */
       list(rbacGroupID, query2 = {}, options) {
-        return this._client.getAPIList(path12`/v1/organizations/rbac_groups/${rbacGroupID}/members?beta=true`, PageCursor, { query: query2, ...options });
+        return this._client.getAPIList(path13`/v1/organizations/rbac_groups/${rbacGroupID}/members?beta=true`, PageCursor, { query: query2, ...options });
       }
       /**
        * Add a User to an RBAC Group. Membership of groups provisioned by an identity
@@ -20104,7 +20104,7 @@ var init_members = __esm({
        * ```
        */
       add(rbacGroupID, body, options) {
-        return this._client.post(path12`/v1/organizations/rbac_groups/${rbacGroupID}/members?beta=true`, {
+        return this._client.post(path13`/v1/organizations/rbac_groups/${rbacGroupID}/members?beta=true`, {
           body,
           ...options
         });
@@ -20127,7 +20127,7 @@ var init_members = __esm({
        */
       remove(userID, params, options) {
         const { rbac_group_id } = params;
-        return this._client.delete(path12`/v1/organizations/rbac_groups/${rbac_group_id}/members/${userID}?beta=true`, options);
+        return this._client.delete(path13`/v1/organizations/rbac_groups/${rbac_group_id}/members/${userID}?beta=true`, options);
       }
     };
   }
@@ -20179,7 +20179,7 @@ var init_rbac_groups = __esm({
          * ```
          */
         retrieve(rbacGroupID, options) {
-          return this._client.get(path12`/v1/organizations/rbac_groups/${rbacGroupID}?beta=true`, options);
+          return this._client.get(path13`/v1/organizations/rbac_groups/${rbacGroupID}?beta=true`, options);
         }
         /**
          * Update an RBAC Group's name. Groups provisioned by an identity provider (source
@@ -20197,7 +20197,7 @@ var init_rbac_groups = __esm({
          * ```
          */
         update(rbacGroupID, body, options) {
-          return this._client.post(path12`/v1/organizations/rbac_groups/${rbacGroupID}?beta=true`, {
+          return this._client.post(path13`/v1/organizations/rbac_groups/${rbacGroupID}?beta=true`, {
             body,
             ...options
           });
@@ -20237,7 +20237,7 @@ var init_rbac_groups = __esm({
          * ```
          */
         delete(rbacGroupID, options) {
-          return this._client.delete(path12`/v1/organizations/rbac_groups/${rbacGroupID}?beta=true`, options);
+          return this._client.delete(path13`/v1/organizations/rbac_groups/${rbacGroupID}?beta=true`, options);
         }
       }
       RBACGroups2.Members = Members;
@@ -20270,7 +20270,7 @@ var init_permissions = __esm({
        * ```
        */
       list(rbacRoleID, query2 = {}, options) {
-        return this._client.getAPIList(path12`/v1/organizations/rbac_roles/${rbacRoleID}/permissions?beta=true`, PageCursor, { query: query2, ...options });
+        return this._client.getAPIList(path13`/v1/organizations/rbac_roles/${rbacRoleID}/permissions?beta=true`, PageCursor, { query: query2, ...options });
       }
     };
   }
@@ -20305,7 +20305,7 @@ var init_rbac_roles = __esm({
          * ```
          */
         retrieve(rbacRoleID, options) {
-          return this._client.get(path12`/v1/organizations/rbac_roles/${rbacRoleID}?beta=true`, options);
+          return this._client.get(path13`/v1/organizations/rbac_roles/${rbacRoleID}?beta=true`, options);
         }
         /**
          * List RBAC Roles in the organization.
@@ -20374,7 +20374,7 @@ var init_workspaces2 = __esm({
        */
       list(serviceAccountID, params = {}, options) {
         const { betas, ...query2 } = params ?? {};
-        return this._client.getAPIList(path12`/v1/organizations/service_accounts/${serviceAccountID}/workspaces?beta=true`, PageCursor, {
+        return this._client.getAPIList(path13`/v1/organizations/service_accounts/${serviceAccountID}/workspaces?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -20411,7 +20411,7 @@ var init_workspaces2 = __esm({
        */
       add(serviceAccountID, params, options) {
         const { betas, ...body } = params;
-        return this._client.post(path12`/v1/organizations/service_accounts/${serviceAccountID}/workspaces?beta=true`, {
+        return this._client.post(path13`/v1/organizations/service_accounts/${serviceAccountID}/workspaces?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -20447,7 +20447,7 @@ var init_workspaces2 = __esm({
        */
       remove(workspaceID, params, options) {
         const { service_account_id, betas } = params;
-        return this._client.delete(path12`/v1/organizations/service_accounts/${service_account_id}/workspaces/${workspaceID}?beta=true`, {
+        return this._client.delete(path13`/v1/organizations/service_accounts/${service_account_id}/workspaces/${workspaceID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -20527,7 +20527,7 @@ var init_service_accounts = __esm({
          */
         retrieve(serviceAccountID, params = {}, options) {
           const { betas } = params ?? {};
-          return this._client.get(path12`/v1/organizations/service_accounts/${serviceAccountID}?beta=true`, {
+          return this._client.get(path13`/v1/organizations/service_accounts/${serviceAccountID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -20558,7 +20558,7 @@ var init_service_accounts = __esm({
          */
         update(serviceAccountID, params, options) {
           const { betas, ...body } = params;
-          return this._client.post(path12`/v1/organizations/service_accounts/${serviceAccountID}?beta=true`, {
+          return this._client.post(path13`/v1/organizations/service_accounts/${serviceAccountID}?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -20621,7 +20621,7 @@ var init_service_accounts = __esm({
          */
         archive(serviceAccountID, params = {}, options) {
           const { betas } = params ?? {};
-          return this._client.post(path12`/v1/organizations/service_accounts/${serviceAccountID}/archive?beta=true`, {
+          return this._client.post(path13`/v1/organizations/service_accounts/${serviceAccountID}/archive?beta=true`, {
             ...options,
             headers: buildHeaders([
               { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -20688,7 +20688,7 @@ var init_increase_requests = __esm({
        * ```
        */
       retrieve(spendLimitIncreaseRequestID, options) {
-        return this._client.get(path12`/v1/organizations/spend_limit_increase_requests/${spendLimitIncreaseRequestID}?beta=true`, options);
+        return this._client.get(path13`/v1/organizations/spend_limit_increase_requests/${spendLimitIncreaseRequestID}?beta=true`, options);
       }
       /**
        * List spend limit increase requests, most recent first.
@@ -20724,7 +20724,7 @@ var init_increase_requests = __esm({
        * ```
        */
       approve(spendLimitIncreaseRequestID, body, options) {
-        return this._client.post(path12`/v1/organizations/spend_limit_increase_requests/${spendLimitIncreaseRequestID}/approve?beta=true`, { body, ...options });
+        return this._client.post(path13`/v1/organizations/spend_limit_increase_requests/${spendLimitIncreaseRequestID}/approve?beta=true`, { body, ...options });
       }
       /**
        * Deny a pending spend limit increase request.
@@ -20741,7 +20741,7 @@ var init_increase_requests = __esm({
        * ```
        */
       deny(spendLimitIncreaseRequestID, body, options) {
-        return this._client.post(path12`/v1/organizations/spend_limit_increase_requests/${spendLimitIncreaseRequestID}/deny?beta=true`, { body, ...options });
+        return this._client.post(path13`/v1/organizations/spend_limit_increase_requests/${spendLimitIncreaseRequestID}/deny?beta=true`, { body, ...options });
       }
     };
   }
@@ -20778,7 +20778,7 @@ var init_spend_limits = __esm({
          * ```
          */
         retrieve(spendLimitID, options) {
-          return this._client.get(path12`/v1/organizations/spend_limits/${spendLimitID}?beta=true`, options);
+          return this._client.get(path13`/v1/organizations/spend_limits/${spendLimitID}?beta=true`, options);
         }
         /**
          * List the organization's spend limits.
@@ -20825,7 +20825,7 @@ var init_spend_limits = __esm({
          * ```
          */
         delete(spendLimitID, options) {
-          return this._client.delete(path12`/v1/organizations/spend_limits/${spendLimitID}?beta=true`, options);
+          return this._client.delete(path13`/v1/organizations/spend_limits/${spendLimitID}?beta=true`, options);
         }
         /**
          * Set a spend limit.
@@ -20882,7 +20882,7 @@ var init_members2 = __esm({
        */
       retrieve(userID, params, options) {
         const { workspace_id } = params;
-        return this._client.get(path12`/v1/organizations/workspaces/${workspace_id}/members/${userID}?beta=true`, options);
+        return this._client.get(path13`/v1/organizations/workspaces/${workspace_id}/members/${userID}?beta=true`, options);
       }
       /**
        * Update Workspace Member
@@ -20901,7 +20901,7 @@ var init_members2 = __esm({
        */
       update(userID, params, options) {
         const { workspace_id, ...body } = params;
-        return this._client.post(path12`/v1/organizations/workspaces/${workspace_id}/members/${userID}?beta=true`, {
+        return this._client.post(path13`/v1/organizations/workspaces/${workspace_id}/members/${userID}?beta=true`, {
           body,
           ...options
         });
@@ -20920,7 +20920,7 @@ var init_members2 = __esm({
        * ```
        */
       list(workspaceID, query2 = {}, options) {
-        return this._client.getAPIList(path12`/v1/organizations/workspaces/${workspaceID}/members?beta=true`, Page, { query: query2, ...options });
+        return this._client.getAPIList(path13`/v1/organizations/workspaces/${workspaceID}/members?beta=true`, Page, { query: query2, ...options });
       }
       /**
        * Create Workspace Member
@@ -20938,7 +20938,7 @@ var init_members2 = __esm({
        * ```
        */
       add(workspaceID, body, options) {
-        return this._client.post(path12`/v1/organizations/workspaces/${workspaceID}/members?beta=true`, {
+        return this._client.post(path13`/v1/organizations/workspaces/${workspaceID}/members?beta=true`, {
           body,
           ...options
         });
@@ -20957,7 +20957,7 @@ var init_members2 = __esm({
        */
       remove(userID, params, options) {
         const { workspace_id } = params;
-        return this._client.delete(path12`/v1/organizations/workspaces/${workspace_id}/members/${userID}?beta=true`, options);
+        return this._client.delete(path13`/v1/organizations/workspaces/${workspace_id}/members/${userID}?beta=true`, options);
       }
     };
   }
@@ -20994,7 +20994,7 @@ var init_rate_limits2 = __esm({
        * ```
        */
       list(workspaceID, query2 = {}, options) {
-        return this._client.getAPIList(path12`/v1/organizations/workspaces/${workspaceID}/rate_limits?beta=true`, PageCursor, { query: query2, ...options });
+        return this._client.getAPIList(path13`/v1/organizations/workspaces/${workspaceID}/rate_limits?beta=true`, PageCursor, { query: query2, ...options });
       }
     };
   }
@@ -21034,7 +21034,7 @@ var init_service_accounts2 = __esm({
        */
       retrieve(serviceAccountID, params, options) {
         const { workspace_id, betas } = params;
-        return this._client.get(path12`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}?beta=true`, {
+        return this._client.get(path13`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -21070,7 +21070,7 @@ var init_service_accounts2 = __esm({
        */
       update(serviceAccountID, params, options) {
         const { workspace_id, betas, ...body } = params;
-        return this._client.post(path12`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}?beta=true`, {
+        return this._client.post(path13`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -21105,7 +21105,7 @@ var init_service_accounts2 = __esm({
        */
       list(workspaceID, params = {}, options) {
         const { betas, ...query2 } = params ?? {};
-        return this._client.getAPIList(path12`/v1/organizations/workspaces/${workspaceID}/service_accounts?beta=true`, PageCursor, {
+        return this._client.getAPIList(path13`/v1/organizations/workspaces/${workspaceID}/service_accounts?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -21144,7 +21144,7 @@ var init_service_accounts2 = __esm({
        */
       add(workspaceID, params, options) {
         const { betas, ...body } = params;
-        return this._client.post(path12`/v1/organizations/workspaces/${workspaceID}/service_accounts?beta=true`, {
+        return this._client.post(path13`/v1/organizations/workspaces/${workspaceID}/service_accounts?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -21178,7 +21178,7 @@ var init_service_accounts2 = __esm({
        */
       remove(serviceAccountID, params, options) {
         const { workspace_id, betas } = params;
-        return this._client.delete(path12`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}?beta=true`, {
+        return this._client.delete(path13`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             { ...betas?.toString() != null ? { "anthropic-beta": betas?.toString() } : void 0 },
@@ -21246,7 +21246,7 @@ var init_workspaces3 = __esm({
          * ```
          */
         retrieve(workspaceID, options) {
-          return this._client.get(path12`/v1/organizations/workspaces/${workspaceID}?beta=true`, options);
+          return this._client.get(path13`/v1/organizations/workspaces/${workspaceID}?beta=true`, options);
         }
         /**
          * Update Workspace
@@ -21260,7 +21260,7 @@ var init_workspaces3 = __esm({
          * ```
          */
         update(workspaceID, body, options) {
-          return this._client.post(path12`/v1/organizations/workspaces/${workspaceID}?beta=true`, {
+          return this._client.post(path13`/v1/organizations/workspaces/${workspaceID}?beta=true`, {
             body,
             ...options
           });
@@ -21294,7 +21294,7 @@ var init_workspaces3 = __esm({
          * ```
          */
         archive(workspaceID, options) {
-          return this._client.post(path12`/v1/organizations/workspaces/${workspaceID}/archive?beta=true`, options);
+          return this._client.post(path13`/v1/organizations/workspaces/${workspaceID}/archive?beta=true`, options);
         }
       }
       Workspaces7.RateLimits = RateLimits2;
@@ -21420,7 +21420,7 @@ var init_events = __esm({
          */
         list(sessionID, params = {}, options) {
           const { betas, workspace_id, ...query2 } = params ?? {};
-          return this._client.getAPIList(path12`/v1/sessions/${sessionID}/events?beta=true`, PageCursor, {
+          return this._client.getAPIList(path13`/v1/sessions/${sessionID}/events?beta=true`, PageCursor, {
             query: query2,
             ...options,
             headers: buildHeaders([
@@ -21458,7 +21458,7 @@ var init_events = __esm({
          */
         send(sessionID, params, options) {
           const { betas, workspace_id, ...body } = params;
-          return this._client.post(path12`/v1/sessions/${sessionID}/events?beta=true`, {
+          return this._client.post(path13`/v1/sessions/${sessionID}/events?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -21483,7 +21483,7 @@ var init_events = __esm({
          */
         stream(sessionID, params = {}, options) {
           const { betas, workspace_id, ...query2 } = params ?? {};
-          return this._client.get(path12`/v1/sessions/${sessionID}/events/stream?beta=true`, {
+          return this._client.get(path13`/v1/sessions/${sessionID}/events/stream?beta=true`, {
             query: query2,
             ...options,
             headers: buildHeaders([
@@ -21548,7 +21548,7 @@ var init_resources = __esm({
        */
       retrieve(resourceID, params, options) {
         const { session_id, betas, workspace_id } = params;
-        return this._client.get(path12`/v1/sessions/${session_id}/resources/${resourceID}?beta=true`, {
+        return this._client.get(path13`/v1/sessions/${session_id}/resources/${resourceID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -21576,7 +21576,7 @@ var init_resources = __esm({
        */
       update(resourceID, params, options) {
         const { session_id, betas, workspace_id, ...body } = params;
-        return this._client.post(path12`/v1/sessions/${session_id}/resources/${resourceID}?beta=true`, {
+        return this._client.post(path13`/v1/sessions/${session_id}/resources/${resourceID}?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -21603,7 +21603,7 @@ var init_resources = __esm({
        */
       list(sessionID, params = {}, options) {
         const { betas, workspace_id, ...query2 } = params ?? {};
-        return this._client.getAPIList(path12`/v1/sessions/${sessionID}/resources?beta=true`, PageCursor, {
+        return this._client.getAPIList(path13`/v1/sessions/${sessionID}/resources?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -21629,7 +21629,7 @@ var init_resources = __esm({
        */
       delete(resourceID, params, options) {
         const { session_id, betas, workspace_id } = params;
-        return this._client.delete(path12`/v1/sessions/${session_id}/resources/${resourceID}?beta=true`, {
+        return this._client.delete(path13`/v1/sessions/${session_id}/resources/${resourceID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -21657,7 +21657,7 @@ var init_resources = __esm({
        */
       add(sessionID, params, options) {
         const { betas, workspace_id, ...body } = params;
-        return this._client.post(path12`/v1/sessions/${sessionID}/resources?beta=true`, {
+        return this._client.post(path13`/v1/sessions/${sessionID}/resources?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -21698,7 +21698,7 @@ var init_events2 = __esm({
        */
       list(threadID, params, options) {
         const { session_id, betas, workspace_id, ...query2 } = params;
-        return this._client.getAPIList(path12`/v1/sessions/${session_id}/threads/${threadID}/events?beta=true`, PageCursor, {
+        return this._client.getAPIList(path13`/v1/sessions/${session_id}/threads/${threadID}/events?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -21724,7 +21724,7 @@ var init_events2 = __esm({
        */
       stream(threadID, params, options) {
         const { session_id, betas, workspace_id, ...query2 } = params;
-        return this._client.get(path12`/v1/sessions/${session_id}/threads/${threadID}/stream?beta=true`, {
+        return this._client.get(path13`/v1/sessions/${session_id}/threads/${threadID}/stream?beta=true`, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -21771,7 +21771,7 @@ var init_threads = __esm({
          */
         retrieve(threadID, params, options) {
           const { session_id, betas, workspace_id } = params;
-          return this._client.get(path12`/v1/sessions/${session_id}/threads/${threadID}?beta=true`, {
+          return this._client.get(path13`/v1/sessions/${session_id}/threads/${threadID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -21797,7 +21797,7 @@ var init_threads = __esm({
          */
         list(sessionID, params = {}, options) {
           const { betas, workspace_id, ...query2 } = params ?? {};
-          return this._client.getAPIList(path12`/v1/sessions/${sessionID}/threads?beta=true`, PageCursor, {
+          return this._client.getAPIList(path13`/v1/sessions/${sessionID}/threads?beta=true`, PageCursor, {
             query: query2,
             ...options,
             headers: buildHeaders([
@@ -21823,7 +21823,7 @@ var init_threads = __esm({
          */
         archive(threadID, params, options) {
           const { session_id, betas, workspace_id } = params;
-          return this._client.post(path12`/v1/sessions/${session_id}/threads/${threadID}/archive?beta=true`, {
+          return this._client.post(path13`/v1/sessions/${session_id}/threads/${threadID}/archive?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -21902,7 +21902,7 @@ var init_sessions = __esm({
          */
         retrieve(sessionID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.get(path12`/v1/sessions/${sessionID}?beta=true`, {
+          return this._client.get(path13`/v1/sessions/${sessionID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -21926,7 +21926,7 @@ var init_sessions = __esm({
          */
         update(sessionID, params, options) {
           const { betas, workspace_id, ...body } = params;
-          return this._client.post(path12`/v1/sessions/${sessionID}?beta=true`, {
+          return this._client.post(path13`/v1/sessions/${sessionID}?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -21976,7 +21976,7 @@ var init_sessions = __esm({
          */
         delete(sessionID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.delete(path12`/v1/sessions/${sessionID}?beta=true`, {
+          return this._client.delete(path13`/v1/sessions/${sessionID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -22000,7 +22000,7 @@ var init_sessions = __esm({
          */
         archive(sessionID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.post(path12`/v1/sessions/${sessionID}/archive?beta=true`, {
+          return this._client.post(path13`/v1/sessions/${sessionID}/archive?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -22043,7 +22043,7 @@ var init_versions3 = __esm({
        */
       create(skillID, params, options) {
         const { betas, workspace_id, ...body } = params;
-        return this._client.post(path12`/v1/skills/${skillID}/versions?beta=true`, multipartFormRequestOptions({
+        return this._client.post(path13`/v1/skills/${skillID}/versions?beta=true`, multipartFormRequestOptions({
           body,
           ...options,
           headers: buildHeaders([
@@ -22068,7 +22068,7 @@ var init_versions3 = __esm({
        */
       retrieve(version2, params, options) {
         const { skill_id, betas, workspace_id } = params;
-        return this._client.get(path12`/v1/skills/${skill_id}/versions/${version2}?beta=true`, {
+        return this._client.get(path13`/v1/skills/${skill_id}/versions/${version2}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -22094,7 +22094,7 @@ var init_versions3 = __esm({
        */
       list(skillID, params = {}, options) {
         const { betas, workspace_id, ...query2 } = params ?? {};
-        return this._client.getAPIList(path12`/v1/skills/${skillID}/versions?beta=true`, PageCursor, {
+        return this._client.getAPIList(path13`/v1/skills/${skillID}/versions?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -22119,7 +22119,7 @@ var init_versions3 = __esm({
        */
       delete(version2, params, options) {
         const { skill_id, betas, workspace_id } = params;
-        return this._client.delete(path12`/v1/skills/${skill_id}/versions/${version2}?beta=true`, {
+        return this._client.delete(path13`/v1/skills/${skill_id}/versions/${version2}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -22146,7 +22146,7 @@ var init_versions3 = __esm({
        */
       download(version2, params, options) {
         const { skill_id, betas, workspace_id } = params;
-        return this._client.get(path12`/v1/skills/${skill_id}/versions/${version2}/content?beta=true`, {
+        return this._client.get(path13`/v1/skills/${skill_id}/versions/${version2}/content?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -22216,7 +22216,7 @@ var init_skills3 = __esm({
          */
         retrieve(skillID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.get(path12`/v1/skills/${skillID}?beta=true`, {
+          return this._client.get(path13`/v1/skills/${skillID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -22264,7 +22264,7 @@ var init_skills3 = __esm({
          */
         delete(skillID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.delete(path12`/v1/skills/${skillID}?beta=true`, {
+          return this._client.delete(path13`/v1/skills/${skillID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -22312,7 +22312,7 @@ var init_certificates = __esm({
        */
       create(tunnelID, params, options) {
         const { betas, workspace_id, ...body } = params;
-        return this._client.post(path12`/v1/tunnels/${tunnelID}/certificates?beta=true`, {
+        return this._client.post(path13`/v1/tunnels/${tunnelID}/certificates?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -22343,7 +22343,7 @@ var init_certificates = __esm({
        */
       retrieve(certificateID, params, options) {
         const { tunnel_id, betas, workspace_id } = params;
-        return this._client.get(path12`/v1/tunnels/${tunnel_id}/certificates/${certificateID}?beta=true`, {
+        return this._client.get(path13`/v1/tunnels/${tunnel_id}/certificates/${certificateID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -22375,7 +22375,7 @@ var init_certificates = __esm({
        */
       list(tunnelID, params = {}, options) {
         const { betas, workspace_id, ...query2 } = params ?? {};
-        return this._client.getAPIList(path12`/v1/tunnels/${tunnelID}/certificates?beta=true`, PageCursor, {
+        return this._client.getAPIList(path13`/v1/tunnels/${tunnelID}/certificates?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -22409,7 +22409,7 @@ var init_certificates = __esm({
        */
       archive(certificateID, params, options) {
         const { tunnel_id, betas, workspace_id } = params;
-        return this._client.post(path12`/v1/tunnels/${tunnel_id}/certificates/${certificateID}/archive?beta=true`, {
+        return this._client.post(path13`/v1/tunnels/${tunnel_id}/certificates/${certificateID}/archive?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -22486,7 +22486,7 @@ var init_tunnels = __esm({
          */
         retrieve(tunnelID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.get(path12`/v1/tunnels/${tunnelID}?beta=true`, {
+          return this._client.get(path13`/v1/tunnels/${tunnelID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -22548,7 +22548,7 @@ var init_tunnels = __esm({
          */
         archive(tunnelID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.post(path12`/v1/tunnels/${tunnelID}/archive?beta=true`, {
+          return this._client.post(path13`/v1/tunnels/${tunnelID}/archive?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -22578,7 +22578,7 @@ var init_tunnels = __esm({
          */
         revealToken(tunnelID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.post(path12`/v1/tunnels/${tunnelID}/reveal_token?beta=true`, {
+          return this._client.post(path13`/v1/tunnels/${tunnelID}/reveal_token?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -22607,7 +22607,7 @@ var init_tunnels = __esm({
          */
         rotateToken(tunnelID, params, options) {
           const { betas, workspace_id, ...body } = params;
-          return this._client.post(path12`/v1/tunnels/${tunnelID}/rotate_token?beta=true`, {
+          return this._client.post(path13`/v1/tunnels/${tunnelID}/rotate_token?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -22656,7 +22656,7 @@ var init_credentials2 = __esm({
        */
       create(vaultID, params, options) {
         const { betas, workspace_id, ...body } = params;
-        return this._client.post(path12`/v1/vaults/${vaultID}/credentials?beta=true`, {
+        return this._client.post(path13`/v1/vaults/${vaultID}/credentials?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -22682,7 +22682,7 @@ var init_credentials2 = __esm({
        */
       retrieve(credentialID, params, options) {
         const { vault_id, betas, workspace_id } = params;
-        return this._client.get(path12`/v1/vaults/${vault_id}/credentials/${credentialID}?beta=true`, {
+        return this._client.get(path13`/v1/vaults/${vault_id}/credentials/${credentialID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -22707,7 +22707,7 @@ var init_credentials2 = __esm({
        */
       update(credentialID, params, options) {
         const { vault_id, betas, workspace_id, ...body } = params;
-        return this._client.post(path12`/v1/vaults/${vault_id}/credentials/${credentialID}?beta=true`, {
+        return this._client.post(path13`/v1/vaults/${vault_id}/credentials/${credentialID}?beta=true`, {
           body,
           ...options,
           headers: buildHeaders([
@@ -22734,7 +22734,7 @@ var init_credentials2 = __esm({
        */
       list(vaultID, params = {}, options) {
         const { betas, workspace_id, ...query2 } = params ?? {};
-        return this._client.getAPIList(path12`/v1/vaults/${vaultID}/credentials?beta=true`, PageCursor, {
+        return this._client.getAPIList(path13`/v1/vaults/${vaultID}/credentials?beta=true`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -22760,7 +22760,7 @@ var init_credentials2 = __esm({
        */
       delete(credentialID, params, options) {
         const { vault_id, betas, workspace_id } = params;
-        return this._client.delete(path12`/v1/vaults/${vault_id}/credentials/${credentialID}?beta=true`, {
+        return this._client.delete(path13`/v1/vaults/${vault_id}/credentials/${credentialID}?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -22785,7 +22785,7 @@ var init_credentials2 = __esm({
        */
       archive(credentialID, params, options) {
         const { vault_id, betas, workspace_id } = params;
-        return this._client.post(path12`/v1/vaults/${vault_id}/credentials/${credentialID}/archive?beta=true`, {
+        return this._client.post(path13`/v1/vaults/${vault_id}/credentials/${credentialID}/archive?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -22810,7 +22810,7 @@ var init_credentials2 = __esm({
        */
       mcpOAuthValidate(credentialID, params, options) {
         const { vault_id, betas, workspace_id } = params;
-        return this._client.post(path12`/v1/vaults/${vault_id}/credentials/${credentialID}/mcp_oauth_validate?beta=true`, {
+        return this._client.post(path13`/v1/vaults/${vault_id}/credentials/${credentialID}/mcp_oauth_validate?beta=true`, {
           ...options,
           headers: buildHeaders([
             {
@@ -22879,7 +22879,7 @@ var init_vaults = __esm({
          */
         retrieve(vaultID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.get(path12`/v1/vaults/${vaultID}?beta=true`, {
+          return this._client.get(path13`/v1/vaults/${vaultID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -22903,7 +22903,7 @@ var init_vaults = __esm({
          */
         update(vaultID, params, options) {
           const { betas, workspace_id, ...body } = params;
-          return this._client.post(path12`/v1/vaults/${vaultID}?beta=true`, {
+          return this._client.post(path13`/v1/vaults/${vaultID}?beta=true`, {
             body,
             ...options,
             headers: buildHeaders([
@@ -22953,7 +22953,7 @@ var init_vaults = __esm({
          */
         delete(vaultID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.delete(path12`/v1/vaults/${vaultID}?beta=true`, {
+          return this._client.delete(path13`/v1/vaults/${vaultID}?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -22977,7 +22977,7 @@ var init_vaults = __esm({
          */
         archive(vaultID, params = {}, options) {
           const { betas, workspace_id } = params ?? {};
-          return this._client.post(path12`/v1/vaults/${vaultID}/archive?beta=true`, {
+          return this._client.post(path13`/v1/vaults/${vaultID}/archive?beta=true`, {
             ...options,
             headers: buildHeaders([
               {
@@ -24135,7 +24135,7 @@ var init_files2 = __esm({
        */
       delete(fileID, params = {}, options) {
         const { workspace_id } = params ?? {};
-        return this._client.delete(path12`/v1/files/${fileID}`, {
+        return this._client.delete(path13`/v1/files/${fileID}`, {
           ...options,
           headers: buildHeaders([
             { ...workspace_id != null ? { "anthropic-workspace-id": workspace_id } : void 0 },
@@ -24156,7 +24156,7 @@ var init_files2 = __esm({
        */
       download(fileID, params = {}, options) {
         const { workspace_id } = params ?? {};
-        return this._client.get(path12`/v1/files/${fileID}/content`, {
+        return this._client.get(path13`/v1/files/${fileID}/content`, {
           ...options,
           headers: buildHeaders([
             {
@@ -24180,7 +24180,7 @@ var init_files2 = __esm({
        */
       retrieveMetadata(fileID, params = {}, options) {
         const { workspace_id } = params ?? {};
-        return this._client.get(path12`/v1/files/${fileID}`, {
+        return this._client.get(path13`/v1/files/${fileID}`, {
           ...options,
           headers: buildHeaders([
             { ...workspace_id != null ? { "anthropic-workspace-id": workspace_id } : void 0 },
@@ -24942,7 +24942,7 @@ var init_batches2 = __esm({
        */
       retrieve(messageBatchID, params = {}, options) {
         const { workspace_id } = params ?? {};
-        return this._client.get(path12`/v1/messages/batches/${messageBatchID}`, {
+        return this._client.get(path13`/v1/messages/batches/${messageBatchID}`, {
           ...options,
           headers: buildHeaders([
             { ...workspace_id != null ? { "anthropic-workspace-id": workspace_id } : void 0 },
@@ -24993,7 +24993,7 @@ var init_batches2 = __esm({
        */
       delete(messageBatchID, params = {}, options) {
         const { workspace_id } = params ?? {};
-        return this._client.delete(path12`/v1/messages/batches/${messageBatchID}`, {
+        return this._client.delete(path13`/v1/messages/batches/${messageBatchID}`, {
           ...options,
           headers: buildHeaders([
             { ...workspace_id != null ? { "anthropic-workspace-id": workspace_id } : void 0 },
@@ -25024,7 +25024,7 @@ var init_batches2 = __esm({
        */
       cancel(messageBatchID, params = {}, options) {
         const { workspace_id } = params ?? {};
-        return this._client.post(path12`/v1/messages/batches/${messageBatchID}/cancel`, {
+        return this._client.post(path13`/v1/messages/batches/${messageBatchID}/cancel`, {
           ...options,
           headers: buildHeaders([
             { ...workspace_id != null ? { "anthropic-workspace-id": workspace_id } : void 0 },
@@ -25230,7 +25230,7 @@ var init_models2 = __esm({
        */
       retrieve(modelID, params = {}, options) {
         const { betas, workspace_id } = params ?? {};
-        return this._client.get(path12`/v1/models/${modelID}`, {
+        return this._client.get(path13`/v1/models/${modelID}`, {
           ...options,
           headers: buildHeaders([
             {
@@ -25292,7 +25292,7 @@ var init_api_keys2 = __esm({
        * ```
        */
       retrieve(apiKeyID, options) {
-        return this._client.get(path12`/v1/organizations/api_keys/${apiKeyID}`, options);
+        return this._client.get(path13`/v1/organizations/api_keys/${apiKeyID}`, options);
       }
       /**
        * Update API Key
@@ -25305,7 +25305,7 @@ var init_api_keys2 = __esm({
        * ```
        */
       update(apiKeyID, body, options) {
-        return this._client.post(path12`/v1/organizations/api_keys/${apiKeyID}`, { body, ...options });
+        return this._client.post(path13`/v1/organizations/api_keys/${apiKeyID}`, { body, ...options });
       }
       /**
        * List API Keys
@@ -25416,7 +25416,7 @@ var init_external_keys2 = __esm({
        * ```
        */
       retrieve(externalKeyID, options) {
-        return this._client.get(path12`/v1/organizations/external_keys/${externalKeyID}`, options);
+        return this._client.get(path13`/v1/organizations/external_keys/${externalKeyID}`, options);
       }
       /**
        * Partially update an external key config. Omitted fields are left unchanged.
@@ -25434,7 +25434,7 @@ var init_external_keys2 = __esm({
        * ```
        */
       update(externalKeyID, body, options) {
-        return this._client.post(path12`/v1/organizations/external_keys/${externalKeyID}`, { body, ...options });
+        return this._client.post(path13`/v1/organizations/external_keys/${externalKeyID}`, { body, ...options });
       }
       /**
        * List external key configs in the caller's organization.
@@ -25470,7 +25470,7 @@ var init_external_keys2 = __esm({
        * ```
        */
       delete(externalKeyID, options) {
-        return this._client.delete(path12`/v1/organizations/external_keys/${externalKeyID}`, options);
+        return this._client.delete(path13`/v1/organizations/external_keys/${externalKeyID}`, options);
       }
       /**
        * Validate an external key config against the customer's KMS.
@@ -25489,7 +25489,7 @@ var init_external_keys2 = __esm({
        * ```
        */
       validate(externalKeyID, options) {
-        return this._client.post(path12`/v1/organizations/external_keys/${externalKeyID}/validate`, options);
+        return this._client.post(path13`/v1/organizations/external_keys/${externalKeyID}/validate`, options);
       }
     };
   }
@@ -25533,7 +25533,7 @@ var init_invites2 = __esm({
        * ```
        */
       retrieve(inviteID, options) {
-        return this._client.get(path12`/v1/organizations/invites/${inviteID}`, options);
+        return this._client.get(path13`/v1/organizations/invites/${inviteID}`, options);
       }
       /**
        * List the organization's invites.
@@ -25563,7 +25563,7 @@ var init_invites2 = __esm({
        * ```
        */
       delete(inviteID, options) {
-        return this._client.delete(path12`/v1/organizations/invites/${inviteID}`, options);
+        return this._client.delete(path13`/v1/organizations/invites/${inviteID}`, options);
       }
     };
   }
@@ -25622,7 +25622,7 @@ var init_users3 = __esm({
        * ```
        */
       retrieve(userID, options) {
-        return this._client.get(path12`/v1/organizations/users/${userID}`, options);
+        return this._client.get(path13`/v1/organizations/users/${userID}`, options);
       }
       /**
        * Update a member's organization role.
@@ -25636,7 +25636,7 @@ var init_users3 = __esm({
        * ```
        */
       update(userID, body, options) {
-        return this._client.post(path12`/v1/organizations/users/${userID}`, { body, ...options });
+        return this._client.post(path13`/v1/organizations/users/${userID}`, { body, ...options });
       }
       /**
        * List the organization's members.
@@ -25663,7 +25663,7 @@ var init_users3 = __esm({
        * ```
        */
       remove(userID, options) {
-        return this._client.delete(path12`/v1/organizations/users/${userID}`, options);
+        return this._client.delete(path13`/v1/organizations/users/${userID}`, options);
       }
     };
   }
@@ -25724,7 +25724,7 @@ var init_issuers2 = __esm({
        * ```
        */
       retrieve(federationIssuerID, options) {
-        return this._client.get(path12`/v1/organizations/federation_issuers/${federationIssuerID}`, options);
+        return this._client.get(path13`/v1/organizations/federation_issuers/${federationIssuerID}`, options);
       }
       /**
        * **Requires an OAuth access token with the `org:admin` scope**, from
@@ -25749,7 +25749,7 @@ var init_issuers2 = __esm({
        * ```
        */
       update(federationIssuerID, body, options) {
-        return this._client.post(path12`/v1/organizations/federation_issuers/${federationIssuerID}`, {
+        return this._client.post(path13`/v1/organizations/federation_issuers/${federationIssuerID}`, {
           body,
           ...options
         });
@@ -25800,7 +25800,7 @@ var init_issuers2 = __esm({
        * ```
        */
       archive(federationIssuerID, options) {
-        return this._client.post(path12`/v1/organizations/federation_issuers/${federationIssuerID}/archive`, options);
+        return this._client.post(path13`/v1/organizations/federation_issuers/${federationIssuerID}/archive`, options);
       }
     };
   }
@@ -25839,7 +25839,7 @@ var init_workspaces4 = __esm({
        * ```
        */
       list(federationRuleID, query2 = {}, options) {
-        return this._client.getAPIList(path12`/v1/organizations/federation_rules/${federationRuleID}/workspaces`, PageCursor, { query: query2, ...options });
+        return this._client.getAPIList(path13`/v1/organizations/federation_rules/${federationRuleID}/workspaces`, PageCursor, { query: query2, ...options });
       }
       /**
        * **Requires an OAuth access token with the `org:admin` scope**, from
@@ -25867,7 +25867,7 @@ var init_workspaces4 = __esm({
        * ```
        */
       add(federationRuleID, body, options) {
-        return this._client.post(path12`/v1/organizations/federation_rules/${federationRuleID}/workspaces`, {
+        return this._client.post(path13`/v1/organizations/federation_rules/${federationRuleID}/workspaces`, {
           body,
           ...options
         });
@@ -25895,7 +25895,7 @@ var init_workspaces4 = __esm({
        */
       remove(workspaceID, params, options) {
         const { federation_rule_id } = params;
-        return this._client.delete(path12`/v1/organizations/federation_rules/${federation_rule_id}/workspaces/${workspaceID}`, options);
+        return this._client.delete(path13`/v1/organizations/federation_rules/${federation_rule_id}/workspaces/${workspaceID}`, options);
       }
     };
   }
@@ -25972,7 +25972,7 @@ var init_rules2 = __esm({
          * ```
          */
         retrieve(federationRuleID, options) {
-          return this._client.get(path12`/v1/organizations/federation_rules/${federationRuleID}`, options);
+          return this._client.get(path13`/v1/organizations/federation_rules/${federationRuleID}`, options);
         }
         /**
          * **Requires an OAuth access token with the `org:admin` scope**, from
@@ -26006,7 +26006,7 @@ var init_rules2 = __esm({
          * ```
          */
         update(federationRuleID, body, options) {
-          return this._client.post(path12`/v1/organizations/federation_rules/${federationRuleID}`, {
+          return this._client.post(path13`/v1/organizations/federation_rules/${federationRuleID}`, {
             body,
             ...options
           });
@@ -26060,7 +26060,7 @@ var init_rules2 = __esm({
          * ```
          */
         archive(federationRuleID, options) {
-          return this._client.post(path12`/v1/organizations/federation_rules/${federationRuleID}/archive`, options);
+          return this._client.post(path13`/v1/organizations/federation_rules/${federationRuleID}/archive`, options);
         }
       }
       Rules3.Workspaces = Workspaces4;
@@ -26132,7 +26132,7 @@ var init_workspaces5 = __esm({
        * ```
        */
       list(serviceAccountID, query2 = {}, options) {
-        return this._client.getAPIList(path12`/v1/organizations/service_accounts/${serviceAccountID}/workspaces`, PageCursor, { query: query2, ...options });
+        return this._client.getAPIList(path13`/v1/organizations/service_accounts/${serviceAccountID}/workspaces`, PageCursor, { query: query2, ...options });
       }
       /**
        * **Requires an OAuth access token with the `org:admin` scope**, from
@@ -26161,7 +26161,7 @@ var init_workspaces5 = __esm({
        * ```
        */
       add(serviceAccountID, body, options) {
-        return this._client.post(path12`/v1/organizations/service_accounts/${serviceAccountID}/workspaces`, {
+        return this._client.post(path13`/v1/organizations/service_accounts/${serviceAccountID}/workspaces`, {
           body,
           ...options
         });
@@ -26193,7 +26193,7 @@ var init_workspaces5 = __esm({
        */
       remove(workspaceID, params, options) {
         const { service_account_id } = params;
-        return this._client.delete(path12`/v1/organizations/service_accounts/${service_account_id}/workspaces/${workspaceID}`, options);
+        return this._client.delete(path13`/v1/organizations/service_accounts/${service_account_id}/workspaces/${workspaceID}`, options);
       }
     };
   }
@@ -26257,7 +26257,7 @@ var init_service_accounts3 = __esm({
          * ```
          */
         retrieve(serviceAccountID, options) {
-          return this._client.get(path12`/v1/organizations/service_accounts/${serviceAccountID}`, options);
+          return this._client.get(path13`/v1/organizations/service_accounts/${serviceAccountID}`, options);
         }
         /**
          * **Requires an OAuth access token with the `org:admin` scope**, from
@@ -26281,7 +26281,7 @@ var init_service_accounts3 = __esm({
          * ```
          */
         update(serviceAccountID, body, options) {
-          return this._client.post(path12`/v1/organizations/service_accounts/${serviceAccountID}`, {
+          return this._client.post(path13`/v1/organizations/service_accounts/${serviceAccountID}`, {
             body,
             ...options
           });
@@ -26334,7 +26334,7 @@ var init_service_accounts3 = __esm({
          * ```
          */
         archive(serviceAccountID, options) {
-          return this._client.post(path12`/v1/organizations/service_accounts/${serviceAccountID}/archive`, options);
+          return this._client.post(path13`/v1/organizations/service_accounts/${serviceAccountID}/archive`, options);
         }
       }
       ServiceAccounts5.Workspaces = Workspaces5;
@@ -26365,7 +26365,7 @@ var init_members3 = __esm({
        */
       retrieve(userID, params, options) {
         const { workspace_id } = params;
-        return this._client.get(path12`/v1/organizations/workspaces/${workspace_id}/members/${userID}`, options);
+        return this._client.get(path13`/v1/organizations/workspaces/${workspace_id}/members/${userID}`, options);
       }
       /**
        * Update Workspace Member
@@ -26384,7 +26384,7 @@ var init_members3 = __esm({
        */
       update(userID, params, options) {
         const { workspace_id, ...body } = params;
-        return this._client.post(path12`/v1/organizations/workspaces/${workspace_id}/members/${userID}`, {
+        return this._client.post(path13`/v1/organizations/workspaces/${workspace_id}/members/${userID}`, {
           body,
           ...options
         });
@@ -26403,7 +26403,7 @@ var init_members3 = __esm({
        * ```
        */
       list(workspaceID, query2 = {}, options) {
-        return this._client.getAPIList(path12`/v1/organizations/workspaces/${workspaceID}/members`, Page, { query: query2, ...options });
+        return this._client.getAPIList(path13`/v1/organizations/workspaces/${workspaceID}/members`, Page, { query: query2, ...options });
       }
       /**
        * Create Workspace Member
@@ -26421,7 +26421,7 @@ var init_members3 = __esm({
        * ```
        */
       add(workspaceID, body, options) {
-        return this._client.post(path12`/v1/organizations/workspaces/${workspaceID}/members`, { body, ...options });
+        return this._client.post(path13`/v1/organizations/workspaces/${workspaceID}/members`, { body, ...options });
       }
       /**
        * Delete Workspace Member
@@ -26437,7 +26437,7 @@ var init_members3 = __esm({
        */
       remove(userID, params, options) {
         const { workspace_id } = params;
-        return this._client.delete(path12`/v1/organizations/workspaces/${workspace_id}/members/${userID}`, options);
+        return this._client.delete(path13`/v1/organizations/workspaces/${workspace_id}/members/${userID}`, options);
       }
     };
   }
@@ -26474,7 +26474,7 @@ var init_rate_limits4 = __esm({
        * ```
        */
       list(workspaceID, query2 = {}, options) {
-        return this._client.getAPIList(path12`/v1/organizations/workspaces/${workspaceID}/rate_limits`, PageCursor, { query: query2, ...options });
+        return this._client.getAPIList(path13`/v1/organizations/workspaces/${workspaceID}/rate_limits`, PageCursor, { query: query2, ...options });
       }
     };
   }
@@ -26513,7 +26513,7 @@ var init_service_accounts4 = __esm({
        */
       retrieve(serviceAccountID, params, options) {
         const { workspace_id } = params;
-        return this._client.get(path12`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}`, options);
+        return this._client.get(path13`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}`, options);
       }
       /**
        * **Requires an OAuth access token with the `org:admin` scope**, from
@@ -26543,7 +26543,7 @@ var init_service_accounts4 = __esm({
        */
       update(serviceAccountID, params, options) {
         const { workspace_id, ...body } = params;
-        return this._client.post(path12`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}`, { body, ...options });
+        return this._client.post(path13`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}`, { body, ...options });
       }
       /**
        * **Requires an OAuth access token with the `org:admin` scope**, from
@@ -26570,7 +26570,7 @@ var init_service_accounts4 = __esm({
        * ```
        */
       list(workspaceID, query2 = {}, options) {
-        return this._client.getAPIList(path12`/v1/organizations/workspaces/${workspaceID}/service_accounts`, PageCursor, { query: query2, ...options });
+        return this._client.getAPIList(path13`/v1/organizations/workspaces/${workspaceID}/service_accounts`, PageCursor, { query: query2, ...options });
       }
       /**
        * **Requires an OAuth access token with the `org:admin` scope**, from
@@ -26601,7 +26601,7 @@ var init_service_accounts4 = __esm({
        * ```
        */
       add(workspaceID, body, options) {
-        return this._client.post(path12`/v1/organizations/workspaces/${workspaceID}/service_accounts`, {
+        return this._client.post(path13`/v1/organizations/workspaces/${workspaceID}/service_accounts`, {
           body,
           ...options
         });
@@ -26631,7 +26631,7 @@ var init_service_accounts4 = __esm({
        */
       remove(serviceAccountID, params, options) {
         const { workspace_id } = params;
-        return this._client.delete(path12`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}`, options);
+        return this._client.delete(path13`/v1/organizations/workspaces/${workspace_id}/service_accounts/${serviceAccountID}`, options);
       }
     };
   }
@@ -26684,7 +26684,7 @@ var init_workspaces6 = __esm({
          * ```
          */
         retrieve(workspaceID, options) {
-          return this._client.get(path12`/v1/organizations/workspaces/${workspaceID}`, options);
+          return this._client.get(path13`/v1/organizations/workspaces/${workspaceID}`, options);
         }
         /**
          * Update Workspace
@@ -26698,7 +26698,7 @@ var init_workspaces6 = __esm({
          * ```
          */
         update(workspaceID, body, options) {
-          return this._client.post(path12`/v1/organizations/workspaces/${workspaceID}`, { body, ...options });
+          return this._client.post(path13`/v1/organizations/workspaces/${workspaceID}`, { body, ...options });
         }
         /**
          * List Workspaces
@@ -26726,7 +26726,7 @@ var init_workspaces6 = __esm({
          * ```
          */
         archive(workspaceID, options) {
-          return this._client.post(path12`/v1/organizations/workspaces/${workspaceID}/archive`, options);
+          return this._client.post(path13`/v1/organizations/workspaces/${workspaceID}/archive`, options);
         }
       }
       Workspaces7.RateLimits = RateLimits4;
@@ -26825,7 +26825,7 @@ var init_versions4 = __esm({
        */
       create(skillID, params, options) {
         const { workspace_id, ...body } = params;
-        return this._client.post(path12`/v1/skills/${skillID}/versions`, multipartFormRequestOptions({
+        return this._client.post(path13`/v1/skills/${skillID}/versions`, multipartFormRequestOptions({
           body,
           ...options,
           headers: buildHeaders([
@@ -26847,7 +26847,7 @@ var init_versions4 = __esm({
        */
       retrieve(version2, params, options) {
         const { skill_id, workspace_id } = params;
-        return this._client.get(path12`/v1/skills/${skill_id}/versions/${version2}`, {
+        return this._client.get(path13`/v1/skills/${skill_id}/versions/${version2}`, {
           ...options,
           headers: buildHeaders([
             { ...workspace_id != null ? { "anthropic-workspace-id": workspace_id } : void 0 },
@@ -26870,7 +26870,7 @@ var init_versions4 = __esm({
        */
       list(skillID, params = {}, options) {
         const { workspace_id, ...query2 } = params ?? {};
-        return this._client.getAPIList(path12`/v1/skills/${skillID}/versions`, PageCursor, {
+        return this._client.getAPIList(path13`/v1/skills/${skillID}/versions`, PageCursor, {
           query: query2,
           ...options,
           headers: buildHeaders([
@@ -26892,7 +26892,7 @@ var init_versions4 = __esm({
        */
       delete(version2, params, options) {
         const { skill_id, workspace_id } = params;
-        return this._client.delete(path12`/v1/skills/${skill_id}/versions/${version2}`, {
+        return this._client.delete(path13`/v1/skills/${skill_id}/versions/${version2}`, {
           ...options,
           headers: buildHeaders([
             { ...workspace_id != null ? { "anthropic-workspace-id": workspace_id } : void 0 },
@@ -26952,7 +26952,7 @@ var init_skills4 = __esm({
          */
         retrieve(skillID, params = {}, options) {
           const { workspace_id } = params ?? {};
-          return this._client.get(path12`/v1/skills/${skillID}`, {
+          return this._client.get(path13`/v1/skills/${skillID}`, {
             ...options,
             headers: buildHeaders([
               { ...workspace_id != null ? { "anthropic-workspace-id": workspace_id } : void 0 },
@@ -26992,7 +26992,7 @@ var init_skills4 = __esm({
          */
         delete(skillID, params = {}, options) {
           const { workspace_id } = params ?? {};
-          return this._client.delete(path12`/v1/skills/${skillID}`, {
+          return this._client.delete(path13`/v1/skills/${skillID}`, {
             ...options,
             headers: buildHeaders([
               { ...workspace_id != null ? { "anthropic-workspace-id": workspace_id } : void 0 },
@@ -27369,9 +27369,9 @@ var init_client = __esm({
         makeStatusError(status, error62, message, headers) {
           return APIError.generate(status, error62, message, headers);
         }
-        buildURL(path17, query2, defaultBaseURL) {
+        buildURL(path18, query2, defaultBaseURL) {
           const baseURL = !__classPrivateFieldGet(this, _BaseAnthropic_instances, "m", _BaseAnthropic_baseURLOverridden).call(this) && defaultBaseURL || this.baseURL;
-          const url2 = isAbsoluteURL(path17) ? new URL(path17) : new URL(baseURL + (baseURL.endsWith("/") && path17.startsWith("/") ? path17.slice(1) : path17));
+          const url2 = isAbsoluteURL(path18) ? new URL(path18) : new URL(baseURL + (baseURL.endsWith("/") && path18.startsWith("/") ? path18.slice(1) : path18));
           const defaultQuery = this.defaultQuery();
           const pathQuery = Object.fromEntries(url2.searchParams);
           if (!isEmptyObj(defaultQuery) || !isEmptyObj(pathQuery)) {
@@ -27443,24 +27443,24 @@ var init_client = __esm({
         backendMiddleware() {
           return [];
         }
-        get(path17, opts) {
-          return this.methodRequest("get", path17, opts);
+        get(path18, opts) {
+          return this.methodRequest("get", path18, opts);
         }
-        post(path17, opts) {
-          return this.methodRequest("post", path17, opts);
+        post(path18, opts) {
+          return this.methodRequest("post", path18, opts);
         }
-        patch(path17, opts) {
-          return this.methodRequest("patch", path17, opts);
+        patch(path18, opts) {
+          return this.methodRequest("patch", path18, opts);
         }
-        put(path17, opts) {
-          return this.methodRequest("put", path17, opts);
+        put(path18, opts) {
+          return this.methodRequest("put", path18, opts);
         }
-        delete(path17, opts) {
-          return this.methodRequest("delete", path17, opts);
+        delete(path18, opts) {
+          return this.methodRequest("delete", path18, opts);
         }
-        methodRequest(method, path17, opts) {
+        methodRequest(method, path18, opts) {
           return this.request(Promise.resolve(opts).then((opts2) => {
-            return { method, path: path17, ...opts2 };
+            return { method, path: path18, ...opts2 };
           }));
         }
         request(options, remainingRetries = null) {
@@ -27581,8 +27581,8 @@ var init_client = __esm({
           armAbandonmentBackstop(response.body ?? response, controller);
           return { response, options, controller, requestLogID, retryOfRequestLogID, startTime };
         }
-        getAPIList(path17, Page2, opts) {
-          return this.requestAPIList(Page2, opts && "then" in opts ? opts.then((opts2) => ({ method: "get", path: path17, ...opts2 })) : { method: "get", path: path17, ...opts });
+        getAPIList(path18, Page2, opts) {
+          return this.requestAPIList(Page2, opts && "then" in opts ? opts.then((opts2) => ({ method: "get", path: path18, ...opts2 })) : { method: "get", path: path18, ...opts });
         }
         requestAPIList(Page2, options) {
           const request = this.makeRequest(options, null, void 0);
@@ -27700,14 +27700,14 @@ var init_client = __esm({
         }
         async buildRequest(inputOptions, { retryCount = 0 } = {}) {
           const options = { ...inputOptions };
-          const { method, path: path17, query: query2, defaultBaseURL } = options;
+          const { method, path: path18, query: query2, defaultBaseURL } = options;
           if (this._authState.resolution) {
             await this._authState.resolution;
           }
           if (!this._baseURLIsExplicit && this._authState.baseURL && this.baseURL !== this._authState.baseURL) {
             this.baseURL = this._authState.baseURL;
           }
-          const url2 = this.buildURL(path17, query2, defaultBaseURL);
+          const url2 = this.buildURL(path18, query2, defaultBaseURL);
           if ("timeout" in options)
             validatePositiveInteger("timeout", options.timeout);
           options.timeout = options.timeout ?? this.timeout;
@@ -27879,8 +27879,8 @@ function patchField(target, key, value) {
 function betaRefusalFallbackMiddleware(fallbacks, options = {}) {
   let warnedMissingState = false;
   return async (request, next, ctx) => {
-    const [path17, query2] = (ctx.options?.path ?? "").split("?");
-    if (fallbacks.length === 0 || ctx.options?.method !== "post" || path17 !== "/v1/messages" || new URLSearchParams(query2).get("beta") !== "true" || typeof ctx.options.body !== "object" || ctx.options.body == null) {
+    const [path18, query2] = (ctx.options?.path ?? "").split("?");
+    if (fallbacks.length === 0 || ctx.options?.method !== "post" || path18 !== "/v1/messages" || new URLSearchParams(query2).get("beta") !== "true" || typeof ctx.options.body !== "object" || ctx.options.body == null) {
       return next(request);
     }
     if (ctx.options.body.fallbacks != null) {
@@ -29245,10 +29245,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path17) {
-  if (!path17)
+function getElementAtPath(obj, path18) {
+  if (!path18)
     return obj;
-  return path17.reduce((acc, key) => acc?.[key], obj);
+  return path18.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -29588,11 +29588,11 @@ function explicitlyAborted(x2, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path17, issues) {
+function prefixIssues(path18, issues) {
   return issues.map((iss) => {
     var _a4;
     (_a4 = iss).path ?? (_a4.path = []);
-    iss.path.unshift(path17);
+    iss.path.unshift(path18);
     return iss;
   });
 }
@@ -30054,16 +30054,16 @@ function flattenError(error62, mapper = (issue2) => issue2.message) {
 }
 function formatError(error62, mapper = (issue2) => issue2.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error63, path17 = []) => {
+  const processError = (error63, path18 = []) => {
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path17, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path18, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path17, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path18, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path17, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path18, ...issue2.path]);
       } else {
-        const fullpath = [...path17, ...issue2.path];
+        const fullpath = [...path18, ...issue2.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue2));
         } else {
@@ -30102,17 +30102,17 @@ function formatError(error62, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error62, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error63, path17 = []) => {
+  const processError = (error63, path18 = []) => {
     var _a4;
     for (const issue2 of error63.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
-        issue2.errors.map((issues) => processError({ issues }, [...path17, ...issue2.path]));
+        issue2.errors.map((issues) => processError({ issues }, [...path18, ...issue2.path]));
       } else if (issue2.code === "invalid_key") {
-        processError({ issues: issue2.issues }, [...path17, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path18, ...issue2.path]);
       } else if (issue2.code === "invalid_element") {
-        processError({ issues: issue2.issues }, [...path17, ...issue2.path]);
+        processError({ issues: issue2.issues }, [...path18, ...issue2.path]);
       } else {
-        const fullpath = [...path17, ...issue2.path];
+        const fullpath = [...path18, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -30151,8 +30151,8 @@ function treeifyError(error62, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path17 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path17) {
+  const path18 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path18) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -47290,13 +47290,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path17 = ref.slice(1).split("/").filter(Boolean);
-  if (path17.length === 0) {
+  const path18 = ref.slice(1).split("/").filter(Boolean);
+  if (path18.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path17[0] === defsKey) {
-    const key = path17[1] === void 0 ? void 0 : decodeJSONPointerSegment(path17[1]);
+  if (path18[0] === defsKey) {
+    const key = path18[1] === void 0 ? void 0 : decodeJSONPointerSegment(path18[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -49769,9 +49769,9 @@ var StdioServerTransport = class {
 };
 
 // src/inject-daemon.ts
-import net from "node:net";
-import fs11 from "node:fs";
-import path9 from "node:path";
+import net2 from "node:net";
+import fs12 from "node:fs";
+import path10 from "node:path";
 
 // src/paths.ts
 import os from "os";
@@ -49784,20 +49784,16 @@ function ensureDir(dir) {
   return dir;
 }
 function getSuperpowersDir() {
-  let dir;
-  if (process.env.MEMORY_BANK_CONFIG_DIR) {
-    dir = process.env.MEMORY_BANK_CONFIG_DIR;
-  } else if (process.env.PERSONAL_SUPERPOWERS_DIR) {
-    dir = process.env.PERSONAL_SUPERPOWERS_DIR;
-  } else {
-    const xdgConfigHome = process.env.XDG_CONFIG_HOME;
-    if (xdgConfigHome) {
-      dir = path.join(xdgConfigHome, "superpowers");
-    } else {
-      dir = path.join(os.homedir(), ".config", "superpowers");
-    }
-  }
-  return ensureDir(dir);
+  return ensureDir(superpowersDirOf(process.env));
+}
+function superpowersDirOf(env) {
+  if (env.MEMORY_BANK_CONFIG_DIR) return env.MEMORY_BANK_CONFIG_DIR;
+  if (env.PERSONAL_SUPERPOWERS_DIR) return env.PERSONAL_SUPERPOWERS_DIR;
+  if (env.XDG_CONFIG_HOME) return path.join(env.XDG_CONFIG_HOME, "superpowers");
+  return path.join(env.HOME || os.homedir(), ".config", "superpowers");
+}
+function indexDirOf(env) {
+  return path.join(superpowersDirOf(env), "conversation-index");
 }
 function getArchiveDir() {
   if (process.env.TEST_ARCHIVE_DIR) {
@@ -49806,7 +49802,8 @@ function getArchiveDir() {
   return ensureDir(path.join(getSuperpowersDir(), "conversation-archive"));
 }
 function getIndexDir() {
-  return ensureDir(path.join(getSuperpowersDir(), "conversation-index"));
+  getSuperpowersDir();
+  return ensureDir(indexDirOf(process.env));
 }
 function getDbPath() {
   if (process.env.MEMORY_BANK_DB_PATH || process.env.TEST_DB_PATH) {
@@ -52949,19 +52946,31 @@ function injectSocketPathIn(indexDir, version2, maxBytes = MAX_UNIX_SOCKET_PATH_
   return fits(legacy) ? legacy : null;
 }
 
-// src/inject-daemon.ts
-function requestIdleMs(raw) {
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : 1e4;
+// src/session-context.ts
+import path9 from "node:path";
+var MAX_CWD_BYTES = 4096;
+function validSessionCwd(value) {
+  return typeof value === "string" && value.length > 0 && !value.includes("\0") && path9.isAbsolute(value) && Buffer.byteLength(value) <= MAX_CWD_BYTES;
 }
-var REQUEST_IDLE_MS = requestIdleMs(process.env.MEMORY_BANK_INJECT_IDLE_MS);
-function reclaimIntervalMs(raw) {
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : 45e3;
+function sessionContext(cwd) {
+  if (cwd !== null && !validSessionCwd(cwd)) {
+    throw new Error("memory-bank: a session must declare its working directory as an absolute path");
+  }
+  return { cwd };
 }
-var RECLAIM_MS = reclaimIntervalMs(process.env.MEMORY_BANK_INJECT_RECLAIM_MS);
-var OWN_SOCKET_MIN_AGE_MS = 2e3;
-var OTHER_SOCKET_MIN_AGE_MS = 6e4;
+function sessionProject(ctx, explicit, argument = "project") {
+  if (typeof explicit === "string" && explicit !== "") return explicit;
+  if (ctx.cwd === null) {
+    throw new Error(
+      `this session's working directory could not be read, so there is no default project \u2014 pass \`${argument}\``
+    );
+  }
+  return ctx.cwd;
+}
+
+// src/unix-socket.ts
+import net from "node:net";
+import fs11 from "node:fs";
 var PROBE_TIMEOUT_MS = 500;
 var DEAD_CONFIRM_MS = 1e3;
 function socketIdentity(p) {
@@ -53004,6 +53013,28 @@ async function removeIfDead(p, minAgeMs) {
     return false;
   }
 }
+function nameExists(p) {
+  try {
+    fs11.lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// src/inject-daemon.ts
+function requestIdleMs(raw) {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 1e4;
+}
+var REQUEST_IDLE_MS = requestIdleMs(process.env.MEMORY_BANK_INJECT_IDLE_MS);
+function reclaimIntervalMs(raw) {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 45e3;
+}
+var RECLAIM_MS = reclaimIntervalMs(process.env.MEMORY_BANK_INJECT_RECLAIM_MS);
+var OWN_SOCKET_MIN_AGE_MS = 2e3;
+var OTHER_SOCKET_MIN_AGE_MS = 6e4;
 var sweeping = /* @__PURE__ */ new Set();
 async function removeDeadSockets(indexDir, ownSock) {
   if (sweeping.has(indexDir)) return;
@@ -53011,14 +53042,14 @@ async function removeDeadSockets(indexDir, ownSock) {
   try {
     let names;
     try {
-      names = fs11.readdirSync(indexDir);
+      names = fs12.readdirSync(indexDir);
     } catch {
       return;
     }
     let removed = 0;
     for (const name of names) {
       if (!/^inject-daemon(?:-[0-9A-Za-z.+-]{1,32})?\.sock$/.test(name)) continue;
-      const p = path9.join(indexDir, name);
+      const p = path10.join(indexDir, name);
       if (p === ownSock) continue;
       if (await removeIfDead(p, OTHER_SOCKET_MIN_AGE_MS)) removed++;
     }
@@ -53030,14 +53061,6 @@ async function removeDeadSockets(indexDir, ownSock) {
 function injectSocketPath() {
   return injectSocketPathIn(getIndexDir(), ownPackageVersion());
 }
-function nameExists(p) {
-  try {
-    fs11.lstatSync(p);
-    return true;
-  } catch {
-    return false;
-  }
-}
 function startInjectDaemon() {
   const sockPath = injectSocketPath();
   if (sockPath === null) {
@@ -53048,7 +53071,7 @@ function startInjectDaemon() {
   let immediateRetries = 0;
   let attempting = false;
   let own2 = null;
-  const server = net.createServer((conn) => {
+  const server = net2.createServer((conn) => {
     let buf = "";
     let handled = false;
     conn.setEncoding("utf8");
@@ -53073,12 +53096,17 @@ function startInjectDaemon() {
       void (async () => {
         try {
           const req = JSON.parse(line);
+          const cwd = req.cwd;
+          if (!validSessionCwd(cwd)) {
+            reply({ ok: false, error: "bad-cwd" });
+            return;
+          }
           if (!embeddingsReady() && injectionQuery(String(req.prompt ?? "")).reason === null) {
             conn.write(JSON.stringify({ warming: true }) + "\n");
           }
           const { context, ledgerKeys, failed } = await computeInjectResult(
             String(req.prompt ?? ""),
-            String(req.cwd ?? process.cwd()),
+            cwd,
             "daemon",
             req.session_id ? String(req.session_id) : void 0,
             {
@@ -53111,14 +53139,14 @@ function startInjectDaemon() {
       return;
     }
     try {
-      fs11.chmodSync(sockPath, 384);
+      fs12.chmodSync(sockPath, 384);
     } catch {
     }
     const id = socketIdentity(sockPath);
     own2 = id ? { ino: id.ino, ctimeMs: id.ctimeMs } : null;
     void initEmbeddings().catch(() => {
     });
-    void removeDeadSockets(path9.dirname(sockPath), sockPath);
+    void removeDeadSockets(path10.dirname(sockPath), sockPath);
   };
   server.on("listening", onListen);
   const tryListen = () => {
@@ -53153,7 +53181,7 @@ function startInjectDaemon() {
     if (stopped) return;
     immediateRetries = 0;
     if (!server.listening) return tryListen();
-    if (!fs11.existsSync(sockPath)) {
+    if (!fs12.existsSync(sockPath)) {
       own2 = null;
       try {
         server.close();
@@ -53182,6 +53210,16 @@ function startInjectDaemon() {
       server.close(() => resolve2());
     })
   };
+}
+
+// src/own-cwd.ts
+function ownCwd() {
+  try {
+    const cwd = process.cwd();
+    return validSessionCwd(cwd) ? cwd : null;
+  } catch {
+    return null;
+  }
 }
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/server/zod-compat.js
@@ -56901,8 +56939,8 @@ _Total unique facts discovered: ${allDiscovered.size}_
 
 // src/llm.ts
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import fs17 from "node:fs";
-import path14 from "node:path";
+import fs18 from "node:fs";
+import path15 from "node:path";
 import os5 from "node:os";
 
 // src/llm-error-class.ts
@@ -56967,17 +57005,17 @@ function classifyLlmError(err) {
 }
 
 // src/deps-heal.ts
-import fs12 from "node:fs";
-import path10 from "node:path";
+import fs13 from "node:fs";
+import path11 from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 function pluginRoot() {
-  return path10.resolve(path10.dirname(fileURLToPath2(import.meta.url)), "..");
+  return path11.resolve(path11.dirname(fileURLToPath2(import.meta.url)), "..");
 }
 function selfHealDeps(root, label) {
-  const marker = path10.join(root, ".deps-heal-attempted");
+  const marker = path11.join(root, ".deps-heal-attempted");
   try {
-    fs12.writeFileSync(marker, (/* @__PURE__ */ new Date()).toISOString(), { flag: "wx" });
+    fs13.writeFileSync(marker, (/* @__PURE__ */ new Date()).toISOString(), { flag: "wx" });
   } catch {
     return false;
   }
@@ -57013,7 +57051,7 @@ function noteSdkFailure(err, label, root = pluginRoot()) {
 }
 
 // src/llm.ts
-var LLM_WORKDIR = path14.join(os5.tmpdir(), LLM_WORKDIR_BASENAME);
+var LLM_WORKDIR = path15.join(os5.tmpdir(), LLM_WORKDIR_BASENAME);
 var DEFAULT_LLM_MODEL = "claude-haiku-5-5";
 var ISOLATED_QUERY_OPTIONS = {
   settingSources: [],
@@ -57022,13 +57060,13 @@ var ISOLATED_QUERY_OPTIONS = {
 };
 function llmWorkdir() {
   try {
-    fs17.mkdirSync(LLM_WORKDIR, { recursive: true });
+    fs18.mkdirSync(LLM_WORKDIR, { recursive: true });
   } catch {
   }
   pruneLlmTranscripts();
   return LLM_WORKDIR;
 }
-var PRUNE_MARKER = path14.join(LLM_WORKDIR, ".last-transcript-prune");
+var PRUNE_MARKER = path15.join(LLM_WORKDIR, ".last-transcript-prune");
 var PRUNE_THROTTLE_MS = 60 * 60 * 1e3;
 function transcriptTtlMs() {
   const raw = process.env.MEMORY_BANK_LLM_TRANSCRIPT_TTL_HOURS;
@@ -57038,49 +57076,49 @@ function transcriptTtlMs() {
 function pruneLlmTranscripts(now = Date.now()) {
   try {
     try {
-      const markerAge = now - fs17.statSync(PRUNE_MARKER).mtimeMs;
+      const markerAge = now - fs18.statSync(PRUNE_MARKER).mtimeMs;
       if (markerAge >= 0 && markerAge < PRUNE_THROTTLE_MS) return;
     } catch {
     }
     try {
-      fs17.writeFileSync(PRUNE_MARKER, new Date(now).toISOString());
+      fs18.writeFileSync(PRUNE_MARKER, new Date(now).toISOString());
     } catch {
     }
     const projectsDir = getProjectsDir();
     const ttl = transcriptTtlMs();
     let entries;
     try {
-      entries = fs17.readdirSync(projectsDir);
+      entries = fs18.readdirSync(projectsDir);
     } catch {
       return;
     }
     for (const entry of entries) {
       if (entry !== LLM_WORKDIR_BASENAME && !entry.endsWith(`-${LLM_WORKDIR_BASENAME}`)) continue;
-      const dir = path14.join(projectsDir, entry);
+      const dir = path15.join(projectsDir, entry);
       let stat3;
       try {
-        stat3 = fs17.lstatSync(dir);
+        stat3 = fs18.lstatSync(dir);
       } catch {
         continue;
       }
       if (!stat3.isDirectory()) continue;
       let files;
       try {
-        files = fs17.readdirSync(dir);
+        files = fs18.readdirSync(dir);
       } catch {
         continue;
       }
       for (const file2 of files) {
         if (!file2.endsWith(".jsonl") && !file2.endsWith("-summary.txt")) continue;
-        const filePath = path14.join(dir, file2);
+        const filePath = path15.join(dir, file2);
         try {
-          const fstat = fs17.lstatSync(filePath);
-          if (fstat.isFile() && now - fstat.mtimeMs > ttl) fs17.unlinkSync(filePath);
+          const fstat = fs18.lstatSync(filePath);
+          if (fstat.isFile() && now - fstat.mtimeMs > ttl) fs18.unlinkSync(filePath);
         } catch {
         }
       }
       try {
-        fs17.rmdirSync(dir);
+        fs18.rmdirSync(dir);
       } catch {
       }
     }
@@ -57367,37 +57405,37 @@ async function askAvatar(db, question, project) {
 }
 
 // src/server-core.ts
-import path16 from "path";
+import path17 from "path";
 import os6 from "os";
 
 // src/read-guard.ts
-import fs18 from "fs";
-import path15 from "path";
+import fs19 from "fs";
+import path16 from "path";
 var ACCESS_DENIED_MESSAGE = "Access denied: path is outside the conversation archive";
 function realpathOfExisting(p) {
-  let current = path15.resolve(p);
+  let current = path16.resolve(p);
   const rest = [];
   for (; ; ) {
     try {
-      return path15.join(fs18.realpathSync(current), ...rest);
+      return path16.join(fs19.realpathSync(current), ...rest);
     } catch {
-      const parent = path15.dirname(current);
-      if (parent === current) return path15.join(current, ...rest);
-      rest.unshift(path15.basename(current));
+      const parent = path16.dirname(current);
+      if (parent === current) return path16.join(current, ...rest);
+      rest.unshift(path16.basename(current));
       current = parent;
     }
   }
 }
 function isInside2(candidate, root) {
-  return candidate === root || candidate.startsWith(root + path15.sep);
+  return candidate === root || candidate.startsWith(root + path16.sep);
 }
 function resolveReadableConversation(requestedPath, allowedRoots) {
-  const resolvedPath = path15.resolve(requestedPath);
+  const resolvedPath = path16.resolve(requestedPath);
   if (!resolvedPath.endsWith(".jsonl") && !resolvedPath.endsWith(".jsonl.zst")) {
     throw new Error("Invalid file type: only .jsonl files are supported");
   }
   const roots = allowedRoots.map(realpathOfExisting);
-  const realDir = realpathOfExisting(path15.dirname(resolvedPath));
+  const realDir = realpathOfExisting(path16.dirname(resolvedPath));
   if (!roots.some((root) => isInside2(realDir, root))) {
     throw new Error(ACCESS_DENIED_MESSAGE);
   }
@@ -57405,7 +57443,7 @@ function resolveReadableConversation(requestedPath, allowedRoots) {
   if (!resolvedFile) {
     throw new Error(`File not found: ${resolvedPath}`);
   }
-  const realFile = fs18.realpathSync(resolvedFile);
+  const realFile = fs19.realpathSync(resolvedFile);
   if (!roots.some((root) => isInside2(realFile, root))) {
     throw new Error(ACCESS_DENIED_MESSAGE);
   }
@@ -57554,7 +57592,7 @@ async function handleListTools() {
           type: "object",
           properties: {
             query: { type: "string", minLength: 2, description: "Search query for facts" },
-            project: { type: "string", description: "Project path to scope the search (defaults to cwd)" },
+            project: { type: "string", description: "Project path to scope the search (defaults to the session's working directory)" },
             category: {
               type: "string",
               enum: ["decision", "preference", "pattern", "knowledge", "constraint"],
@@ -57608,7 +57646,7 @@ async function handleListTools() {
         inputSchema: {
           type: "object",
           properties: {
-            project: { type: "string", description: "Project path to scope by (defaults to cwd)" },
+            project: { type: "string", description: "Project path to scope by (defaults to the session's working directory)" },
             tags: { type: "array", items: { type: "string" }, description: "List facts carrying these tags" },
             match: { type: "string", enum: ["all", "any"], default: "all" },
             limit: { type: "number", minimum: 1, maximum: 200, default: 50 }
@@ -57750,7 +57788,7 @@ async function handleListTools() {
     ]
   };
 }
-async function handleCallTool(request) {
+async function handleCallTool(ctx, request) {
   try {
     const { name } = request.params;
     const args = request.params.arguments ?? {};
@@ -57811,7 +57849,7 @@ _Related knowledge unavailable: ${message}_
       const params = ShowConversationInputSchema.parse(args);
       const realFile = resolveReadTarget(params.path, [
         getArchiveDir(),
-        path16.join(os6.homedir(), ".claude", "projects")
+        path17.join(os6.homedir(), ".claude", "projects")
       ]);
       const markdownContent = await readConversationRange(realFile, {
         startLine: params.startLine,
@@ -57830,7 +57868,7 @@ _Related knowledge unavailable: ${message}_
     }
     if (name === "search_facts") {
       const params = SearchFactsInputSchema.parse(args);
-      const currentProject = params.project || process.cwd();
+      const currentProject = sessionProject(ctx, params.project);
       await initEmbeddings();
       const db = initDatabase();
       try {
@@ -57898,7 +57936,7 @@ Current tags: ${tags.length ? tags.join(", ") : "(none)"}
     }
     if (name === "list_tags") {
       const params = ListTagsInputSchema.parse(args);
-      const currentProject = params.project || process.cwd();
+      const currentProject = sessionProject(ctx, params.project);
       const db = initDatabase();
       try {
         if (params.tags && params.tags.length) {
@@ -57964,7 +58002,7 @@ Distinct tags: ${tagIndex.length}
     }
     if (name === "ask_avatar") {
       const params = AskAvatarInputSchema.parse(args);
-      const project = params.project || process.cwd();
+      const project = sessionProject(ctx, params.project);
       const db = initDatabase();
       try {
         const result = await askAvatar(db, params.question, project);
@@ -58023,7 +58061,7 @@ Distinct tags: ${tagIndex.length}
         project: external_exports.string().optional(),
         limit: external_exports.number().int().min(1).max(10).default(3)
       }).strict().parse(args);
-      const currentProject = params.project || process.cwd();
+      const currentProject = sessionProject(ctx, params.project);
       await initEmbeddings();
       const db = initDatabase();
       try {
@@ -58126,7 +58164,7 @@ Distinct tags: ${tagIndex.length}
         const queryEmbedding = await generateEmbedding(params.query, "query");
         const output2 = formatCrossProjectInsights(db, queryEmbedding, {
           query: params.query,
-          currentProject: params.current_project || process.cwd(),
+          currentProject: sessionProject(ctx, params.current_project, "current_project"),
           limit: params.limit
         });
         return { content: [{ type: "text", text: output2 }] };
@@ -58167,7 +58205,8 @@ Distinct tags: ${tagIndex.length}
     };
   }
 }
-function createMemoryBankServer() {
+function createMemoryBankServer(ctx) {
+  const session = sessionContext(ctx.cwd);
   const server = new Server(
     {
       name: "memory-bank",
@@ -58182,7 +58221,7 @@ function createMemoryBankServer() {
     }
   );
   server.setRequestHandler(ListToolsRequestSchema, handleListTools);
-  server.setRequestHandler(CallToolRequestSchema, handleCallTool);
+  server.setRequestHandler(CallToolRequestSchema, (request) => handleCallTool(session, request));
   return server;
 }
 
@@ -58191,7 +58230,7 @@ async function runStdioServer() {
   console.error("Episodic Memory MCP server running via stdio");
   startInjectDaemon();
   const transport = new StdioServerTransport();
-  await createMemoryBankServer().connect(transport);
+  await createMemoryBankServer({ cwd: ownCwd() }).connect(transport);
 }
 
 // src/mcp-server.ts
@@ -58199,4 +58238,4 @@ runStdioServer().catch((error62) => {
   console.error("Server error:", error62);
   process.exit(1);
 });
-// memory-bank-bundle-stamp v1 inputs=32550277f9bb5e666146da3afa1f5ef7624ae917b1bde5cb1c1abcc936b434e2 body=de5c9056f6b6fa70907bfbe1618e6b46ab7868d5e211642b0e090e449003157f
+// memory-bank-bundle-stamp v1 inputs=b5ac1d4a2c83ef8176c7389e28dfd633063b0a3ab60c49213d009c72dfa33ad4 body=65cdb0c48c3c71422c54472e9b0f5850c7bc27c15ebb883d39f00295b0f12379

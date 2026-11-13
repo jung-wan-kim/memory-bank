@@ -9,6 +9,13 @@
  */
 export declare function getSuperpowersDir(): string;
 /**
+ * The directory an environment selects, by the precedence above — nothing is created. For code that has to
+ * know where another process will keep its files (the relay, deciding which shared server to talk to).
+ */
+export declare function superpowersDirOf(env: NodeJS.ProcessEnv): string;
+/** The index directory an environment selects — nothing is created (see superpowersDirOf). */
+export declare function indexDirOf(env: NodeJS.ProcessEnv): string;
+/**
  * Get conversation archive directory
  */
 export declare function getArchiveDir(): string;

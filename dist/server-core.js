@@ -22,6 +22,7 @@ import path from 'path';
 import os from 'os';
 import { resolveReadableConversation, ACCESS_DENIED_MESSAGE } from './read-guard.js';
 import { getArchiveDir } from './paths.js';
+import { sessionContext, sessionProject } from './session-context.js';
 // Zod Schemas for Input Validation
 const SearchModeEnum = z.enum(['vector', 'text', 'both']);
 const ResponseFormatEnum = z.enum(['markdown', 'json']);
@@ -263,7 +264,7 @@ async function handleListTools() {
                     type: 'object',
                     properties: {
                         query: { type: 'string', minLength: 2, description: 'Search query for facts' },
-                        project: { type: 'string', description: 'Project path to scope the search (defaults to cwd)' },
+                        project: { type: 'string', description: "Project path to scope the search (defaults to the session's working directory)" },
                         category: {
                             type: 'string',
                             enum: ['decision', 'preference', 'pattern', 'knowledge', 'constraint'],
@@ -317,7 +318,7 @@ async function handleListTools() {
                 inputSchema: {
                     type: 'object',
                     properties: {
-                        project: { type: 'string', description: 'Project path to scope by (defaults to cwd)' },
+                        project: { type: 'string', description: "Project path to scope by (defaults to the session's working directory)" },
                         tags: { type: 'array', items: { type: 'string' }, description: 'List facts carrying these tags' },
                         match: { type: 'string', enum: ['all', 'any'], default: 'all' },
                         limit: { type: 'number', minimum: 1, maximum: 200, default: 50 },
@@ -460,7 +461,7 @@ async function handleListTools() {
     };
 }
 // Tool calls
-async function handleCallTool(request) {
+async function handleCallTool(ctx, request) {
     try {
         const { name } = request.params;
         // `arguments` is optional in tools/call. Left out, it is the empty object: the tools that need no argument
@@ -562,7 +563,7 @@ async function handleCallTool(request) {
         }
         if (name === 'search_facts') {
             const params = SearchFactsInputSchema.parse(args);
-            const currentProject = params.project || process.cwd();
+            const currentProject = sessionProject(ctx, params.project);
             await initEmbeddings();
             const db = initDatabase();
             try {
@@ -630,7 +631,7 @@ async function handleCallTool(request) {
         }
         if (name === 'list_tags') {
             const params = ListTagsInputSchema.parse(args);
-            const currentProject = params.project || process.cwd();
+            const currentProject = sessionProject(ctx, params.project);
             const db = initDatabase();
             try {
                 if (params.tags && params.tags.length) {
@@ -685,7 +686,7 @@ async function handleCallTool(request) {
         }
         if (name === 'ask_avatar') {
             const params = AskAvatarInputSchema.parse(args);
-            const project = params.project || process.cwd();
+            const project = sessionProject(ctx, params.project);
             const db = initDatabase();
             try {
                 const result = await askAvatar(db, params.question, project);
@@ -739,7 +740,7 @@ async function handleCallTool(request) {
                 project: z.string().optional(),
                 limit: z.number().int().min(1).max(10).default(3),
             }).strict().parse(args);
-            const currentProject = params.project || process.cwd();
+            const currentProject = sessionProject(ctx, params.project);
             await initEmbeddings();
             const db = initDatabase();
             try {
@@ -828,7 +829,7 @@ async function handleCallTool(request) {
                 const queryEmbedding = await generateEmbedding(params.query, 'query');
                 const output = formatCrossProjectInsights(db, queryEmbedding, {
                     query: params.query,
-                    currentProject: params.current_project || process.cwd(),
+                    currentProject: sessionProject(ctx, params.current_project, 'current_project'),
                     limit: params.limit,
                 });
                 return { content: [{ type: 'text', text: output }] };
@@ -875,8 +876,13 @@ async function handleCallTool(request) {
         };
     }
 }
-/** One MCP server with the memory-bank tools registered. Connect it to a transport to serve a session. */
-export function createMemoryBankServer() {
+/**
+ * One MCP server for one session, with the memory-bank tools registered. Connect it to a transport to serve
+ * that session. `ctx.cwd` is the project the tools fall back to — the session's working directory, never
+ * this process's.
+ */
+export function createMemoryBankServer(ctx) {
+    const session = sessionContext(ctx.cwd);
     const server = new Server({
         name: 'memory-bank',
         // The version of the code that is running (package.json next to dist/), so a client can tell which
@@ -888,6 +894,6 @@ export function createMemoryBankServer() {
         },
     });
     server.setRequestHandler(ListToolsRequestSchema, handleListTools);
-    server.setRequestHandler(CallToolRequestSchema, handleCallTool);
+    server.setRequestHandler(CallToolRequestSchema, (request) => handleCallTool(session, request));
     return server;
 }

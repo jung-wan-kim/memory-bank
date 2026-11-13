@@ -17,7 +17,7 @@ function registeredTools(): string[] {
   expect(end).toBeGreaterThan(start);
   // the two functions are what the server answers with
   expect(SERVER_SRC).toContain('server.setRequestHandler(ListToolsRequestSchema, handleListTools)');
-  expect(SERVER_SRC).toContain('server.setRequestHandler(CallToolRequestSchema, handleCallTool)');
+  expect(SERVER_SRC).toContain('server.setRequestHandler(CallToolRequestSchema, (request) => handleCallTool(session, request))');
   return [...SERVER_SRC.slice(start, end).matchAll(/^\s{8}name: '([a-z_]+)',$/gm)].map((m) => m[1]);
 }
 

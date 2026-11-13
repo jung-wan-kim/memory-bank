@@ -23,22 +23,23 @@ function ensureDir(dir: string): string {
  * 4. ~/.config/superpowers (default)
  */
 export function getSuperpowersDir(): string {
-  let dir: string;
+  return ensureDir(superpowersDirOf(process.env));
+}
 
-  if (process.env.MEMORY_BANK_CONFIG_DIR) {
-    dir = process.env.MEMORY_BANK_CONFIG_DIR;
-  } else if (process.env.PERSONAL_SUPERPOWERS_DIR) {
-    dir = process.env.PERSONAL_SUPERPOWERS_DIR;
-  } else {
-    const xdgConfigHome = process.env.XDG_CONFIG_HOME;
-    if (xdgConfigHome) {
-      dir = path.join(xdgConfigHome, 'superpowers');
-    } else {
-      dir = path.join(os.homedir(), '.config', 'superpowers');
-    }
-  }
+/**
+ * The directory an environment selects, by the precedence above — nothing is created. For code that has to
+ * know where another process will keep its files (the relay, deciding which shared server to talk to).
+ */
+export function superpowersDirOf(env: NodeJS.ProcessEnv): string {
+  if (env.MEMORY_BANK_CONFIG_DIR) return env.MEMORY_BANK_CONFIG_DIR;
+  if (env.PERSONAL_SUPERPOWERS_DIR) return env.PERSONAL_SUPERPOWERS_DIR;
+  if (env.XDG_CONFIG_HOME) return path.join(env.XDG_CONFIG_HOME, 'superpowers');
+  return path.join(env.HOME || os.homedir(), '.config', 'superpowers');
+}
 
-  return ensureDir(dir);
+/** The index directory an environment selects — nothing is created (see superpowersDirOf). */
+export function indexDirOf(env: NodeJS.ProcessEnv): string {
+  return path.join(superpowersDirOf(env), 'conversation-index');
 }
 
 /**
@@ -57,7 +58,8 @@ export function getArchiveDir(): string {
  * Get conversation index directory
  */
 export function getIndexDir(): string {
-  return ensureDir(path.join(getSuperpowersDir(), 'conversation-index'));
+  getSuperpowersDir();
+  return ensureDir(indexDirOf(process.env));
 }
 
 /**
