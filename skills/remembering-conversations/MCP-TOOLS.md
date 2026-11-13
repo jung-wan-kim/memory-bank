@@ -269,6 +269,11 @@ service keeps failing — the answer line says so (a missing login asks for `/lo
 returned with `isError: true`. The text keeps the usual layout (confidence 0%), so tell the two apart by
 `isError`: an answer the stored facts cannot support is a normal result, a failed call is an error.
 
+The LLM runs with the settings of the session that asked (account, endpoint, model). A session that could not
+hand all of them to the shared server — a value over the size limits, or a relative path it had no working
+directory to resolve — gets no LLM call at all: the result is an error that names those settings
+(`isError: true`). Its other tools are not affected.
+
 ## tag_fact
 
 Add, remove or replace the user tags of a fact. Tags are the one label the user controls; the automatic

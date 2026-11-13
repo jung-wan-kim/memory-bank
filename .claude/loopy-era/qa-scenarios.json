@@ -9,17 +9,18 @@
   "blocker_count": 0,
   "blockers": [],
   "totals": {
-    "tc": 25,
+    "tc": 32,
     "e2e": 1,
-    "neg": 3,
+    "neg": 7,
     "h": 8,
-    "a": 6
+    "a": 6,
+    "o": 2
   },
   "e2e": {
     "required": true,
     "targets": [
-      "test environment (temp plugin root)",
-      "installed plugin on this machine (post-release)"
+      "test environment (temp plugin root) — TC-E2E-001",
+      "installed plugin on this machine (post-release) — level 4, O-001"
     ],
     "screenshot_compare": {
       "not_applicable": true,
@@ -44,7 +45,8 @@
       "grade": "CRITICAL",
       "class": "SCOPE",
       "commands": [
-        "npx vitest run test/session-context.test.ts test/shared-server-hello.test.ts -t \"cwd\""
+        "npx vitest run test/session-context.test.ts",
+        "npx vitest run test/shared-server-scope.test.ts -t \"TC-SCOPE-002\""
       ]
     },
     {
@@ -68,13 +70,33 @@
       ]
     },
     {
+      "id": "TC-SCOPE-005",
+      "title": "서버는 자기 프로세스의 기본값을 세션에 빌려주지 않는다",
+      "level": 1,
+      "grade": "CRITICAL",
+      "class": "SCOPE",
+      "commands": [
+        "npx vitest run test/server-scope-guard.test.ts -t \"TC-SCOPE-005\""
+      ]
+    },
+    {
+      "id": "TC-SCOPE-006",
+      "title": "한 서버를 쓰는 세션들이 각자의 LLM 설정·로캘·경로 기준으로 답을 받는다",
+      "level": 1,
+      "grade": "CRITICAL",
+      "class": "SCOPE",
+      "commands": [
+        "npx vitest run test/shared-server-session-env.test.ts"
+      ]
+    },
+    {
       "id": "TC-ENV-001",
       "title": "서버가 읽는 환경변수 이름은 전부 허용 목록에 있다",
       "level": 1,
       "grade": "CRITICAL",
       "class": "ENV",
       "commands": [
-        "npx vitest run test/server-scope-guard.test.ts -t \"environment\""
+        "npx vitest run test/server-scope-guard.test.ts -t \"TC-ENV-001\""
       ]
     },
     {
@@ -94,7 +116,18 @@
       "grade": "HIGH",
       "class": "ENV",
       "commands": [
-        "npx vitest run test/shared-identity.test.ts -t \"mode\""
+        "npx vitest run test/shared-identity.test.ts -t \"sharedMode\""
+      ]
+    },
+    {
+      "id": "TC-ENV-004",
+      "title": "세션의 LLM 설정과 로캘은 접속과 함께 간다",
+      "level": 1,
+      "grade": "CRITICAL",
+      "class": "ENV",
+      "commands": [
+        "npx vitest run test/llm-child-env.test.ts",
+        "npx vitest run test/shared-server-e2e.test.ts -t \"session settings\""
       ]
     },
     {
@@ -145,6 +178,7 @@
       "grade": "MEDIUM",
       "class": "SRV",
       "commands": [
+        "npx vitest run test/shared-server-hello.test.ts -t \"TC-SRV-005\"",
         "npx vitest run test/shared-server-update.test.ts -t \"retire\""
       ]
     },
@@ -175,7 +209,8 @@
       "grade": "HIGH",
       "class": "RELAY",
       "commands": [
-        "npx vitest run test/shared-server-e2e.test.ts -t \"unresponsive\""
+        "npx vitest run test/shared-server-e2e.test.ts -t \"unresponsive\"",
+        "npx vitest run test/shared-server-e2e.test.ts -t \"watchdog\""
       ]
     },
     {
@@ -226,7 +261,7 @@
       "grade": "CRITICAL",
       "class": "NEG",
       "commands": [
-        "npx vitest run test/shared-server-e2e.test.ts -t \"cannot start\""
+        "npx vitest run test/shared-server-update.test.ts -t \"cannot start\""
       ]
     },
     {
@@ -250,15 +285,54 @@
       ]
     },
     {
+      "id": "TC-NEG-004",
+      "title": "공용 서버가 아닌 것이 소켓 이름으로 답해도 중계가 폭주하지 않는다",
+      "level": 1,
+      "grade": "HIGH",
+      "class": "NEG",
+      "commands": [
+        "npx vitest run test/shared-server-e2e.test.ts -t \"wrong listener\""
+      ]
+    },
+    {
+      "id": "TC-NEG-005",
+      "title": "뜨자마자 끝나는 서버를 쉬지 않고 다시 띄우지 않는다",
+      "level": 1,
+      "grade": "HIGH",
+      "class": "NEG",
+      "commands": [
+        "npx vitest run test/shared-server-update.test.ts -t \"crash loop\""
+      ]
+    },
+    {
+      "id": "TC-NEG-006",
+      "title": "주인 없는 기동 잠금이 남아도 다음 시작이 늦지 않고, 떠 있는 서버가 치운다",
+      "level": 1,
+      "grade": "MEDIUM",
+      "class": "NEG",
+      "commands": [
+        "npx vitest run test/shared-server-update.test.ts -t \"start lock\""
+      ]
+    },
+    {
+      "id": "TC-NEG-007",
+      "title": "설치가 깨졌을 때 말없이 세션마다 서버를 띄우지 않는다",
+      "level": 1,
+      "grade": "CRITICAL",
+      "class": "NEG",
+      "commands": [
+        "npx vitest run test/shared-server-update.test.ts -t \"incomplete install\""
+      ]
+    },
+    {
       "id": "TC-BUILD-001",
       "title": "빌드·전체 테스트 통과, 남는 프로세스 없음",
       "level": 1,
       "grade": "CRITICAL",
       "class": "BUILD",
       "commands": [
-        "npm run build",
-        "npm test",
-        "npm run build && npm test"
+        "npm run build && npm test",
+        "ps"
       ]
     },
     {
@@ -268,8 +342,7 @@
       "grade": "HIGH",
       "class": "REL",
       "commands": [
-        "npx vitest run test/version-consistency.test.ts test/project-profile-tools.test.ts test/mcp-tool-names.test.ts",
-        "gh release view v1.9.0"
+        "npx vitest run test/version-consistency.test.ts test/project-profile-tools.test.ts test/mcp-tool-names.test.ts"
       ]
     },
     {
@@ -392,6 +465,22 @@
       "level": 3,
       "grade": "MEDIUM",
       "class": "adversarial",
+      "commands": []
+    },
+    {
+      "id": "O-001",
+      "title": "설치본 — 서버 수, 메모리, 실제 세션의 범위",
+      "level": 4,
+      "grade": "CRITICAL",
+      "class": "operational",
+      "commands": []
+    },
+    {
+      "id": "O-002",
+      "title": "릴리스 표면이 한 버전을 가리키는가",
+      "level": 4,
+      "grade": "HIGH",
+      "class": "operational",
       "commands": []
     }
   ]

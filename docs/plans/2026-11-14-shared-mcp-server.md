@@ -76,14 +76,14 @@
   - evidence: `shared-e2e.log`
 - AC-014: 빌드와 기존 테스트 전건이 통과하고, 테스트가 끝난 뒤 이 저장소 경로의 서버·중계 프로세스가 남지 않는다.
   - verify: `npm run build` → exit 0, `npm test` → exit 0 (실패 0), `ps` 조회 0건
-  - evidence: `.qa-artifacts/v1.9.0/level1/build.log`, `unit.log`, `leftover.txt`
+  - evidence: `.qa-artifacts/v1.9.0/level1/build.log`, `unit.log`, `leftover.json`
 - AC-015: 버전 표기 3곳과 CHANGELOG 가 1.9.0 으로 일치하고, 문서가 새 구조와 기본값 문구를 반영한다.
   - verify: `npx vitest run test/version-consistency.test.ts test/project-profile-tools.test.ts` → exit 0
   - evidence: `docs.log`
 - AC-016 (운영): 이 Mac 에 설치한 뒤 — 공용 서버 수 = 신원 수, 로컬 memory-bank 프로세스 메모리 합계가 설치 전(3.7GB)보다 줄고, 서로 다른 프로젝트의 실제 세션 2개에서 `search_facts` 기본 호출의 `Project` 표기가 각자 폴더다.
   - verify: `python3 <측정 스크립트>` 출력 JSON 의 `shared_servers`, `mem_total_mb`, `scope_checks[]`
   - evidence: `.qa-artifacts/v1.9.0/level4/live-measure.json`
-- AC-017: 세션의 것은 접속이 선언한다 — 한 서버를 쓰는 두 세션의 `ask_avatar` LLM 호출은 각자 선언한 LLM 설정으로 나가고(동시 30회, 상대 세션 값 0건), `read`·`list_tags` 의 출력은 각자 로캘을 따르며, `read` 의 상대 경로는 호출한 세션의 작업 폴더 기준이다(작업 폴더를 모르면 오류). 서버 설정·운영 변수·세션 고유 이름을 선언한 접속과 런타임이 지원하지 않는 로캘은 거부된다. 서버가 읽는 모듈에 프로세스 기본 로캘 표기 · 등록되지 않은 한 인자 `path.resolve` · 등록되지 않은 프로세스 생성이 0건이다.
+- AC-017: 세션의 것은 접속이 선언한다 — 한 서버를 쓰는 두 세션의 `ask_avatar` LLM 호출은 각자 선언한 LLM 설정으로 나가고(동시 30회, 상대 세션 값 0건), `read`·`list_tags` 의 출력은 각자 로캘을 따르며, `read` 의 상대 경로는 호출한 세션의 작업 폴더 기준이다(작업 폴더를 모르면 오류). 서버 설정·운영 변수·세션 고유 이름을 선언한 접속과 런타임이 지원하지 않는 로캘은 거부된다. LLM 설정 가운데 넘기지 못한 것이 있는 세션은 그 이름을 선언하고, 그 세션의 `ask_avatar` 는 넘어온 나머지만으로 LLM 을 부르지 않고 그 이름을 적은 오류로 답한다(LLM 호출 0건, 다른 도구와 이웃 세션은 그대로). 서버가 읽는 모듈에 프로세스 기본 로캘 표기 · 등록되지 않은 한 인자 `path.resolve` · 등록되지 않은 프로세스 생성이 0건이다.
   - verify: `npx vitest run test/shared-server-session-env.test.ts test/llm-child-env.test.ts test/shared-server-hello.test.ts` 와 `npx vitest run test/server-scope-guard.test.ts -t "TC-SCOPE-005"` 와 `npx vitest run test/shared-server-e2e.test.ts -t "session settings"` → 전부 exit 0
   - evidence: `session-env.log`, `scope-guard.log`, `shared-e2e.log`
 - AC-018: 장애가 되풀이될 때 중계가 폭주하지 않는다 — 뜨자마자 끝나는 서버는 둘째 급사부터 2초·4초 이상 간격을 두고 다시 띄우고, 공용 서버가 아닌 답을 하는 리스너에는 막 시작한 중계가 한 번만 접속하고 0이 아닌 코드로 끝나며, 서버가 없어 기다리는 동안 온 호출은 1.5초 안에 오류로 답한다. 주인 없는 기동 잠금은 떠 있는 서버가 자기 점검 주기 안에 지우고, 살아 있는 프로세스가 쥔 잠금은 지우지 않는다.
@@ -161,7 +161,11 @@ test/
 
 ```ts
 // session-context.ts
-export interface SessionContext { readonly cwd: string | null }   // null = 세션이 자기 작업 폴더를 읽지 못했다
+export interface SessionContext { readonly cwd: string | null;                 // null = 세션이 자기 작업 폴더를 읽지 못했다
+  readonly childEnv?: Readonly<Record<string, string>> | null;                  // 그 세션의 LLM 설정(없음/null = 프로세스가 곧 세션)
+  readonly childEnvMissing?: readonly string[];                                 // 넘기지 못한 LLM 설정의 이름 — 있으면 LLM 호출을 하지 않는다
+  readonly locale?: string }                                                    // 출력 로캘(BCP 47)
+export function sessionLlmEnv(ctx: SessionContext): Readonly<Record<string, string>> | null   // childEnv 를 읽는 유일한 길. childEnvMissing 이 있으면 throw
 export function validSessionCwd(v: unknown): v is string   // 문자열 · path.isAbsolute · 1..4096바이트 · NUL 없음
 export function sessionProject(ctx: SessionContext, explicit: unknown, argument = 'project'): string   // explicit 이 비어 있지 않은 문자열이면 그것, 아니면 ctx.cwd, null 이면 throw(메시지에 argument 이름)
 
@@ -169,7 +173,9 @@ export function sessionProject(ctx: SessionContext, explicit: unknown, argument 
 export function createMemoryBankServer(ctx: SessionContext): Server   // cwd 가 null 도 유효한 문자열도 아니면 throw
 
 // shared-identity.ts  (Node 내장 + version-guard.ts 만 import)
-export function serverEnvKind(name: string): 'identity' | 'passthrough' | null   // null = 서버에 넘기지 않는다
+export function serverEnvKind(name: string): 'identity' | 'passthrough' | 'child' | null   // child = 접속이 선언하는 세션의 LLM 설정 · null = 넘기지 않는다
+export function childEnvFor(env: NodeJS.ProcessEnv, cwd: string | null): { env: Record<string, string>; dropped: string[] }   // dropped = 한도 초과·풀 수 없는 상대 경로
+export function validChildEnv(v: unknown): v is Record<string, string> · validChildEnvMissing(v: unknown, env: Record<string, string>): v is string[]
 export function serverEnvFor(env: NodeJS.ProcessEnv, cwd: string | null): Record<string, string> | null   // 신원에 드는 환경. null = 상대 경로 설정인데 cwd 를 모른다
 export function spawnEnvFor(env: NodeJS.ProcessEnv, serverEnv: Record<string, string>): Record<string, string>   // 서버 환경 + 운영 변수
 export function distFingerprint(distDir: string): string
@@ -179,13 +185,15 @@ export function sharedPidPath(socketPath: string): string · sharedLockPath(sock
 
 // shared-mode.ts  (세션 쪽 — 서버가 읽는 모듈 밖)
 export type SharedMode = { kind: 'shared'; socketPath: string; indexDir: string; identity: string; version: string; serverEnv: Record<string, string>; serverEntry: string }
-                       | { kind: 'session-local'; reason: 'switch-off' | 'switch-off-file' | 'windows' | 'socket-path-too-long' | 'no-version' | 'not-built' | 'relative-path' }
+                       | { kind: 'session-local'; reason: 'switch-off' | 'switch-off-file' | 'windows' | 'source-run' | 'relative-path' | 'socket-path-too-long' }
+                       | { kind: 'broken'; reason: 'server-file-missing' | 'no-version' }   // 설치 결함 — 세션별 방식으로 넘기지 않고 exit 1
 export function sharedMode(o: { entryUrl: string; env: NodeJS.ProcessEnv; cwd: string | null; version?: string | null; platform?: NodeJS.Platform }): SharedMode
 
 // 접속 첫 줄(중계 → 서버)과 답(서버 → 중계). 이후는 MCP JSON-RPC 줄 + 제어 줄({mb_relay:1, ping|pong:n}).
-type RelayHello = { mb_relay: 1; identity: string; version: string; cwd: string | null; pid: number }
+type RelayHello = { mb_relay: 1; identity: string; version: string; cwd: string | null;
+                    env: Record<string, string>; envMissing: string[]; locale: string | null; pid: number }
 type HelloReply = { mb_relay: 1; ok: true; pid: number; version: string }
-                | { mb_relay: 1; ok: false; error: 'bad-hello' | 'bad-cwd' | 'identity-mismatch' }
+                | { mb_relay: 1; ok: false; error: 'bad-hello' | 'bad-cwd' | 'bad-env' | 'identity-mismatch' }
 
 // shared-protocol.ts
 export const EXIT_NAME_TAKEN = 76, EXIT_RETRY = 75, EXIT_START_FAILED = 70   // 0 은 계약에 없다 — 답하기 전의 0 은 기동 실패
@@ -198,7 +206,7 @@ export function startSharedServer(o: { identity: string; version: string; socket
   onStop: (o: { reason: string; listenerClosed: boolean }) => void | Promise<void>; log?: (line: string) => void }): Promise<StartResult>
 
 // relay.ts
-export function runRelay(mode: Extract<SharedMode, { kind: 'shared' }>, cwd: string | null): void
+export function runRelay(mode: Extract<SharedMode, { kind: 'shared' }>, session: { cwd: string | null; env: Record<string, string>; envMissing: string[]; locale: string | null }): void
 ```
 
 ### 규칙
@@ -228,7 +236,7 @@ export function runRelay(mode: Extract<SharedMode, { kind: 'shared' }>, cwd: str
    - 접속한 지 `MEMORY_BANK_RELAY_STABLE_MS`(기본 10초) 안에 끊기는 일이 연달아 일어나면(뜨자마자 끝나는 서버): 첫 번째는 곧바로 다시 붙고, 두 번째부터 2→4→8→16→30초를 기다린다.
    - hello 답이 `MEMORY_BANK_RELAY_HELLO_MS`(기본 10초) 안에 없으면 응답 없는 서버로 본다: pid 파일의 pid 가 `shared-server.js` 와 `--mb-shared=<신원8>` 을 명령줄에 가진 프로세스일 때만 SIGTERM → 2초 뒤 SIGKILL, 그 뒤 새로 띄운다. 요청이 30초 넘게 답이 없으면 제어 줄 ping 을 보내고, 30초 안에 pong 이 없으면 같은 처리를 한다(바쁜 서버는 pong 으로 구분된다).
    - 접속이 끊기면: 답이 안 나간 요청은 `-32001` 로 끝내고(단 `initialize` 는 붙들었다가 새 접속에 다시 보낸다), 다시 붙어 기록한 `initialize`·`initialized` 를 재생하고(이미 답한 `initialize` 의 답은 삼킨다) 이어 간다.
-   - hello 가 거절되면(`bad-cwd`·`identity-mismatch`·`bad-hello` — 정상 중계에서는 나올 수 없는 값) stderr 에 이유를 적고 exit 1. 다시 시도해도 같은 답이므로 반복하지 않는다.
+   - hello 가 거절되면(`bad-cwd`·`bad-env`·`identity-mismatch`·`bad-hello` — 정상 중계에서는 나올 수 없는 값) stderr 에 이유를 적고 exit 1. 다시 시도해도 같은 답이므로 반복하지 않는다.
    - 끝나는 경우: stdin 종료·SIGTERM·SIGINT(exit 0), 위의 "막 시작 + 기동 실패"(exit 1), hello 거절(exit 1). 중계는 소켓 파일을 지우지 않는다.
 8. **세션별 서버 방식** — `dist/mcp-server.js` 가 자기 파일 옆의 `stdio-server.js` 를 실행 시점 경로로 동적 import(번들에 넣지 않는다). stderr 에 `shared server off: <이유> — this session runs its own server` 한 줄. `tsx` 로 `src/mcp-server.ts` 를 돌리면(확장자 `.ts`) 이유는 `source-run`. 사유는 여섯 가지뿐이다(`switch-off` · `switch-off-file` · `windows` · `source-run` · `relative-path` · `socket-path-too-long`). 컴파일된 진입 파일 옆에 `shared-server.js` 가 없거나 버전을 읽을 수 없으면 사유가 아니라 설치 결함(`broken`)이다 — 진입점이 무엇이 없는지 적고 exit 1(끄기 스위치·끄기 파일이 있으면 그것이 먼저다).
    끄기: `MEMORY_BANK_SHARED_SERVER=0` 또는 파일 `<색인 폴더>/shared-server.off`(환경을 바꾸기 어려운 떠 있는 세션용 — 실행기가 자식을 다시 띄울 때부터 적용).
@@ -236,7 +244,7 @@ export function runRelay(mode: Extract<SharedMode, { kind: 'shared' }>, cwd: str
 10. **세션의 것은 접속이 선언한다** — hello 는 작업 폴더에 더해 `env`(그 세션의 LLM 설정: 규칙 2 의 '세션의 것' 이름만, `childEnvFor()` 가 만든다)와 `locale`(세션 프로세스의 기본 로캘, 모르면 null)을 싣는다. 서버는 `validChildEnv`·`validSessionLocale` 로 검사해(다른 종류의 이름·문자열 아닌 값·한도 초과·지원하지 않는 로캘 → `bad-env` 거절) `SessionContext { cwd, childEnv, locale }` 로 그 접속의 MCP 서버 인스턴스에만 준다.
     - LLM 호출(`ask_avatar` → `callHaiku`)은 `childEnv` 를 서버 프로세스 환경 위에 얹어 자식 프로세스의 환경으로 넘긴다. 예비 경로(API 키로 직접 호출)의 접속 주소·토큰·추가 헤더도 같은 환경에서 읽는다. `childEnv` 가 없으면(세션별 방식 — 프로세스가 곧 세션) 지금까지처럼 프로세스 환경을 물려준다.
     - 날짜·숫자 표기와 이름 정렬은 `ctx.locale` 을 인자로 받는다. `read` 의 상대 경로는 `ctx.cwd` 기준으로 푼다(null 이면 오류).
-    - 한도: 이름 256개 · 값 하나 8KB · 전체 32KB(JSON 직렬화 기준). 실제 세션 실측 최대치(이름 25개 · 전체 1,273바이트 · 값 하나 185바이트)의 25배 이상이고 hello 한 줄 상한 64KB 안에 든다. 한도를 넘거나 상대 경로인데 작업 폴더를 모르는 값은 중계가 빼고 stderr 에 이름을 적는다.
+    - 한도: 이름 256개 · 값 하나 8KB · 전체 32KB(JSON 직렬화 기준). 실제 세션 실측 최대치(이름 25~26개 · 전체 1.3KB · 값 하나 185바이트 — `.qa-artifacts/v1.9.0/level3/census/`)의 25배 이상이고 hello 한 줄 상한 64KB 안에 든다. 한도를 넘거나 상대 경로인데 작업 폴더를 모르는 값은 `env` 에 싣지 못한다 — 중계는 그 이름을 stderr 에 적고 hello 의 `envMissing` 으로 선언하며, 서버는 그 접속의 LLM 호출을 하지 않는다(`sessionLlmEnv()` 가 이름을 적은 오류를 던진다). 넘어온 나머지만으로 LLM 을 부르는 경로는 없다.
     - 가드(`test/server-scope-guard.test.ts` TC-SCOPE-005): 서버가 읽는 모듈에서 프로세스를 띄우는 곳은 `deps-heal.ts`(npm)와 `llm.ts` 뿐이고, 인자 없는 `toLocale*()` · 인자 하나인 `localeCompare` · 인자 없는 `new Intl.*()` 가 0건이며, 인자 하나인 `path.resolve` 는 등록된 목록뿐이다.
 
 ### 냄새 점검 (파울러 24종 — 확정 전)
@@ -244,7 +252,7 @@ export function runRelay(mode: Extract<SharedMode, { kind: 'shared' }>, cwd: str
 - 긴 함수: `mcp-server.ts` 의 처리기(430줄)를 옮기는 단계는 **옮기기만** 한다(함수 추출은 이번 범위 밖 — 기존 냄새, 보고만).
 - 전역 데이터: 모듈 최상위 `server` 를 없애고 팩토리가 접속별로 만든다(냄새 제거).
 - 뒤엉킨 변경: 소켓 생사 판정을 `unix-socket.ts` 로 모아 주입 데몬과 공용 서버가 같은 구현을 쓴다(중복 방지). 중계는 `wrapper-core.ts` 의 `LineSplitter`·`SupervisorState` 를 다시 쓴다(핸드셰이크 기록을 또 만들지 않는다).
-- 추측성 일반화 회피: HTTP 접속구 · 접속별 LLM 환경 전달 · 실행기 재작성 · 빌드 단계의 지문 파일은 넣지 않는다.
+- 추측성 일반화 회피: HTTP 접속구 · 실행기 재작성 · 빌드 단계의 지문 파일은 넣지 않는다. (처음 판은 접속별 LLM 환경 전달도 여기 두었다 — 레벨3 실측에서 필요가 확인돼 규칙 10 으로 넣었다. Deviations 참조)
 
 ### 단계별 두 모자
 
@@ -287,7 +295,7 @@ export function runRelay(mode: Extract<SharedMode, { kind: 'shared' }>, cwd: str
 - [ ] 클라우드 MCP(`memory-bank-cloud` 의 stdio 서버 13개, 1.6GB)에 같은 구조 적용 — 졸업 트리거: 사용자가 클라우드 쪽도 요청.
 - [ ] Codex 세션의 실제 작업 폴더 — Codex 필터가 `cwd` 를 플러그인 폴더로 고정해 지금도 프로젝트 사실이 기본 검색에 안 걸린다. 졸업 트리거: Codex 가 MCP 서버에 작업 폴더를 넘기는 수단 확인.
 - [ ] 저장 쪽 — 프로젝트가 아닌 폴더(다른 플러그인 폴더 5,119건 · 홈 344건 · 상위 폴더 370건)에 묶인 사실의 재분류. 졸업 트리거: 사용자 결정(운영 DB 대량 변경).
-- [ ] 주입 소켓은 (색인 폴더, 버전)당 1개인데 서버는 신원당 1개 — DB 경로를 환경으로 바꾼 신원의 서버가 주입 소켓을 쥐면 다른 세션의 훅이 그 DB 로 계산된다. 1.8.0 에도 있는 동작이다(서버 N개 중 하나가 쥔다). 졸업 트리거: 주입 요청에 신원을 실을 수 있게 훅 클라이언트를 바꿀 때(`SRC_HASH` 변경 동반).
+- [ ] 주입 소켓은 (색인 폴더, 버전)당 1개인데 서버는 신원당 1개 — DB 경로를 환경으로 바꾼 신원의 서버가 주입 소켓을 쥐면 다른 세션의 훅이 그 DB 로 계산된다. 1.8.0 에도 있는 동작이다(서버 N개 중 하나가 쥔다). 독립 반박이 두 번 '높음'으로 지적했고 고치지 않았다: 실제 세션 집계에서 서버를 가른 값은 `MEMORY_BANK_AGENT_SOURCES` 하나이고, 그 값을 읽는 코드는 주입·서버 경로에서 호출되지 않는다(`.qa-artifacts/v1.9.0/level3/census/agent-sources-reach.json`) — 실데이터에서 판정이 달라지는 경우가 없다. 대신 이 상태가 되면 각 서버가 로그에 한 줄 적는다(`prompt injection: …`). 졸업 트리거: 세션마다 DB 경로·임베딩 모델·주입 스위치를 다르게 주는 쓰임이 생길 때 — 주입 요청에 신원을 실을 수 있게 훅 클라이언트를 바꾼다(`SRC_HASH` 변경 동반).
 - [ ] 세션당 프로세스 2개(실행기 + 중계) → 1개 — 실행기가 중계를 겸하면 버전이 바뀐 뒤에도 옛 중계 코드가 남는다. 졸업 트리거: 실행기가 자기 자신을 새 코드로 다시 실행하는 방법을 검증한 뒤.
 - [x] 신원이 갈리는 설정 차이를 줄이기 — LLM 환경을 접속별로 넘기면 Claude Code 세션과 Codex 세션이 한 서버를 쓸 수 있다. 졸업: 레벨3 실측에서 서버 수가 실제로 문제였다(세션 20개 → 서버 7개). 규칙 10 으로 구현했다(같은 20개 → 2개).
 - [ ] 서버 설정 중 서버 코드가 실제로는 쓰지 않는 값(`MEMORY_BANK_AGENT_SOURCES` — 동기화 워커만 쓴다)을 신원에서 빼기 — 지금은 `MEMORY_BANK_` 접두 전체를 서버 설정으로 본다(안전한 쪽). 졸업 트리거: 이런 값 때문에 서버가 갈리는 세션이 늘 때(지금 실측 20개 중 1개).
@@ -302,7 +310,8 @@ export function runRelay(mode: Extract<SharedMode, { kind: 'shared' }>, cwd: str
 - (레벨3 독립 반박 반영) ① 설치 결함(`shared-server.js` 없음 · 버전 불명)을 세션별 방식 사유(`not-built`·`no-version`)로 넘기던 것을 실패(`broken`, exit 1)로 바꿨다 — AC-012 와 어긋나는 조용한 전환이었다. 소스 실행은 `source-run` 으로 이름을 바꿔 남겼다(AC-011·AC-012 문구). ② `read` 의 상대 경로가 서버 프로세스의 작업 폴더(색인 폴더) 기준으로 풀리던 것을 호출한 세션의 작업 폴더 기준으로 바꿨다. ③ 시간·크기 기본값에 근거를 주석으로 적었다(실측 인용, 판단값은 판단값이라고 명시).
 - (레벨3 적대 프로브 반영) ① A-003: 공용 서버가 아닌 답을 하는 리스너 앞에서 중계가 25초 동안 481번 다시 접속하며 오류도 종료도 내지 않았다 → `not-ours` 판정과 재확인 상한 5회. ② A-006: 뜨자마자 죽는 서버를 60초에 20번 다시 띄웠다 → 둘째 급사부터 2→4→…30초 대기(`MEMORY_BANK_RELAY_STABLE_MS`). ③ 재시도 대기 중에 온 호출이 다음 시도까지(최대 30초) 붙들려 있었다 → 그 자리에서 오류로 답한다. ④ 주인 없는 기동 잠금은 다음 중계가 넘겨받고, 떠 있는 서버도 시작할 때와 자기 점검 때 지운다(AC-018 추가).
 - (같은 수정에서 찾은 것) LLM 예비 경로의 Anthropic 클라이언트가 접속 주소·토큰·추가 헤더를 자기 프로세스 환경에서 읽는다 — 공용 서버에서는 세션의 키가 세션이 정한 주소가 아닌 기본 주소로 나갈 수 있어, 호출의 환경에서 읽어 넘기게 했다(`fallbackClientOptions`). 형식만 맞고 런타임이 지원하지 않는 로캘 태그는 조용히 서버 기본 로캘로 찍히므로 거절한다.
-- (변이 실행) 위 수정을 지키는 테스트가 실제로 결함을 잡는지 14가지 변이로 확인했다(잡음 14 · 놓침 0) — `.qa-artifacts/v1.9.0/level3/mutation/summary.json`.
+- (변이 실행) 위 수정을 지키는 테스트가 실제로 결함을 잡는지 변이로 확인한다 — 변이별 기록(실행한 커밋 · 실패한 테스트 · 원본 복원 확인)은 `.qa-artifacts/v1.9.0/level3/mutation/summary.json`, 로그는 같은 폴더. 요약은 일부만 다시 돌려도 나머지 기록이 남도록 변이 id 별로 갱신한다(처음에는 덮어써서 한 건만 남았다 — 독립 반박 2라운드 지적).
+- (독립 반박 2라운드 반영) 판정은 높음 1 · 중간 6 이었고 중간 6 가운데 5가 1라운드 수정이 남긴 것이었다. 줄을 하나씩 고치는 대신 원인 쪽을 바꿨다. ① 세션의 LLM 설정 중 넘기지 못한 것을 빼고 계속하던 것(승인 없는 대체 경로) → 접속이 그 이름을 선언하고 그 세션의 LLM 호출은 오류로 답한다(`envMissing` · `sessionLlmEnv`, AC-017 문구). ② 레벨1 통과 수가 설치·릴리스 뒤에만 실행되는 다리를 품던 것 → QA 계획서에서 그 확인을 레벨4 `O-001`·`O-002` 로 나눴다. ③ 근거 산출물이 없던 수치(옛 규칙 7갈래 · 세션 설정 크기) → 원본 실행 출력과 지금 시점 재집계를 `level3/census/` 에 남겼다. ④ 이 문서의 타입·규칙 절을 코드에 맞췄다. 높음 1(주입 소켓)은 Open Questions 의 사유로 남긴다.
 - (수정분 구조 점검) 새 냄새 1 — Long Function: `runRelay` 가 230줄에서 270줄로 늘었다(급사 대기·틀린 리스너 판정·대기 중 호출 응답이 같은 접속 상태기계에 들어갔다). 고치지 않았다 — 사유와 졸업 조건은 Open Questions 의 기존 항목과 같다. 새 로직 중 상태가 없는 부분은 함수로 뺐다(`retryLater`, `startLockHolder`·`removeOrphanStartLock`, `childEnvFor`·`validChildEnv`, `fallbackClientOptions`).
 
 - (계획 반박 반영) 실행기가 중계를 겸하는 안을 뺐다 — 중계 코드가 세션 끝까지 옛 코드로 남아 다음 버전의 신원·소켓 이름을 옛 규칙으로 계산한다. 실행기는 고치지 않는다.
