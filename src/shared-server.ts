@@ -15,7 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getIndexDir } from './paths.js';
 import { distFingerprint, serverEnvFor, sharedServerArg, sharedServerIdentity, sharedSocketPathIn } from './shared-identity.js';
-import { EXIT_NAME_TAKEN, EXIT_RETRY, EXIT_START_FAILED } from './shared-protocol.js';
+import { EXIT_NAME_TAKEN, EXIT_RETRY, EXIT_START_FAILED, positiveMs } from './shared-protocol.js';
 import { probeSocket } from './unix-socket.js';
 import { ownPackageVersion } from './version-guard.js';
 
@@ -25,11 +25,6 @@ process.umask(0o077);
 const log = (line: string): void => {
   console.error(`${new Date().toISOString()} [shared-server ${process.pid}] ${line}`);
 };
-
-function positiveMs(raw: string | undefined, fallback: number): number {
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
 
 function versionOnDisk(packageJson: string): string | null {
   try {

@@ -11,3 +11,8 @@ export const CONTROL_PREFIX = '{"mb_relay":';
 export const EXIT_START_FAILED = 70;
 export const EXIT_RETRY = 75;
 export const EXIT_NAME_TAKEN = 76;
+/** A timing both sides read from the environment: a positive number of milliseconds, else the default. */
+export function positiveMs(raw, fallback) {
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+}

@@ -2,8 +2,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  REPO, WRAPPER, StdioSession, cleanup, expectedServer, isAlive, makePluginRoot, responsesOf, serverLog, serverPids,
-  setPackageVersion, sharedEnv, shortTmpDir, sleep, waitFor,
+  REPO, WRAPPER, createRig, isAlive, makePluginRoot, responsesOf, serverLog, serverPids,
+  setPackageVersion, sharedEnv, sleep, waitFor,
 } from './helpers/shared-harness.js';
 
 /**
@@ -17,38 +17,16 @@ import {
 
 const WRAPPER_1_8_0 = path.join(REPO, 'test', 'fixtures', 'wrapper-1.8.0.js');
 
-const sessions: StdioSession[] = [];
-const markers = new Set<string>();
-const dirs: string[] = [];
-
-function tmp(prefix?: string): string {
-  const dir = shortTmpDir(prefix);
-  dirs.push(dir);
-  return dir;
-}
+const rig = createRig();
+const { tmp, session, watch } = rig;
 
 function pluginRoot(wrapper?: string): ReturnType<typeof makePluginRoot> {
   const root = makePluginRoot({ wrapper });
-  dirs.push(root.root);
+  rig.dirs.push(root.root);
   return root;
 }
 
-function session(entry: string, env: Record<string, string>, cwd: string): StdioSession {
-  const s = new StdioSession(entry, { cwd, env });
-  sessions.push(s);
-  return s;
-}
-
-function watch(env: Record<string, string>, entry: string, version?: string): ReturnType<typeof expectedServer> {
-  const server = expectedServer(env, entry, version);
-  markers.add(server.marker);
-  return server;
-}
-
-afterEach(async () => {
-  await cleanup({ sessions: sessions.splice(0), markers: [...markers], dirs: dirs.splice(0) });
-  markers.clear();
-});
+afterEach(() => rig.cleanup());
 
 describe('TC-UPD-001 — a session that still runs the 1.8.0 wrapper', () => {
   it('this release ships the wrapper unchanged (the fixture is the file 1.8.0 sessions have in memory)', () => {

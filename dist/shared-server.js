@@ -15,7 +15,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getIndexDir } from './paths.js';
 import { distFingerprint, serverEnvFor, sharedServerArg, sharedServerIdentity, sharedSocketPathIn } from './shared-identity.js';
-import { EXIT_NAME_TAKEN, EXIT_RETRY, EXIT_START_FAILED } from './shared-protocol.js';
+import { EXIT_NAME_TAKEN, EXIT_RETRY, EXIT_START_FAILED, positiveMs } from './shared-protocol.js';
 import { probeSocket } from './unix-socket.js';
 import { ownPackageVersion } from './version-guard.js';
 // Everything this process creates — socket, pid file, database files — is for its owner only.
@@ -23,10 +23,6 @@ process.umask(0o077);
 const log = (line) => {
     console.error(`${new Date().toISOString()} [shared-server ${process.pid}] ${line}`);
 };
-function positiveMs(raw, fallback) {
-    const n = Number(raw);
-    return Number.isFinite(n) && n > 0 ? n : fallback;
-}
 function versionOnDisk(packageJson) {
     try {
         const v = JSON.parse(fs.readFileSync(packageJson, 'utf8')).version;

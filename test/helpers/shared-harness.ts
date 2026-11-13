@@ -318,6 +318,49 @@ export function responsesOf(session: StdioSession): any[] {
  * markers are killed, the directories are removed. Returns the pids that had to be killed (a test may assert
  * it is empty when the code under test was expected to clean up on its own).
  */
+/**
+ * What one test file starts, so afterEach can end all of it: sessions, the shared servers they may have
+ * started (found by marker), and temp dirs.
+ */
+export function createRig(): {
+  sessions: StdioSession[];
+  dirs: string[];
+  /** A fresh short temp dir, removed at cleanup. */
+  tmp(prefix?: string): string;
+  /** Start a session (a relay, or a wrapper in front of one) that cleanup ends. */
+  session(entry: string, env: Record<string, string>, cwd: string): StdioSession;
+  /** The shared server `env` may use — whatever answers to its marker is ended at cleanup. */
+  watch(env: Record<string, string>, entry?: string, version?: string): ReturnType<typeof expectedServer>;
+  cleanup(): Promise<void>;
+} {
+  const sessions: StdioSession[] = [];
+  const markers = new Set<string>();
+  const dirs: string[] = [];
+  return {
+    sessions,
+    dirs,
+    tmp(prefix) {
+      const dir = shortTmpDir(prefix);
+      dirs.push(dir);
+      return dir;
+    },
+    session(entry, env, cwd) {
+      const s = new StdioSession(entry, { cwd, env });
+      sessions.push(s);
+      return s;
+    },
+    watch(env, entry, version) {
+      const server = expectedServer(env, entry, version);
+      markers.add(server.marker);
+      return server;
+    },
+    async cleanup() {
+      await cleanup({ sessions: sessions.splice(0), markers: [...markers], dirs: dirs.splice(0) });
+      markers.clear();
+    },
+  };
+}
+
 export async function cleanup(o: { sessions?: StdioSession[]; markers?: string[]; dirs?: string[] }): Promise<void> {
   for (const s of o.sessions ?? []) s.kill();
   const pids = (o.markers ?? []).flatMap((m) => serverPids(m));

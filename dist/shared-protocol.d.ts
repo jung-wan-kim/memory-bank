@@ -1,6 +1,7 @@
 /**
- * What the relay and the shared server say to each other — kept in a module with no imports, so the relay
- * (bundled into dist/mcp-server.js) does not pull the server's dependencies in with it.
+ * What the relay and the shared server say to each other, and the one helper both read their timings with —
+ * kept in a module with no imports, so the relay (bundled into dist/mcp-server.js) does not pull the server's
+ * dependencies in with it.
  *
  * A connection starts with one line each way, then carries MCP (newline-delimited JSON-RPC):
  *
@@ -43,3 +44,5 @@ export declare const CONTROL_PREFIX = "{\"mb_relay\":";
 export declare const EXIT_START_FAILED = 70;
 export declare const EXIT_RETRY = 75;
 export declare const EXIT_NAME_TAKEN = 76;
+/** A timing both sides read from the environment: a positive number of milliseconds, else the default. */
+export declare function positiveMs(raw: string | undefined, fallback: number): number;

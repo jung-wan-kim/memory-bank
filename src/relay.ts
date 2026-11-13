@@ -4,7 +4,7 @@ import path from 'node:path';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { sharedLockPath, sharedPidPath, sharedServerArg, spawnEnvFor } from './shared-identity.js';
 import type { SharedMode } from './shared-mode.js';
-import { CONTROL_PREFIX, EXIT_NAME_TAKEN, EXIT_RETRY, type HelloReply, type RelayHello } from './shared-protocol.js';
+import { CONTROL_PREFIX, EXIT_NAME_TAKEN, EXIT_RETRY, positiveMs, type HelloReply, type RelayHello } from './shared-protocol.js';
 import { probeSocket } from './unix-socket.js';
 import { LineSplitter, SupervisorState, abortedRequestError, isInitializeResponse } from './wrapper-core.js';
 
@@ -30,11 +30,6 @@ import { LineSplitter, SupervisorState, abortedRequestError, isInitializeRespons
  */
 
 type Shared = Extract<SharedMode, { kind: 'shared' }>;
-
-function positiveMs(raw: string | undefined, fallback: number): number {
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
 
 /** Relay timings — every one can be shortened through the environment (tests do). */
 interface Timings {

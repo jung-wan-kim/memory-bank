@@ -3,13 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { sharedLockPath, sharedPidPath, sharedServerArg, spawnEnvFor } from './shared-identity.js';
-import { CONTROL_PREFIX, EXIT_NAME_TAKEN, EXIT_RETRY } from './shared-protocol.js';
+import { CONTROL_PREFIX, EXIT_NAME_TAKEN, EXIT_RETRY, positiveMs } from './shared-protocol.js';
 import { probeSocket } from './unix-socket.js';
 import { LineSplitter, SupervisorState, abortedRequestError, isInitializeResponse } from './wrapper-core.js';
-function positiveMs(raw, fallback) {
-    const n = Number(raw);
-    return Number.isFinite(n) && n > 0 ? n : fallback;
-}
 function timings(env) {
     return {
         // The wrapper counts a child that dies within 10s as a start-up failure; 8s leaves it room to see that.

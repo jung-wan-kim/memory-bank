@@ -174,6 +174,10 @@ var sharedServerArg = (identity) => `--mb-shared=${identity.slice(0, 8)}`;
 var CONTROL_PREFIX = '{"mb_relay":';
 var EXIT_RETRY = 75;
 var EXIT_NAME_TAKEN = 76;
+function positiveMs(raw, fallback) {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
 
 // src/unix-socket.ts
 import net from "node:net";
@@ -291,10 +295,6 @@ function isInitializeResponse(line, initializeLine) {
 }
 
 // src/relay.ts
-function positiveMs(raw, fallback) {
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
 function timings(env) {
   return {
     // The wrapper counts a child that dies within 10s as a start-up failure; 8s leaves it room to see that.
@@ -808,4 +808,4 @@ main().catch((error) => {
   console.error("Server error:", error);
   process.exit(1);
 });
-// memory-bank-bundle-stamp v1 inputs=b951102eaf52bf0f7f3743c74bb23aba991ba3fdf33b384b59d7d3f7c7845d5c body=0a2312cedca1fb9cfa4c425f2e9bc10b9531fcc3e2ba1f98c93756ca1fc9f8d3
+// memory-bank-bundle-stamp v1 inputs=f830a82e5d7d72f207b2034594a44b5bffa35fe04c9fcebb4217a225b646a4a2 body=ccc55064e902635e109167acfe8a611ee170297b0f0424b519912cb7f9c2f98c

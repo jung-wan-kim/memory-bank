@@ -5,7 +5,7 @@ import path from 'node:path';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { sharedPidPath } from '../src/shared-identity.js';
 import {
-  REPO, RELAY_ENTRY, WRAPPER, StdioSession, cleanup, expectedServer, isAlive, killAll, responsesOf, serverPids,
+  REPO, RELAY_ENTRY, WRAPPER, StdioSession, cleanup, createRig, expectedServer, isAlive, killAll, responsesOf, serverPids,
   sharedEnv, shortTmpDir, sleep, waitFor,
 } from './helpers/shared-harness.js';
 
@@ -15,16 +15,11 @@ import {
  * it has a server identity of its own; whatever a test started is ended in afterEach.
  */
 
-const sessions: StdioSession[] = [];
-const markers = new Set<string>();
-const dirs: string[] = [];
+const rig = createRig();
+const { sessions, dirs } = rig;
 const strays: ChildProcess[] = [];
 
-function configDir(): string {
-  const dir = shortTmpDir();
-  dirs.push(dir);
-  return dir;
-}
+const configDir = (): string => rig.tmp();
 
 /** A working directory for a session — a project of its own. */
 function projectDir(name: string): string {
@@ -34,24 +29,14 @@ function projectDir(name: string): string {
   return dir;
 }
 
-function relay(env: Record<string, string>, cwd: string = REPO): StdioSession {
-  const s = new StdioSession(RELAY_ENTRY, { cwd, env });
-  sessions.push(s);
-  return s;
-}
-
-function watch(env: Record<string, string>): ReturnType<typeof expectedServer> {
-  const server = expectedServer(env);
-  markers.add(server.marker);
-  return server;
-}
+const relay = (env: Record<string, string>, cwd: string = REPO): StdioSession => rig.session(RELAY_ENTRY, env, cwd);
+const watch = (env: Record<string, string>): ReturnType<typeof expectedServer> => rig.watch(env);
 
 const projectLine = (text: string): string => text.split('\n').find((l) => l.startsWith('Project: ')) ?? '';
 
 afterEach(async () => {
   for (const c of strays.splice(0)) { try { c.kill('SIGKILL'); } catch { /* gone */ } }
-  await cleanup({ sessions: sessions.splice(0), markers: [...markers], dirs: dirs.splice(0) });
-  markers.clear();
+  await rig.cleanup();
 });
 
 describe('TC-RELAY-001 — sessions with the same settings use one shared server', () => {
