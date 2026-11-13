@@ -96,7 +96,7 @@ Read a conversation, or a line range of it, as Markdown.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `path` | `string` | Yes | Absolute path of the `.jsonl` conversation file, as a search result reports it (a compressed `.jsonl.zst` archive is read through the same `.jsonl` path) |
+| `path` | `string` | Yes | Absolute path of the `.jsonl` conversation file, as a search result reports it (a compressed `.jsonl.zst` archive is read through the same `.jsonl` path). A relative path is resolved against the working directory of the session that calls — never the server's; a session whose working directory is unknown must pass the absolute path |
 | `startLine` | `number` | No | First line (1-indexed, inclusive) |
 | `endLine` | `number` | No | Last line (1-indexed, inclusive) |
 | `startChar` | `number` | No | Characters to skip of the first message shown (default 0) — the value a truncated answer names when it stopped inside one long message |
@@ -137,6 +137,7 @@ Read a conversation, or a line range of it, as Markdown.
   error; a `startChar` past the end of its message is an error. None returns an empty answer.
 - Only files under the conversation archive (and `~/.claude/projects`) can be read. A symlink inside them
   that leads outside is refused.
+- Dates and numbers are written in the locale of the session that calls.
 
 ## search_facts
 

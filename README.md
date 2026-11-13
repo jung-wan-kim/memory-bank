@@ -340,13 +340,13 @@ export ANTHROPIC_API_KEY=your-key
 # Summarization model
 export MEMORY_BANK_API_MODEL=opus
 
-# One MCP server shared by the sessions with the same settings (default since 1.9.0).
+# One MCP server shared by the sessions with the same server settings (default since 1.9.0).
 # 0 / false / off / no = every session runs a server of its own, as before 1.9.0.
 # An empty file conversation-index/shared-server.off does the same without touching
 # the environment (see Architecture → Processes).
 # export MEMORY_BANK_SHARED_SERVER=0
 # How long a shared server with no session connected stays up (ms, default 600000).
-# A setting like any other: sessions that set it differently use different servers.
+# A server setting like any other: sessions that set it differently use different servers.
 # export MEMORY_BANK_SHARED_IDLE_MS=600000
 
 # Fact extraction batches per session (default 12, evenly spread; at most 60 — a
@@ -476,19 +476,20 @@ open docs/graph-3d.html   # Interactive 3D graph (local)
 
 ### Processes (v1.9.0)
 
-A session starts `cli/mcp-server-wrapper.js`, and that starts `dist/mcp-server.js` — a small relay that loads no database and no model. The tools run in one **shared server** (`dist/shared-server.js`) that every session with the same settings uses together, over a unix socket in `conversation-index/` (`mb-shared-<version>-<id>.sock`, owner-only). Before 1.9.0 every session ran a whole server of its own; with N sessions open that was N embedding models and N injection daemons.
+A session starts `cli/mcp-server-wrapper.js`, and that starts `dist/mcp-server.js` — a small relay that loads no database and no model. The tools run in one **shared server** (`dist/shared-server.js`) that every session with the same server settings uses together, over a unix socket in `conversation-index/` (`mb-shared-<version>-<id>.sock`, owner-only). Before 1.9.0 every session ran a whole server of its own; with N sessions open that was N embedding models and N injection daemons.
 
 ```
 Claude Code ⇄ wrapper ⇄ relay (dist/mcp-server.js) ─┐
 Claude Code ⇄ wrapper ⇄ relay                       ─┼─ unix socket ─ shared server (dist/shared-server.js) ─ db.sqlite
-Claude Code ⇄ wrapper ⇄ relay                       ─┘                 one per (version, code, settings)
+Claude Code ⇄ wrapper ⇄ relay                       ─┘                 one per (version, code, server settings)
 ```
 
-- **Nothing of one session reaches another.** A connection states its working directory before anything else, and a tool's default `project` is the directory of the session that calls — the server never reads its own. A session that cannot tell its directory still connects; a call that needs the default then fails with a message asking for `project`, it is never answered for "every project".
-- **Different settings, different server.** A server's name is a hash of the plugin version, the compiled code and the settings it runs with (config dir, database path, LLM endpoint and model, locale, …), and it is started with those settings only — no session id, no messaging socket, nothing else from the shell that started the first session. A session whose settings differ gets a server of its own.
-- **Lifetime.** A server no session is connected to ends after 10 minutes (`MEMORY_BANK_SHARED_IDLE_MS`; prompt-injection requests do not keep it alive). After a plugin update it serves the sessions it has and then ends, while those sessions move to the new version's server on their own. When a server dies, every relay reconnects — starting a new server if there is none — and the session goes on; only a call that was in flight is answered with an error.
-- **When a server cannot be started** nothing is done quietly instead: a relay that has just begun exits non-zero (the wrapper then repairs the install, as it always did for a server that dies at once), and a relay that has been serving answers each call with an error that names `conversation-index/logs/shared-server.log`, and keeps trying.
-- **Turning it off.** `MEMORY_BANK_SHARED_SERVER=0`, or an empty file `conversation-index/shared-server.off`, makes a session run a server of its own again, exactly as before 1.9.0. The file is for sessions that are already open: it is read when a session's relay starts, so it applies to new sessions and to an open one the next time the wrapper restarts its child. The same happens by itself on Windows and where the config dir path is too long for a unix socket; the session says which, in one line on stderr.
+- **Nothing of one session reaches another.** A connection states its working directory before anything else, and a tool's default `project` is the directory of the session that calls — the server never reads its own. A session that cannot tell its directory still connects; a call that needs the default then fails with a message asking for `project`, it is never answered for "every project". A relative `path` given to `read` is resolved against the calling session's directory as well.
+- **A server is named by its own settings.** A server's name is a hash of the plugin version, the compiled code and the settings the server code itself reads (config dir, database path, embedding model, time zone, proxy, …), and it is started with those settings only — no session id, no messaging socket, nothing else from the shell that started the first session. A session whose server settings differ gets a server of its own.
+- **What belongs to one session travels with its connection.** The account, endpoint, model and client options of the LLM call `ask_avatar` makes, and the locale that dates, numbers and name order are written in, are not part of the server's name and never enter the server's own environment. A session declares them when it connects, and the server uses them for that session's calls only. So sessions that are logged in differently, or run under different locales, still share one server — and each gets its own account and its own formatting.
+- **Lifetime.** A server no session is connected to ends after 10 minutes (`MEMORY_BANK_SHARED_IDLE_MS`; prompt-injection requests do not keep it alive). After a plugin update it serves the sessions it has and then ends, while those sessions move to the new version's server on their own. When a server dies, every relay reconnects — starting a new server if there is none — and the session goes on; only a call that was in flight is answered with an error. A server that keeps ending right after it starts is not restarted in a tight loop: from the second such loss in a row a relay waits 2 s, 4 s, … up to 30 s before the next start, and answers the calls that arrive meanwhile with the reason at once.
+- **When a server cannot be started** nothing is done quietly instead: a relay that has just begun exits non-zero (the wrapper then repairs the install, as it always did for a server that dies at once), and a relay that has been serving answers each call with an error that names `conversation-index/logs/shared-server.log`, and keeps trying, less and less often. The same holds when some other process answers on the server's socket name, and for an install that lacks the compiled server or a readable version: the session exits non-zero and says what is missing — it does not quietly run a server of its own.
+- **Turning it off.** `MEMORY_BANK_SHARED_SERVER=0`, or an empty file `conversation-index/shared-server.off`, makes a session run a server of its own again, exactly as before 1.9.0. The file is for sessions that are already open: it is read when a session's relay starts, so it applies to new sessions and to an open one the next time the wrapper restarts its child. The same happens by itself in four cases: on Windows, in a run from source (`tsx` — there is no compiled server to start), where the config dir path is too long for a unix socket, and in a session that cannot read its own working directory while a path setting is relative. The session says which, in one line on stderr.
 
 ## Development
 
