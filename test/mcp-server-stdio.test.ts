@@ -93,7 +93,7 @@ describe('MCP server over stdio', () => {
   it('registers exactly the tools the source declares, each with an object input schema', async () => {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
-    const src = fs.readFileSync(path.join(REPO, 'src/mcp-server.ts'), 'utf8');
+    const src = fs.readFileSync(path.join(REPO, 'src/server-core.ts'), 'utf8');
     const declared = [...src.matchAll(/if \(name === '([a-z_]+)'\)/g)].map((m) => m[1]).sort();
     expect(names).toEqual(declared);
     expect(names).toContain('read');

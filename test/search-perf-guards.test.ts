@@ -65,7 +65,7 @@ describe('MCP search knowledge section', () => {
   });
 
   it('a failure is reported on stderr and in the result, never swallowed', () => {
-    const src = fs.readFileSync(path.join(REPO, 'src/mcp-server.ts'), 'utf8');
+    const src = fs.readFileSync(path.join(REPO, 'src/server-core.ts'), 'utf8');
     const at = src.indexOf('getKnowledgeContext(params.query');
     const tail = src.slice(at, at + 700);
     expect(tail).not.toMatch(/catch\s*\{/);

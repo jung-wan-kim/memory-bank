@@ -7,20 +7,23 @@ import path from 'path';
 // name a shipped document mentions must be one the server registers.
 
 const REPO = path.resolve(__dirname, '..');
-const SERVER_SRC = fs.readFileSync(path.join(REPO, 'src/mcp-server.ts'), 'utf8');
+const SERVER_SRC = fs.readFileSync(path.join(REPO, 'src/server-core.ts'), 'utf8');
 
 /** Tool names in the ListTools answer (the registration list). */
 function registeredTools(): string[] {
-  const start = SERVER_SRC.indexOf('server.setRequestHandler(ListToolsRequestSchema');
-  const end = SERVER_SRC.indexOf('server.setRequestHandler(CallToolRequestSchema');
+  const start = SERVER_SRC.indexOf('async function handleListTools(');
+  const end = SERVER_SRC.indexOf('async function handleCallTool(');
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
+  // the two functions are what the server answers with
+  expect(SERVER_SRC).toContain('server.setRequestHandler(ListToolsRequestSchema, handleListTools)');
+  expect(SERVER_SRC).toContain('server.setRequestHandler(CallToolRequestSchema, handleCallTool)');
   return [...SERVER_SRC.slice(start, end).matchAll(/^\s{8}name: '([a-z_]+)',$/gm)].map((m) => m[1]);
 }
 
 /** Tool names the CallTool handler answers. */
 function handledTools(): string[] {
-  const start = SERVER_SRC.indexOf('server.setRequestHandler(CallToolRequestSchema');
+  const start = SERVER_SRC.indexOf('async function handleCallTool(');
   return [...SERVER_SRC.slice(start).matchAll(/if \(name === '([a-z_]+)'\)/g)].map((m) => m[1]);
 }
 
